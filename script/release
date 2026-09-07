@@ -29,23 +29,29 @@ fi
 # Function to update version in a Cargo.toml file
 update_version() {
     local file="$1"
-    local backup="${file}.bak"
+    local tmp="${file}.tmp"
 
-    # Backup the original file
-    cp "$file" "$backup"
-
-    # More flexible regex that handles various version formats and whitespace
-    if sed -i -E "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*\"[^\"]+\"/version = \"$NEW_VERSION\"/" "$file"; then
+    # Portable in-place edit. `sed -i` behaves differently on GNU sed (Linux)
+    # and BSD sed (macOS): on macOS `sed -i -E` treats `-E` as the backup
+    # suffix instead of the extended-regex flag, leaving a stray
+    # `Cargo.toml-E` behind and never updating the file.
+    # Writing to a temp file and moving it over works on both implementations.
+    if sed -E "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*\"[^\"]+\"/version = \"$NEW_VERSION\"/" "$file" > "$tmp" \
+        && mv "$tmp" "$file"; then
         echo "✓ Updated version to $NEW_VERSION in $file"
     else
         echo "Error: Failed to update version in $file"
-        # Restore original backup
-        mv "$backup" "$file"
+        # Remove any partial temp file; the original file is untouched
+        rm -f "$tmp"
         exit 1
     fi
 
-    # Remove the backup file
-    rm -f "$backup"
+    # The substitution can silently match nothing (e.g. a `version.workspace` key),
+    # so verify the new version actually landed before moving on.
+    if ! grep -q "^[[:space:]]*version[[:space:]]*=[[:space:]]*\"$NEW_VERSION\"" "$file"; then
+        echo "Error: Version line not found/updated in $file"
+        exit 1
+    fi
 }
 
 # Update both Cargo.toml files
