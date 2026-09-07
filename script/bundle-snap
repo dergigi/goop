@@ -35,3 +35,7 @@ SNAP_NAME="coop_${1}_${ARCH_SUFFIX}.snap"
 snapcraft --destructive-mode --output "$SNAP_NAME"
 
 echo "Created snap package: $SNAP_NAME"
+echo ""
+echo "This snap is unsigned (built without Snap Store credentials)."
+echo "To install it locally, use:"
+echo "  sudo snap install --dangerous ./$SNAP_NAME"

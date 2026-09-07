@@ -380,12 +380,15 @@ impl Workspace {
                 self.import_encryption(window, cx);
             }
             Command::Update => {
-                let auto_updater = AutoUpdater::global(cx);
-                auto_updater.update(cx, |this, cx| {
-                    this.updater.update(cx, |updater, cx| {
-                        updater.check(cx);
+                // No-op on managed distribution channels (Flatpak/Snap) where
+                // the in-app updater is never initialized.
+                if let Some(auto_updater) = AutoUpdater::try_global(cx) {
+                    auto_updater.update(cx, |this, cx| {
+                        this.updater.update(cx, |updater, cx| {
+                            updater.check(cx);
+                        });
                     });
-                });
+                }
             }
         }
     }
@@ -559,7 +562,7 @@ impl Workspace {
                         .caret()
                         .compact()
                         .transparent()
-                        .dropdown_menu(move |this, _window, _cx| {
+                        .dropdown_menu(move |this, _window, cx| {
                             let avatar = avatar.clone();
                             let name = name.clone();
 
@@ -593,12 +596,15 @@ impl Workspace {
                                     IconName::Sun,
                                     Box::new(Command::ToggleTheme),
                                 )
-                                .separator()
-                                .menu_with_icon(
-                                    "Check for Updates",
-                                    IconName::Device,
-                                    Box::new(Command::Update),
-                                )
+                                // Only offer in-app updates when auto-update is
+                                // enabled (managed channels update themselves).
+                                .when(AutoUpdater::is_available(cx), |this| {
+                                    this.separator().menu_with_icon(
+                                        "Check for Updates",
+                                        IconName::Device,
+                                        Box::new(Command::Update),
+                                    )
+                                })
                                 .menu_with_icon(
                                     "Settings",
                                     IconName::Settings,
@@ -610,7 +616,6 @@ impl Workspace {
     }
 
     fn titlebar_right(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let updater = AutoUpdater::global(cx);
         let chat = ChatRegistry::global(cx);
         let nip4e_enabled = AppSettings::get_nip4e(cx);
         let nostr = NostrRegistry::global(cx);
@@ -622,13 +627,19 @@ impl Workspace {
         let persons = PersonRegistry::global(cx);
         let profile = persons.read(cx).get(&public_key, cx);
         let announcement = profile.announcement();
-        let updater_idle = updater.read(cx).idle(cx);
+
+        // Update status is only shown when auto-update is available. On
+        // managed distribution channels (Flatpak/Snap) no updater exists, so
+        // nothing is rendered.
+        let updater_status = AutoUpdater::try_global(cx).and_then(|updater| {
+            let updater = updater.read(cx);
+            (!updater.idle(cx)).then(|| updater.status(cx))
+        });
 
         h_flex()
             .when(!cx.theme().platform.is_mac(), |this| this.pr_2())
             .gap_2()
-            .when(!updater_idle, |this| {
-                let status = updater.read(cx).status(cx);
+            .when_some(updater_status, |this, status| {
                 this.child(div().text_xs().italic().child(status))
             })
             .when(nip4e_enabled, |this| {

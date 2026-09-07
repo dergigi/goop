@@ -1,3 +1,7 @@
+# Snaps built by snapcraft without Snap Store credentials are unsigned and
+# cannot be installed without bypassing signature checks. Use:
+#   sudo snap install --dangerous ./coop_<version>_<arch>.snap
+# For signed installs (`snap install coop`), publish via the Snap Store.
 name: coop
 title: Coop
 base: core24

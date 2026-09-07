@@ -15,11 +15,26 @@ if [ "$#" -ne 1 ]; then
   exit 1
 fi
 
+# Get system architecture (same mapping as script/bundle-snap)
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) ARCH_SUFFIX="x86_64" ;;
+  aarch64) ARCH_SUFFIX="aarch64" ;;
+  *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
+
+snap_file="coop_${1}_${ARCH_SUFFIX}.snap"
+if [ ! -f "$snap_file" ]; then
+  echo "Snap file not found: $snap_file"
+  echo "Build it first with: script/bundle-snap $1"
+  exit 1
+fi
+
 # Rerun as root
 [ "$UID" -eq 0 ] || exec sudo bash -e "$0" "$@"
 
 snap remove coop || true
 mkdir -p snap
 rm -rf snap/unpacked
-unsquashfs -dest snap/unpacked "coop_$1_amd64.snap"
+unsquashfs -dest snap/unpacked "$snap_file"
 snap try --classic snap/unpacked

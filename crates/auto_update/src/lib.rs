@@ -5,6 +5,7 @@ use gpui_updater::{EngineConfig, GitHubSource, UpdateStatus, Updater, Version};
 use instant::{Duration, Instant};
 
 const COOP_UPDATE_EXPLANATION: &str = "COOP_UPDATE_EXPLANATION";
+const COOP_BUNDLE_TYPE: &str = "COOP_BUNDLE_TYPE";
 
 fn get_github_repo_owner() -> String {
     std::env::var("COOP_GITHUB_REPO_OWNER").unwrap_or_else(|_| "reyakov".to_string())
@@ -14,18 +15,27 @@ fn get_github_repo_name() -> String {
     std::env::var("COOP_GITHUB_REPO_NAME").unwrap_or_else(|_| "coop".to_string())
 }
 
-fn is_flatpak_installation() -> bool {
-    std::env::var("FLATPAK_ID").is_ok() || std::env::var(COOP_UPDATE_EXPLANATION).is_ok()
+/// Whether updates are managed by an external distribution channel
+/// (Flatpak/Snap), in which case the in-app updater must not run.
+fn uses_managed_updates() -> bool {
+    // The Flatpak runtime exports `FLATPAK_ID` inside the sandbox.
+    std::env::var("FLATPAK_ID").is_ok()
+        // Allow opting out of in-app updates via an explicit environment variable.
+        || std::env::var(COOP_UPDATE_EXPLANATION).is_ok()
+        // The Snap package sets `COOP_BUNDLE_TYPE=snap` (see snapcraft.yaml.in).
+        || std::env::var(COOP_BUNDLE_TYPE).is_ok_and(|value| value == "snap")
 }
 
 /// Initialize the auto-update system.
 ///
-/// Skips initialization when running as a Flatpak (updates are handled by the
-/// Flatpak distribution channel). Otherwise creates the global [`AutoUpdater`]
+/// Skips initialization when updates are handled by an external distribution
+/// channel (Flatpak/Snap). Otherwise creates the global [`AutoUpdater`]
 /// entity and schedules a check for updates after a 2-minute delay.
 pub fn init(window: &mut Window, cx: &mut App) {
-    if is_flatpak_installation() {
-        log::info!("Skipping auto-update initialization: App is installed via Flatpak");
+    if uses_managed_updates() {
+        log::info!(
+            "Skipping auto-update initialization: App is installed via a managed distribution channel (Flatpak/Snap)"
+        );
         return;
     }
 
@@ -57,7 +67,27 @@ pub struct AutoUpdater {
 }
 
 impl AutoUpdater {
+    /// Whether auto-update is available for this installation.
+    ///
+    /// Returns `false` on managed distribution channels (Flatpak/Snap), where
+    /// updates are handled by the channel and no global updater is created.
+    pub fn is_available(cx: &App) -> bool {
+        cx.try_global::<GlobalAutoUpdater>().is_some()
+    }
+
+    /// Retrieve the global auto updater instance, if one was initialized.
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalAutoUpdater>()
+            .map(|global| global.0.clone())
+    }
+
     /// Retrieve the global auto updater instance.
+    ///
+    /// # Panics
+    ///
+    /// Panics when auto-update is not available for this installation. Prefer
+    /// [`AutoUpdater::try_global`] when the installation type is not known at
+    /// compile time (e.g. Flatpak/Snap).
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalAutoUpdater>().0.clone()
     }
