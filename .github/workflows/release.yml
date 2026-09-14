@@ -2,6 +2,11 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a draft release after building all platforms
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -151,7 +156,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.create_release == true
 
     steps:
       - name: Checkout repository

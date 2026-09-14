@@ -26,7 +26,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --locked --verbose
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --locked --verbose
+
+      - name: Run DM and signer recovery regressions
+        run: cargo test --locked --verbose -p chat -p state --lib
