@@ -1,8 +1,25 @@
 title: Goop
-description: A small usage guide for Goop.
+description: A NIP-17 messaging client for people who love the keyboard.
 baseurl: /goop
 url: https://dergigi.com
-markdown: kramdown
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+plugins:
+  - jekyll-remote-theme
+search_enabled: false
+nav_enabled: false
+heading_anchors: true
+aux_links:
+  Download Goop:
+    - https://github.com/dergigi/goop/releases/latest
+  GitHub:
+    - https://github.com/dergigi/goop
+footer_content: "Goop · Private messaging on Nostr."
+gh_edit_link: true
+gh_edit_link_text: Edit this page
+gh_edit_repository: https://github.com/dergigi/goop
+gh_edit_branch: master
+gh_edit_source: docs
+gh_edit_view_mode: edit
 exclude:
   - research
   - releases
