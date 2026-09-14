@@ -121,9 +121,11 @@ impl Workspace {
             cx.subscribe_in(&nostr, window, move |this, _state, event, window, cx| {
                 match event {
                     StateEvent::SignerChanged => {
+                        this.dock.update(cx, |dock, _| dock.clear_closed_panels());
                         window.close_all_modals(cx);
                     }
                     StateEvent::NoSigner => {
+                        this.dock.update(cx, |dock, _| dock.clear_closed_panels());
                         this.import_identity(window, cx);
                     }
                     _ => {}
@@ -473,7 +475,7 @@ impl Workspace {
                 .show_close(false)
                 .overlay_closable(false)
                 .keyboard(false)
-                .title("Onboarding")
+                .title("Connect Your Signer")
                 .child(import.clone())
         });
     }
@@ -586,7 +588,7 @@ impl Workspace {
                     div()
                         .text_xs()
                         .text_color(cx.theme().text_muted)
-                        .child(SharedString::from("Import your identity to continue")),
+                        .child(SharedString::from("Connect your signer to continue")),
                 )
             })
             .when_some(current_user.as_ref(), |this, public_key| {

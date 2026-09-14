@@ -373,6 +373,10 @@ impl DockArea {
         tabs
     }
 
+    pub fn clear_closed_panels(&mut self) {
+        self.closed_panels.clear();
+    }
+
     pub(crate) fn remember_closed(&mut self, tab: WeakEntity<TabPanel>, panel: Arc<dyn PanelView>) {
         self.closed_panels
             .retain(|(_, previous)| previous.view() != panel.view());
