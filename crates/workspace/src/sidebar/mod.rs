@@ -114,6 +114,7 @@ impl Sidebar {
                                     this.debounced_search(window, cx)
                                 });
                         }
+                        cx.notify();
                     }
                     InputEvent::Focus => {
                         this.set_input_focus(true, window, cx);
@@ -286,6 +287,8 @@ impl Sidebar {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Cancel delayed searches as well as any request already in flight.
+        self.find_debouncer = DebouncedDelay::new();
         // Clear all search results
         self.find_results.update(cx, |this, cx| {
             *this = None;
@@ -538,15 +541,35 @@ impl Render for Sidebar {
                         .small()
                         .text_xs()
                         .disabled(loading)
-                        .when(!self.find_input.read(cx).loading, |this| {
+                        .when(!self.find_input.read(cx).value().is_empty(), |this| {
                             this.suffix(
-                                Button::new("find-icon")
-                                    .icon(IconName::Search)
-                                    .tooltip("Press Enter to search")
+                                Button::new("clear-search")
+                                    .icon(IconName::Close)
+                                    .tooltip("Clear search")
                                     .transparent()
-                                    .small(),
+                                    .small()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.reset(window, cx);
+                                        this.find_input.update(cx, |input, cx| {
+                                            input.set_value("", window, cx);
+                                            input.focus(window, cx);
+                                        });
+                                    })),
                             )
-                        }),
+                        })
+                        .when(
+                            self.find_input.read(cx).value().is_empty()
+                                && !self.find_input.read(cx).loading,
+                            |this| {
+                                this.suffix(
+                                    Button::new("find-icon")
+                                        .icon(IconName::Search)
+                                        .tooltip("Press Enter to search")
+                                        .transparent()
+                                        .small(),
+                                )
+                            },
+                        ),
                 ),
             )
             .child(
