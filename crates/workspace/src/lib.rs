@@ -76,7 +76,10 @@ struct MsgRelayNotification;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = workspace, no_json)]
-enum Command {
+pub enum Command {
+    About,
+    MinimizeWindow,
+    ToggleFullScreen,
     Search,
     SearchConversations,
     SearchProfiles,
@@ -313,6 +316,28 @@ impl Workspace {
 
     fn on_command(&mut self, command: &Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
+            Command::MinimizeWindow => window.minimize_window(),
+            Command::ToggleFullScreen => window.toggle_fullscreen(),
+            Command::About => {
+                window.open_modal(cx, |modal, _, _| {
+                    modal.title("About Goop").show_close(true).child(
+                        v_flex()
+                            .gap_2()
+                            .child(format!("Goop {}", env!("CARGO_PKG_VERSION")))
+                            .child(format!("Build {}", env!("GOOP_BUILD_REVISION")))
+                            .child("Chat freely. Stay private.")
+                            .child(
+                                Button::new("about-source")
+                                    .label("Goop on GitHub")
+                                    .ghost()
+                                    .on_click(|_, _, cx| {
+                                        cx.open_url("https://github.com/dergigi/goop")
+                                    }),
+                            ),
+                    )
+                });
+            }
+
             Command::ToggleSidebar => {
                 if Focusable::focus_handle(&self.sidebar, cx).contains_focused(window, cx) {
                     self.dock

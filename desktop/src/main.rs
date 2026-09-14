@@ -2,15 +2,16 @@ use std::sync::{Arc, Mutex};
 
 use assets::Assets;
 use gpui::{
-    App, AppContext, Bounds, KeyBinding, Menu, MenuItem, SharedString, TitlebarOptions,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
-    actions, point, px, size,
+    App, AppContext, Bounds, KeyBinding, SharedString, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowDecorations, WindowKind, WindowOptions, actions, point, px, size,
 };
 use gpui_platform::application;
 use state::{APP_ID, CLIENT_NAME};
 use ui::Root;
 
 actions!(goop, [Quit]);
+
+mod menus;
 
 fn main() {
     // Initialize logging
@@ -37,13 +38,6 @@ fn main() {
             // Register the `quit` function with Super+Q (others)
             #[cfg(not(target_os = "macos"))]
             cx.bind_keys([KeyBinding::new("super-q", Quit, None)]);
-
-            // Set menu items
-            cx.set_menus(vec![Menu {
-                name: "Goop".into(),
-                items: vec![MenuItem::action("Quit", Quit)],
-                disabled: false,
-            }]);
 
             // Set up the window bounds
             let bounds = Bounds::centered(None, size(px(960.0), px(720.0)), cx);
@@ -95,6 +89,8 @@ fn main() {
                 cx.new(|cx| Root::new(workspace::init(window, cx).into(), window, cx))
             })
             .expect("Failed to open window. Please restart the application.");
+
+            menus::init(cx);
 
             // Bring the app to the foreground
             cx.activate(true);

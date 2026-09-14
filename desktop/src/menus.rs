@@ -1,0 +1,86 @@
+use gpui::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, actions};
+use ui::dock::{CloseAllPanels, ClosePanel, NextPanel, PreviousPanel, ReopenClosedPanel};
+use ui::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
+use workspace::Command;
+
+actions!(goop, [Hide, HideOthers, ShowAll, BringToFront, OpenHelp]);
+
+pub fn init(cx: &mut App) {
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &BringToFront, cx| cx.activate(true));
+    cx.on_action(|_: &OpenHelp, cx| {
+        cx.open_url("https://github.com/dergigi/goop#keyboard-shortcuts")
+    });
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("cmd-h", Hide, None),
+        KeyBinding::new("cmd-alt-h", HideOthers, None),
+        KeyBinding::new("cmd-m", Command::MinimizeWindow, None),
+        KeyBinding::new("ctrl-cmd-f", Command::ToggleFullScreen, None),
+    ]);
+    cx.set_menus(application_menus());
+}
+
+fn application_menus() -> Vec<Menu> {
+    vec![
+        Menu::new("Goop").items([
+            MenuItem::action("About Goop", Command::About),
+            MenuItem::separator(),
+            MenuItem::action("Settings…", Command::ShowSettings),
+            MenuItem::action("Check for Updates…", Command::Update),
+            MenuItem::separator(),
+            MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action("Hide Goop", Hide),
+            MenuItem::action("Hide Others", HideOthers),
+            MenuItem::action("Show All", ShowAll),
+            MenuItem::separator(),
+            MenuItem::action("Quit Goop", crate::Quit),
+        ]),
+        Menu::new("File").items([
+            MenuItem::action("New Chat…", Command::NewConversation),
+            MenuItem::separator(),
+            MenuItem::action("Close Tab", ClosePanel),
+            MenuItem::action("Close All Tabs", CloseAllPanels),
+            MenuItem::action("Reopen Closed Tab", ReopenClosedPanel),
+        ]),
+        Menu::new("Edit").items([
+            MenuItem::os_action("Undo", Undo, OsAction::Undo),
+            MenuItem::os_action("Redo", Redo, OsAction::Redo),
+            MenuItem::separator(),
+            MenuItem::os_action("Cut", Cut, OsAction::Cut),
+            MenuItem::os_action("Copy", Copy, OsAction::Copy),
+            MenuItem::os_action("Paste", Paste, OsAction::Paste),
+            MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Find in Current Chat…", Command::Search),
+            MenuItem::action("Search Conversations…", Command::SearchConversations),
+            MenuItem::action("Search Profiles…", Command::SearchProfiles),
+        ]),
+        Menu::new("View").items([
+            MenuItem::action("Toggle Sidebar", Command::ToggleSidebar),
+            MenuItem::action("Inbox", Command::ShowInbox),
+            MenuItem::action("Requests", Command::ShowRequests),
+            MenuItem::action("Focus Message Box", Command::FocusComposer),
+            MenuItem::separator(),
+            MenuItem::action("Profile", Command::ShowProfile),
+            MenuItem::action("Contacts", Command::ShowContactList),
+            MenuItem::action("Messaging Relays", Command::ShowMessaging),
+            MenuItem::action("Gossip Relays", Command::ShowRelayList),
+            MenuItem::separator(),
+            MenuItem::action("Reload", Command::RefreshMessagingRelays),
+            MenuItem::action("Toggle Full Screen", Command::ToggleFullScreen),
+        ]),
+        Menu::new("Window").items([
+            MenuItem::action("Minimize", Command::MinimizeWindow),
+            MenuItem::separator(),
+            MenuItem::action("Next Tab", NextPanel),
+            MenuItem::action("Previous Tab", PreviousPanel),
+            MenuItem::separator(),
+            MenuItem::action("Bring All to Front", BringToFront),
+        ]),
+        Menu::new("Help").items([MenuItem::action("Goop Help", OpenHelp)]),
+    ]
+}

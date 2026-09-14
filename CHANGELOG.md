@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Native application menus with File, Edit, View, Window, and Help, including standard editing actions, sidebar and chat shortcuts, and an About dialog.
+
 - Find in the current chat with Cmd/Ctrl+F or its toolbar button, highlighted matches, next/previous navigation, and Escape to restore focus.
 
 ### Changed
