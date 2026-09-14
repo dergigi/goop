@@ -256,7 +256,7 @@ impl Render for QuickSearch {
                 div()
                     .text_xs()
                     .text_color(cx.theme().text_muted)
-                    .child("Loaded items only · ↑ ↓ to choose · Enter to open · Esc to return"),
+                    .child("↑ ↓ to choose · Enter to open · Esc to return"),
             )
             .when(self.results.is_empty(), |view| {
                 view.child(div().p_4().child("No matching loaded items"))
