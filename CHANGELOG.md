@@ -7,7 +7,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
-## [2.2.0] - 2026-09-15
+## [2.2.0] - 2026-09-14
 
 Goop 2.2 encrypts new chat attachments before uploading them and adds message-content search, drag-and-drop attachments, and notification copying.
 
