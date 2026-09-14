@@ -35,23 +35,6 @@ Replace `PASTE_YOUR_NPUB_HERE` with your full Goop public key (`npub1…`) befor
 sending the prompt. If you have a NIP-05 address, you can instead write
 `My NIP-05 is whatever@domain.com`, using your own address.
 
-**Your agent isn't on nostr yet? Start with the [Nihao skill](https://clawhub.ai/dergigi/skills/nihao).**
-Ask your OpenClaw agent to use it to set up its identity, profile, and DM relays.
-Nihao prepares the identity; the channel plugin below handles conversations.
-
-```sh
-openclaw skills install @dergigi/nihao
-```
-
-Then install the [OpenClaw NIP-17 channel plugin](https://github.com/fabianfabian/openclaw-nostr-nip17)
-and follow its configuration instructions. Use the agent’s identity for the plugin
-and approve your own `npub` through pairing or the allowed-senders list. Keep the
-OpenClaw gateway running so the agent can receive your messages and reply.
-
-The plugin supports separate identities for multiple agents. Its current
-[implementation publishes the agent’s DM relay list on startup](https://github.com/fabianfabian/openclaw-nostr-nip17/blob/bcbd54516be347a426acec3be5e74944e590d534/src/nip17-bus.ts#L252),
-so check the installed version if relay discovery does not work.
-
 ### Hermes
 
 Install the community [Hermes NIP-17 platform plugin](https://github.com/boto-coder/hermes-nostr-platform)
