@@ -5,7 +5,7 @@
     <project_license>GPL-3.0-or-later</project_license>
 
     <name>$APP_NAME</name>
-    <summary>Chat Freely, Stay Private on Nostr</summary>
+    <summary>A simple NIP-17 client that just works.</summary>
 
     <developer id="su.reya">
         <name translate="no">Ren Amamiya</name>

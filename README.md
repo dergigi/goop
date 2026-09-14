@@ -1,6 +1,8 @@
 # Goop
 
-Goop is a NIP-17 messaging client for private, encrypted conversations on Nostr. It is Gigi's fork of [Coop](https://git.reya.info/reya/coop), available for macOS, Windows, and Linux.
+A simple NIP-17 client that just works.
+
+Goop is Gigi's fork of [Coop](https://git.reya.info/reya/coop), available for macOS, Windows, and Linux.
 
 [Download the latest release](https://github.com/dergigi/goop/releases/latest) · [Usage guide](https://dergigi.com/goop/).
 

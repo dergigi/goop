@@ -1,5 +1,5 @@
 title: Goop
-description: A NIP-17 messaging client for people who love the keyboard.
+description: A simple NIP-17 client that just works.
 baseurl: /goop
 url: https://dergigi.com
 remote_theme: just-the-docs/just-the-docs@v0.12.0
@@ -13,7 +13,7 @@ aux_links:
     - https://github.com/dergigi/goop/releases/latest
   GitHub:
     - https://github.com/dergigi/goop
-footer_content: "Goop · Private messaging on Nostr."
+footer_content: "A simple NIP-17 client that just works."
 gh_edit_link: true
 gh_edit_link_text: Edit this page
 gh_edit_repository: https://github.com/dergigi/goop

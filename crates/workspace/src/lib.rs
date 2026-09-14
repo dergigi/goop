@@ -333,7 +333,7 @@ impl Workspace {
                             .gap_2()
                             .child(format!("Goop {}", env!("CARGO_PKG_VERSION")))
                             .child(format!("Build {}", env!("GOOP_BUILD_REVISION")))
-                            .child("Chat freely. Stay private.")
+                            .child("A simple NIP-17 client that just works.")
                             .child(
                                 Button::new("about-source")
                                     .label("Goop on GitHub")
