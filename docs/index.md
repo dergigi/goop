@@ -22,6 +22,18 @@ Nostr identity and a NIP-17 messaging integration. Give the agent your public ke
 
 ### OpenClaw
 
+Copy this prompt and send it to your OpenClaw agent:
+
+```text
+Use clawhub.ai/dergigi/nihao to create a nostr identity for yourself &
+after that use github.com/fabianfabian/openclaw-nostr-nip17
+to set yourself up with NIP-17. DM me when you’re done.
+My NIP-05 is dergigi.com
+```
+
+Replace `dergigi.com` with your own NIP-05 address. If you don’t have one,
+replace the last sentence with `My npub is npub1…`, using your full Goop public key.
+
 **Not on Nostr yet? Start with the [Nihao skill](https://clawhub.ai/dergigi/skills/nihao).**
 Ask your OpenClaw agent to use it to set up its identity, profile, and DM relays.
 Nihao prepares the identity; the channel plugin below handles conversations.
