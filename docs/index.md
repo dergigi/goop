@@ -10,7 +10,7 @@ This guide covers Goop 2.1.
 
 ## Keyboard shortcuts
 
-Use **Cmd**on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
+Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 
 - **?** — open Keyboard Shortcuts when you aren’t typing (also available in Help).
 - **Cmd/Ctrl+B** — show or hide the conversation sidebar.
