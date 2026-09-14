@@ -45,6 +45,7 @@ static EMOJI_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\p{Emoji}\u{200D}\u{FE0F}\u{20E3}]+$").unwrap());
 
 mod actions;
+mod find;
 mod text;
 
 pub fn init(room: WeakEntity<Room>, window: &mut Window, cx: &mut App) -> Entity<ChatPanel> {
@@ -61,6 +62,8 @@ pub struct ChatPanel {
 
     /// Message list state
     list_state: ListState,
+
+    find: find::FindBar,
 
     /// All messages (sorted by created_at)
     messages: Vec<Message>,
@@ -142,6 +145,8 @@ impl ChatPanel {
                 .clean_on_escape()
         });
 
+        let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in this chat"));
+
         // Define subject input state
         let subject_input = cx.new(|cx| InputState::new(window, cx).placeholder("New subject..."));
         let subject_bar = cx.new(|_cx| false);
@@ -177,6 +182,7 @@ impl ChatPanel {
             if this.render_markdown != markdown {
                 this.render_markdown = markdown;
                 this.rendered_texts_by_id.clear();
+                this.find.dirty = true;
                 let scroll_top = this.list_state.logical_scroll_top();
                 this.list_state
                     .splice(0..this.messages.len(), this.messages.len());
@@ -187,6 +193,7 @@ impl ChatPanel {
 
         // Define all functions that will run after the current cycle
         cx.defer_in(window, |this, window, cx| {
+            this.subscribe_find(window, cx);
             this.connect(cx);
             this.subscribe_room_events(window, cx);
             this.get_messages(window, cx);
@@ -201,6 +208,7 @@ impl ChatPanel {
             reactions: BTreeMap::new(),
             room,
             list_state,
+            find: find::FindBar::new(find_input, cx.entity().downgrade()),
             input,
             subject_input,
             subject_bar,
@@ -466,6 +474,7 @@ impl ChatPanel {
                 self.message_index.insert(message.id, i);
             }
             self.list_state.splice(pos..pos, 1);
+            self.find.dirty = true;
 
             if scroll {
                 self.list_state.scroll_to(ListOffset {
@@ -647,6 +656,7 @@ impl ChatPanel {
 
     fn on_command(&mut self, command: &Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
+            Command::Find => self.focus_find(window, cx),
             Command::Insert(content) => {
                 self.input.update(cx, |this, cx| {
                     let new_value = format!("{} {}", this.value(), content);
@@ -931,7 +941,15 @@ impl ChatPanel {
                         cx,
                     )
                 })
-                .element(ix.into(), window, cx);
+                .element(
+                    ix.into(),
+                    self.find
+                        .open
+                        .then_some(self.find.pattern.as_ref())
+                        .flatten(),
+                    window,
+                    cx,
+                );
 
             self.render_text_message(ix, message, text, show_author, cx)
         } else {
@@ -962,6 +980,9 @@ impl ChatPanel {
         div()
             .id(ix)
             .group("")
+            .when(self.find.active(id), |row| {
+                row.bg(cx.theme().element_active)
+            })
             .relative()
             .w_full()
             .py_1()
@@ -1630,8 +1651,17 @@ impl Panel for ChatPanel {
 
     fn toolbar_buttons(&self, _window: &Window, _cx: &App) -> Vec<Button> {
         let subject_bar = self.subject_bar.clone();
+        let owner = self.find.owner.clone();
 
         vec![
+            Button::new("find-chat")
+                .icon(IconName::Search)
+                .tooltip("Find in this chat")
+                .small()
+                .ghost()
+                .on_click(move |_, window, cx| {
+                    _ = owner.update(cx, |chat, cx| chat.focus_find(window, cx));
+                }),
             Button::new("subject")
                 .icon(IconName::Input)
                 .tooltip("Change subject")
@@ -1657,10 +1687,15 @@ impl Focusable for ChatPanel {
 
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.find.open && self.find.dirty {
+            self.refresh_find(false, cx);
+        }
         v_flex()
             .image_cache(goop_cache(self.id.clone(), 100))
             .on_action(cx.listener(Self::on_command))
+            .on_action(cx.listener(Self::escape_find))
             .size_full()
+            .when(self.find.open, |view| view.child(self.render_find(cx)))
             .child(self.render_history_controls(cx))
             .when(*self.subject_bar.read(cx), |this| {
                 this.child(

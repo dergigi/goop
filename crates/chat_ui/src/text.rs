@@ -45,7 +45,7 @@ impl RenderedText {
         })
     }
 
-    fn render(
+    pub(super) fn render(
         content: &str,
         mentions: &[Mention],
         markdown: bool,
@@ -75,7 +75,13 @@ impl RenderedText {
         }
     }
 
-    pub fn element(&self, id: ElementId, window: &Window, cx: &App) -> AnyElement {
+    pub fn element(
+        &self,
+        id: ElementId,
+        search: Option<&regex::Regex>,
+        window: &Window,
+        cx: &App,
+    ) -> AnyElement {
         let code_background = cx.theme().elevated_surface_background;
         let color = cx.theme().text_accent;
         let code_font = if cfg!(target_os = "macos") {
@@ -91,43 +97,51 @@ impl RenderedText {
             StyledText::new(self.text.clone())
                 .with_default_highlights(
                     &window.text_style(),
-                    self.highlights.iter().map(|(range, highlight)| {
-                        (
-                            range.clone(),
-                            match highlight {
-                                Highlight::Code => HighlightStyle {
-                                    background_color: Some(code_background),
-                                    ..Default::default()
-                                },
-                                Highlight::InlineCode(link) => {
-                                    if *link {
-                                        HighlightStyle {
+                    search_highlights(
+                        &self.text,
+                        self.highlights
+                            .iter()
+                            .map(|(range, highlight)| {
+                                (
+                                    range.clone(),
+                                    match highlight {
+                                        Highlight::Code => HighlightStyle {
                                             background_color: Some(code_background),
+                                            ..Default::default()
+                                        },
+                                        Highlight::InlineCode(link) => {
+                                            if *link {
+                                                HighlightStyle {
+                                                    background_color: Some(code_background),
+                                                    underline: Some(UnderlineStyle {
+                                                        thickness: 1.0.into(),
+                                                        ..Default::default()
+                                                    }),
+                                                    ..Default::default()
+                                                }
+                                            } else {
+                                                HighlightStyle {
+                                                    background_color: Some(code_background),
+                                                    ..Default::default()
+                                                }
+                                            }
+                                        }
+                                        Highlight::Mention => HighlightStyle {
+                                            color: Some(color),
                                             underline: Some(UnderlineStyle {
                                                 thickness: 1.0.into(),
                                                 ..Default::default()
                                             }),
                                             ..Default::default()
-                                        }
-                                    } else {
-                                        HighlightStyle {
-                                            background_color: Some(code_background),
-                                            ..Default::default()
-                                        }
-                                    }
-                                }
-                                Highlight::Mention => HighlightStyle {
-                                    color: Some(color),
-                                    underline: Some(UnderlineStyle {
-                                        thickness: 1.0.into(),
-                                        ..Default::default()
-                                    }),
-                                    ..Default::default()
-                                },
-                                Highlight::Highlight(highlight) => *highlight,
-                            },
-                        )
-                    }),
+                                        },
+                                        Highlight::Highlight(highlight) => *highlight,
+                                    },
+                                )
+                            })
+                            .collect(),
+                        search,
+                        cx.theme().element_active,
+                    ),
                 )
                 .with_font_family_overrides(self.highlights.iter().filter_map(
                     |(range, highlight)| {
@@ -147,6 +161,47 @@ impl RenderedText {
         })
         .into_any_element()
     }
+}
+
+/// Partition overlapping search and Markdown spans into disjoint text runs.
+/// Only the background changes; links, emphasis and code font overrides survive.
+fn search_highlights(
+    text: &str,
+    base: Vec<(Range<usize>, HighlightStyle)>,
+    pattern: Option<&regex::Regex>,
+    background: gpui::Hsla,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let Some(pattern) = pattern else {
+        return base;
+    };
+    let matches: Vec<_> = pattern.find_iter(text).map(|found| found.range()).collect();
+    if matches.is_empty() {
+        return base;
+    }
+    let mut boundaries = vec![0, text.len()];
+    for range in base.iter().map(|(range, _)| range).chain(matches.iter()) {
+        boundaries.extend([range.start, range.end]);
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    boundaries
+        .windows(2)
+        .map(|bounds| {
+            let range = bounds[0]..bounds[1];
+            let mut style = base
+                .iter()
+                .find(|(span, _)| span.start <= range.start && span.end >= range.end)
+                .map(|(_, style)| *style)
+                .unwrap_or_default();
+            if matches
+                .iter()
+                .any(|span| span.start <= range.start && span.end >= range.end)
+            {
+                style.background_color = Some(background);
+            }
+            (range, style)
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -464,6 +519,39 @@ fn is_web_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_highlights_preserve_markdown_and_unicode_boundaries() {
+        let text = "A café link";
+        let bold = HighlightStyle {
+            font_weight: Some(FontWeight::BOLD),
+            ..Default::default()
+        };
+        let pattern = regex::RegexBuilder::new("CAFÉ")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        let color = gpui::yellow();
+        let runs = search_highlights(text, vec![(2..7, bold)], Some(&pattern), color);
+        assert_eq!(
+            runs.iter().map(|(range, _)| range.len()).sum::<usize>(),
+            text.len()
+        );
+        assert!(runs.windows(2).all(|pair| pair[0].0.end == pair[1].0.start));
+        for (range, _) in &runs {
+            assert!(text.is_char_boundary(range.start) && text.is_char_boundary(range.end));
+        }
+        let (_, style) = runs.iter().find(|(range, _)| *range == (2..7)).unwrap();
+        assert_eq!(style.font_weight, Some(FontWeight::BOLD));
+        assert_eq!(style.background_color, Some(color));
+    }
+
+    #[test]
+    fn find_uses_displayed_text_across_markdown_boundaries() {
+        let rendered = RenderedText::render("Hello **Alice**", &[], true, |_| unreachable!());
+        assert!(rendered.text.contains("Hello Alice"));
+    }
+
     use nostr_sdk::prelude::{FinalizeEvent, PublicKey};
 
     fn render(content: &str, markdown: bool) -> RenderedText {

@@ -7,12 +7,16 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Find in the current chat with Cmd/Ctrl+F or its toolbar button, highlighted matches, next/previous navigation, and Escape to restore focus.
+
 ### Changed
 
 - New Chat filters existing contacts immediately without relay text search. Explicit NIP-05 addresses, npubs, and nprofiles resolve directly; recipient selections survive filtering.
 
 - Replace sidebar search with New Chat and Search actions with visible keyboard shortcuts. Search opens the local conversation search modal; Inbox and Requests keep their labels and positions.
-- Move contact discovery and group creation into a New Chat dialog, available with Cmd/Ctrl+N or Cmd/Ctrl+T. Cmd/Ctrl+F now opens conversation search.
+- Move contact discovery and group creation into a New Chat dialog, available with Cmd/Ctrl+N or Cmd/Ctrl+T.
 
 ## [2.0.0] - 2026-09-14
 

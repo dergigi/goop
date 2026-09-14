@@ -317,8 +317,17 @@ impl Workspace {
                 self.sidebar
                     .update(cx, |sidebar, cx| sidebar.set_filter(kind, window, cx));
             }
-            Command::FocusComposer => {
-                let mut panels = self.dock.read(cx).active_panels(cx);
+            Command::FocusComposer | Command::Search => {
+                if matches!(command, Command::Search)
+                    && ui::Root::read(window, cx).has_active_modals()
+                {
+                    return;
+                }
+                let mut panels = if matches!(command, Command::Search) {
+                    Vec::new()
+                } else {
+                    self.dock.read(cx).active_panels(cx)
+                };
                 if let Some(tab) = self.dock.read(cx).active_tab_group(window, cx)
                     && let Some(panel) = tab.read(cx).active_panel(cx)
                 {
@@ -328,10 +337,16 @@ impl Workspace {
                     .into_iter()
                     .find_map(|panel| panel.view().downcast::<chat_ui::ChatPanel>().ok())
                 {
-                    chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+                    chat.update(cx, |chat, cx| {
+                        if matches!(command, Command::Search) {
+                            chat.focus_find(window, cx);
+                        } else {
+                            chat.focus_composer(window, cx);
+                        }
+                    });
                 }
             }
-            Command::Search | Command::SearchConversations | Command::SearchProfiles => {
+            Command::SearchConversations | Command::SearchProfiles => {
                 dialogs::quick_search::open(matches!(command, Command::SearchProfiles), window, cx);
             }
             Command::NewConversation => {
