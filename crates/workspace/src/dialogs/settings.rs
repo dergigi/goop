@@ -235,5 +235,12 @@ impl Render for Preferences {
                             ),
                     )),
             )
+            .child(
+                div().text_xs().text_color(cx.theme().text_muted).child(format!(
+                    "Goop {} · Build {}",
+                    env!("CARGO_PKG_VERSION"),
+                    env!("GOOP_BUILD_REVISION"),
+                )),
+            )
     }
 }
