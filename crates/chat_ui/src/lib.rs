@@ -785,7 +785,7 @@ impl ChatPanel {
     }
 
     fn open_njump(&mut self, public_key: &PublicKey, cx: &mut Context<Self>) {
-        let content = format!("https://njump.me/{}", public_key.to_bech32().unwrap());
+        let content = format!("https://njump.to/{}", public_key.to_bech32().unwrap());
         cx.open_url(&content);
     }
 
@@ -980,7 +980,7 @@ impl ChatPanel {
                                         this.menu("Public Key", Box::new(Command::Copy(pk)))
                                             .menu("View Relays", Box::new(Command::Relays(pk)))
                                             .separator()
-                                            .menu("View on njump.me", Box::new(Command::Njump(pk)))
+                                            .menu("View on njump.to", Box::new(Command::Njump(pk)))
                                     }),
                             )
                         } else {

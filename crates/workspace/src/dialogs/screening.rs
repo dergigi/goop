@@ -283,7 +283,7 @@ impl Screening {
 
     fn open_njump(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Ok(bech32) = self.profile(cx).public_key().to_bech32();
-        cx.open_url(&format!("https://njump.me/{bech32}"));
+        cx.open_url(&format!("https://njump.to/{bech32}"));
     }
 
     fn report(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -477,7 +477,7 @@ impl Render for Screening {
                             .child(
                                 Button::new("njump")
                                     .icon(IconName::Link)
-                                    .label("njump.me")
+                                    .label("njump.to")
                                     .secondary()
                                     .small()
                                     .rounded()
