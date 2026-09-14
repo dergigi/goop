@@ -12,8 +12,7 @@ use gpui::{
     Focusable, InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, MouseButton,
     ObjectFit, ParentElement, PathPromptOptions, Render, SharedString, SharedUri,
     StatefulInteractiveElement, Styled, StyledImage, Subscription, SystemNotification,
-    SystemNotificationAction, Task, WeakEntity, Window, div, img, list, px, red, relative, svg,
-    white,
+    SystemNotificationAction, Task, WeakEntity, Window, div, img, list, px, relative, svg,
 };
 use itertools::Itertools;
 use nostr_sdk::prelude::*;
@@ -1500,36 +1499,64 @@ impl ChatPanel {
     }
 
     fn render_attachment(&self, url: &Url, cx: &Context<Self>) -> impl IntoElement {
+        let preview_url = url.clone();
+        let remove_url = url.clone();
         div()
             .id(SharedString::from(url.to_string()))
             .relative()
-            .w_16()
-            .child(
-                img(url.as_str())
-                    .size_16()
-                    .when(cx.theme().shadow, |this| this.shadow_lg())
-                    .rounded(cx.theme().radius)
-                    .object_fit(ObjectFit::ScaleDown),
-            )
+            .size_20()
+            .p_2()
             .child(
                 div()
-                    .absolute()
-                    .top_neg_2()
-                    .right_neg_2()
-                    .size_4()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .bg(red())
-                    .child(Icon::new(IconName::Close).size_2().text_color(white())),
+                    .id("attachment-preview")
+                    .cursor_pointer()
+                    .size_16()
+                    .child(
+                        img(url.as_str())
+                            .size_16()
+                            .when(cx.theme().shadow, |this| this.shadow_lg())
+                            .rounded(cx.theme().radius)
+                            .object_fit(ObjectFit::ScaleDown),
+                    )
+                    .on_click(move |_, window, cx| {
+                        let url = preview_url.clone();
+                        window.open_modal(cx, move |modal, window, _| {
+                            let size = window.viewport_size();
+                            let original_url = url.clone();
+                            modal.title("Image preview")
+                                .show_close(true)
+                                .width((size.width - px(64.)).min(px(1000.)))
+                                .child(
+                                    img(url.as_str())
+                                        .w_full()
+                                        .h(size.height * 0.7)
+                                        .object_fit(ObjectFit::Contain),
+                                )
+                                .footer(move |_, _, _, _| {
+                                    let url = original_url.clone();
+                                    vec![Button::new("open-original")
+                                        .label("Open original")
+                                        .on_click(move |_, _, cx| cx.open_url(url.as_str()))]
+                                })
+                        });
+                        cx.stop_propagation();
+                    }),
             )
-            .on_click({
-                let url = url.clone();
-                cx.listener(move |this, _, window, cx| {
-                    this.remove_attachment(&url, window, cx);
-                })
-            })
+            .child(
+                Button::new("remove-attachment")
+                    .icon(IconName::Close)
+                    .xsmall()
+                    .danger()
+                    .rounded_full()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .tooltip("Remove attachment")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.remove_attachment(&remove_url, window, cx);
+                        cx.stop_propagation();
+                    })),
+            )
     }
 
     fn render_attachment_list(

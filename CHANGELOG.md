@@ -25,6 +25,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Give draft attachments a working remove button with its own hit area; clicking the thumbnail opens a large image preview instead of removing it.
 - Refresh open delivery-status dialogs as recipients progress, including relay results, queued/paused states, and the retry button.
 - Include newly added icons in incremental builds so the Agent Guide robot icon appears.
 
