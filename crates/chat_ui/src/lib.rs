@@ -1812,6 +1812,11 @@ impl Render for ChatPanel {
             )
             .child(
                 v_flex()
+                    .relative()
+                    .when(show_hints, |view| {
+                        view.child(ui::Kbd::new(gpui::Keystroke::parse("secondary-3").unwrap())
+                            .absolute().top_neg_2().right_2())
+                    })
                     .flex_shrink_0()
                     .p_2()
                     .w_full()
@@ -1854,8 +1859,6 @@ impl Render for ChatPanel {
                                 h_flex()
                                     .pl_1()
                                     .gap_1()
-                                    .child(div().w_4().text_xs().text_color(cx.theme().text_muted)
-                                        .when(show_hints, |hint| hint.child("[3]")))
                                     .child(self.render_emoji_menu(window, cx))
                                     .child(self.render_config_menu(window, cx))
                                     .child(

@@ -17,6 +17,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Display modifier-held navigation hints as standard shortcut keycaps overlaid on their targets, without reserving layout space.
 - Highlight the chat with a labeled file drop zone and show the current upload filename and queued attachment count by the composer.
 - Simplify conversation and profile search dialogs with descriptive placeholders and no title bar or close button.
 - Align delivery-status recipients in padded rows and move retry into the dialog footer; allow error details to size to their content.

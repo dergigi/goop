@@ -218,7 +218,7 @@ impl Render for Sidebar {
                     .px_2()
                     .gap_2()
                     .justify_center()
-                    .child(
+                    .child(div().relative().flex_1().child(
                         Button::new("all")
                             .map(|this| {
                                 if self.current_filter(&RoomKind::Ongoing, cx) {
@@ -228,19 +228,21 @@ impl Render for Sidebar {
                                 }
                             })
                             .label("Inbox")
-                            .child(div().w_4().text_xs().text_color(cx.theme().text_muted)
-                                .when(show_hints, |hint| hint.child("[1]")))
                             .small()
                             .tooltip("All ongoing conversations")
                             .ghost_alt()
                             .font_semibold()
-                            .flex_1()
+                            .w_full()
                             .selected(self.current_filter(&RoomKind::Ongoing, cx))
                             .on_click(cx.listener(|this, _ev, window, cx| {
                                 this.set_filter(RoomKind::Ongoing, window, cx);
                             })),
-                    )
-                    .child(
+                    ).when(show_hints, |view| {
+                        view.when_some(ui::Kbd::binding_for_action(&crate::Command::ShowInbox, None, window), |view, hint| {
+                            view.child(hint.absolute().top_neg_2().right_1())
+                        })
+                    }))
+                    .child(div().relative().flex_1().child(
                         Button::new("requests")
                             .map(|this| {
                                 if self.current_filter(&RoomKind::Request, cx) {
@@ -250,13 +252,11 @@ impl Render for Sidebar {
                                 }
                             })
                             .label("Requests")
-                            .child(div().w_4().text_xs().text_color(cx.theme().text_muted)
-                                .when(show_hints, |hint| hint.child("[2]")))
                             .small()
                             .tooltip("Incoming new conversations")
                             .ghost_alt()
                             .font_semibold()
-                            .flex_1()
+                            .w_full()
                             .selected(!self.current_filter(&RoomKind::Ongoing, cx))
                             .when(self.new_requests, |this| {
                                 this.child(div().size_1().rounded_full().bg(cx.theme().cursor))
@@ -264,7 +264,11 @@ impl Render for Sidebar {
                             .on_click(cx.listener(|this, _ev, window, cx| {
                                 this.set_filter(RoomKind::default(), window, cx);
                             })),
-                    ),
+                    ).when(show_hints, |view| {
+                        view.when_some(ui::Kbd::binding_for_action(&crate::Command::ShowRequests, None, window), |view, hint| {
+                            view.child(hint.absolute().top_neg_2().right_1())
+                        })
+                    })),
             )
             .when(!loading && total_rooms == 0, |this| {
                 this.child(
