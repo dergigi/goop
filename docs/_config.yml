@@ -1,0 +1,9 @@
+title: Goop
+description: A small usage guide for Goop.
+baseurl: /goop
+url: https://dergigi.com
+markdown: kramdown
+exclude:
+  - research
+  - releases
+  - releasing.md

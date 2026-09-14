@@ -2,7 +2,7 @@
 
 Goop is Gigi's fork of [Coop](https://git.reya.info/reya/coop), a simple, fast, and reliable nostr client for secure messaging across all platforms.
 
-[Download the latest release](https://github.com/dergigi/goop/releases/latest).
+[Download the latest release](https://github.com/dergigi/goop/releases/latest) · [Usage guide](https://dergigi.com/goop/).
 
 Goop is designed for people who love the keyboard and would rather reach for a shortcut than a mouse.
 
