@@ -33,4 +33,5 @@ smol.workspace = true
 [dev-dependencies]
 nostr-sdk = { workspace = true, features = ["local-relay"] }
 nostr-memory.workspace = true
+nostr-gossip-memory.workspace = true
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

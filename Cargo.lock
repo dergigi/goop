@@ -1080,6 +1080,7 @@ dependencies = [
  "instant",
  "itertools 0.13.0",
  "log",
+ "nostr-gossip-memory",
  "nostr-memory",
  "nostr-sdk",
  "person",

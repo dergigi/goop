@@ -67,35 +67,20 @@ impl SendReport {
 
     /// Returns true if the send was successful.
     pub fn success(&self) -> bool {
-        self.error.is_none() && self.output.as_ref().is_some_and(|o| !o.success.is_empty())
+        self.error.is_none()
+            && self
+                .output
+                .as_ref()
+                .is_some_and(|o| o.success.values().any(EventSendStatus::is_ack))
     }
 
     /// Returns true if the send failed.
     pub fn failed(&self) -> bool {
-        self.error.is_some() && self.output.as_ref().is_some_and(|o| !o.failed.is_empty())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum SendStatus {
-    Ok {
-        id: EventId,
-        relay: RelayUrl,
-    },
-    Failed {
-        id: EventId,
-        relay: RelayUrl,
-        message: String,
-    },
-}
-
-impl SendStatus {
-    pub fn ok(id: EventId, relay: RelayUrl) -> Self {
-        Self::Ok { id, relay }
-    }
-
-    pub fn failed(id: EventId, relay: RelayUrl, message: String) -> Self {
-        Self::Failed { id, relay, message }
+        self.error.is_some()
+            || self
+                .output
+                .as_ref()
+                .is_some_and(|o| o.success.is_empty() && !o.failed.is_empty())
     }
 }
 
@@ -565,8 +550,10 @@ impl Room {
                 // Send the gift wrap event and collect the report
                 match send_gift_wrap(&client, &signer, &member, &rumor, signer_kind).await {
                     Ok(report) => {
+                        if report.success() {
+                            sents += 1;
+                        }
                         reports.push(report);
-                        sents += 1;
                     }
                     Err(error) => {
                         let report = SendReport::new(public_key).error(error.to_string());
@@ -639,11 +626,19 @@ async fn send_gift_wrap(
         .finalize_async(signer)
         .await?;
 
-    // Send the gift wrap event and collect the report
+    publish_gift_wrap(client, receiver, &event).await
+}
+
+async fn publish_gift_wrap(
+    client: &Client,
+    receiver: PublicKey,
+    event: &Event,
+) -> Result<SendReport, Error> {
+    // The SDK subscribes to acknowledgements before publishing and handles AUTH retries.
     let report = client
-        .send_event(&event)
+        .send_event(event)
         .to_nip17()
-        .ack_policy(AckPolicy::none())
+        .ack_policy(AckPolicy::all())
         .await
         .map(|output| {
             SendReport::new(receiver)
@@ -652,4 +647,72 @@ async fn send_gift_wrap(
         })?;
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    use nostr_gossip_memory::prelude::*;
+    use nostr_sdk::local_relay::MockRelay;
+
+    #[tokio::test]
+    async fn immediate_inbox_acknowledgement_is_in_the_send_report() {
+        let inbox = MockRelay::run().await.unwrap();
+        let discovery = MockRelay::run().await.unwrap();
+        let recipient = Keys::generate();
+        discovery
+            .add_event(
+                InboxRelayList::new([inbox.url().await])
+                    .finalize(&recipient)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let client = Client::builder()
+            .gossip(NostrGossipMemory::unbounded())
+            .gossip_config(
+                GossipConfig::default()
+                    .allowed(GossipAllowedRelays {
+                        local: true,
+                        without_tls: true,
+                        ..Default::default()
+                    })
+                    .no_background_refresh(),
+            )
+            .build();
+        client
+            .add_relay(discovery.url().await)
+            .capabilities(RelayCapabilities::DISCOVERY)
+            .and_connect()
+            .await
+            .unwrap();
+        let sender = Keys::generate();
+        let rumor = EventBuilder::new(Kind::PrivateDirectMessage, "fast acknowledgement")
+            .tag(Tag::public_key(recipient.public_key()))
+            .finalize_unsigned(sender.public_key());
+        let event = nip59::GiftWrapBuilder::new(recipient.public_key(), rumor)
+            .finalize_async(&sender)
+            .await
+            .unwrap();
+        // No UI listener or post-send registration: the relay responds immediately.
+        let report = publish_gift_wrap(&client, recipient.public_key(), &event)
+            .await
+            .unwrap();
+        assert!(report.success());
+        assert!(!report.pending());
+        assert!(!report.failed());
+        let output = report.output.unwrap();
+        assert_eq!(output.success.len(), 1);
+        assert!(output.success[&inbox.url().await].is_ack());
+        assert!(output.failed.is_empty());
+        client.shutdown().await;
+    }
+
+    #[test]
+    fn preparation_errors_are_failed_not_unknown() {
+        let report = SendReport::new(Keys::generate().public_key()).error("Signer unavailable");
+        assert!(report.failed());
+        assert!(!report.success());
+        assert!(!report.pending());
+    }
 }
