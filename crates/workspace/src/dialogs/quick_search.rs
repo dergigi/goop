@@ -178,6 +178,20 @@ impl QuickSearch {
         }
     }
 
+    fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
+        if self.results.is_empty() {
+            return;
+        }
+        self.selected = if down {
+            (self.selected + 1).min(self.results.len() - 1)
+        } else {
+            self.selected.saturating_sub(1)
+        };
+        self.scroll
+            .scroll_to_item(self.selected, ScrollStrategy::Top);
+        cx.notify();
+    }
+
     fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.results.get(self.selected) else {
             return;
@@ -193,7 +207,8 @@ impl QuickSearch {
             }
             Target::Conversation(room) => {
                 let data = room.read(cx);
-                let request = data.kind == RoomKind::Request && settings::AppSettings::get_screening(cx);
+                let request =
+                    data.kind == RoomKind::Request && settings::AppSettings::get_screening(cx);
                 let id = data.id;
                 let key = data.members().first().copied();
                 ChatRegistry::global(cx).update(cx, |chat, cx| chat.emit_room(&room, window, cx));
@@ -228,24 +243,13 @@ impl Render for QuickSearch {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_2()
-            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "up" | "down" => {
-                        if !this.results.is_empty() {
-                            this.selected = if event.keystroke.key == "up" {
-                                this.selected.saturating_sub(1)
-                            } else {
-                                (this.selected + 1).min(this.results.len() - 1)
-                            };
-                            this.scroll
-                                .scroll_to_item(this.selected, ScrollStrategy::Top);
-                            cx.notify();
-                        }
-                        cx.stop_propagation();
-                        window.prevent_default();
-                    }
-                    _ => {}
-                }
+            .capture_action(cx.listener(|this, _: &ui::input::MoveUp, _, cx| {
+                this.move_selection(false, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &ui::input::MoveDown, _, cx| {
+                this.move_selection(true, cx);
+                cx.stop_propagation();
             }))
             .child(Input::new(&self.input))
             .child(
