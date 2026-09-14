@@ -406,7 +406,7 @@ impl Workspace {
             }
             Command::KeyboardShortcuts => dialogs::shortcuts::open(window, cx),
             Command::SetUpAgents => {
-                cx.open_url("https://dergigi.com/goop/#how-to-use-goop-with-agents");
+                cx.open_url("https://dergigi.com/goop/#agent-guide");
             }
             Command::ShowSettings => {
                 let view = settings::init(window, cx);

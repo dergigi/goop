@@ -10,7 +10,7 @@ This guide covers Goop 2.1.
 
 If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.chat/) a try.
 
-[Keyboard shortcuts](#keyboard-shortcuts) · [How to use Goop with agents](#how-to-use-goop-with-agents)
+[Keyboard shortcuts](#keyboard-shortcuts) · [Agent Guide](#agent-guide)
 
 ## Keyboard shortcuts
 
@@ -32,7 +32,9 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 
 Quick search filters an in-memory snapshot of loaded items without querying relays as you type. Opening a profile can refresh its details. The sidebar buttons and account menu also expose the quick-search shortcuts.
 
-## How to use Goop with agents
+<span id="how-to-use-goop-with-agents"></span>
+
+## Agent Guide
 
 Your agents can send you updates and receive your replies as private NIP-17 messages.
 Goop is where you read and reply; the agent runs in its own harness, with a Nostr
