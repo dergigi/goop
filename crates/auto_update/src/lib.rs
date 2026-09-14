@@ -102,12 +102,14 @@ impl AutoUpdater {
         let repo_owner = get_github_repo_owner();
         let repo_name = get_github_repo_name();
 
-        let source =
-            GitHubSource::new(&repo_owner, &repo_name).asset_contains(match std::env::consts::OS {
-                "macos" => "macos",
-                "linux" => "linux",
-                _ => "",
-            });
+        let source = GitHubSource::new(&repo_owner, &repo_name)
+            .asset_contains(std::env::consts::OS)
+            .asset_contains(match std::env::consts::ARCH {
+                "aarch64" => "arm64",
+                "x86_64" => "x64",
+                arch => arch,
+            })
+            .with_checksums("SHA256SUMS");
 
         let updater: Entity<Updater> =
             cx.new(|cx| Updater::new(source, EngineConfig::new(version.clone()), cx));

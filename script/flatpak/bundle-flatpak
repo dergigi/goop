@@ -23,6 +23,11 @@ export BRANDING_DARK="#8E4EC6"
 export ICON_FILE="icon"
 export CHANNEL="stable"
 
+# Generate release metadata for this build.
+version=$(script/get-crate-version goop)
+mkdir -p desktop/resources/flatpak/release-info
+printf '<release version="%s" date="%s"/>\n' "$version" "$(date -u +%F)" > "desktop/resources/flatpak/release-info/$CHANNEL"
+
 # Generate manifest
 envsubst < "desktop/resources/flatpak/manifest-template.json" > "$APP_ID.json"
 

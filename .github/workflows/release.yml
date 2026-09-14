@@ -6,6 +6,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}
@@ -49,6 +52,20 @@ jobs:
         run: |
           cargo install cargo-packager --locked
           cargo packager --release
+
+      - name: Name Windows/macOS installers
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          for file in Path("dist").iterdir():
+              if file.suffix in {".dmg", ".msi", ".exe"}:
+                  file.rename(file.with_name(f"goop-{os.environ['RELEASE_PLATFORM']}{file.suffix}"))
+          PYTHON
 
       - name: Upload Windows/macOS artifacts
         if: runner.os != 'Linux'
@@ -112,6 +129,12 @@ jobs:
           find . -name "*.flatpak" -exec cp {} linux-artifacts/ \; || true
           # Find and copy snap files (if they exist)
           find . -name "*.snap" -exec cp {} linux-artifacts/ \; || true
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          for file in Path("linux-artifacts").iterdir():
+              suffix = ".tar.gz" if file.name.endswith(".tar.gz") else file.suffix
+              file.rename(file.with_name("goop-${{ matrix.platform }}" + suffix))
+          PYTHON
           ls -la linux-artifacts/
 
       - name: Upload Linux artifacts
@@ -125,6 +148,8 @@ jobs:
   release:
     name: Create Release
     needs: build
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
 
@@ -146,11 +171,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Display artifacts structure
         run: |
           echo "Artifacts structure:"
           find artifacts -type f -exec ls -la {} \;
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS
 
       - name: Create draft release
         id: create_release
@@ -160,4 +190,5 @@ jobs:
           name: ${{ steps.version.outputs.tag }}
           draft: true
           prerelease: false
+          body_path: release-notes/${{ steps.version.outputs.tag }}.md
           files: artifacts/**/*

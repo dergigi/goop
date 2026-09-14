@@ -16,7 +16,7 @@ identifier = "com.dergigi.goop"
 category = "SocialNetworking"
 version = "1.0.1"
 out-dir = "../dist"
-before-packaging-command = "cargo build --release"
+before-packaging-command = "cargo build --locked --release --features gpui_macos/runtime_shaders"
 resources = ["Cargo.toml", "src"]
 icons = [
     "resources/32x32.png",

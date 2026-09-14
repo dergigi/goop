@@ -60,6 +60,7 @@ update_version "$WORKSPACE_CARGO"
 update_version "$CRATE_CARGO"
 
 # Check git status before committing
+cargo metadata --no-deps --format-version=1 > /dev/null
 echo "Checking git status..."
 if git status --porcelain | grep -q .; then
     echo "Current uncommitted changes:"
@@ -80,7 +81,7 @@ if git status --porcelain | grep -q .; then
             ;;
         2)
             echo "Committing only version file changes..."
-            git add "$WORKSPACE_CARGO" "$CRATE_CARGO"
+            git add "$WORKSPACE_CARGO" "$CRATE_CARGO" Cargo.lock
             ;;
         3)
             echo "Release aborted by user"
@@ -94,7 +95,7 @@ if git status --porcelain | grep -q .; then
 else
     # Only version files were modified, add them specifically
     echo "Only version files were modified, adding them for commit..."
-    git add "$WORKSPACE_CARGO" "$CRATE_CARGO"
+    git add "$WORKSPACE_CARGO" "$CRATE_CARGO" Cargo.lock
 fi
 
 # Commit the changes
@@ -109,7 +110,7 @@ fi
 
 # Push version changes to origin
 echo "Pushing version changes to origin..."
-if git push origin master; then
+if git push origin refs/heads/master:refs/heads/master; then
     echo "✓ Successfully pushed version changes to origin"
 else
     echo "Error: Failed to push version changes to origin"

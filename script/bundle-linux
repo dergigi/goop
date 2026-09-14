@@ -116,6 +116,7 @@ envsubst < "desktop/resources/goop.desktop.in" > "${goop_dir}/share/applications
 arch=$(uname -m)
 target="linux-${arch}"
 archive="goop-${target}.tar.gz"
+mkdir -p "${target_dir}/release"
 
 rm -rf "${archive}"
 remove_match="goop(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
