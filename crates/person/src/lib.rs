@@ -268,6 +268,44 @@ impl PersonRegistry {
         cx.refresh_windows();
     }
 
+    /// Refresh a visible profile immediately, without the background batch delay.
+    /// Deliver cached and streamed metadata separately so the UI can paint early.
+    pub fn refresh(
+        &mut self,
+        public_key: PublicKey,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), Error>> {
+        let client = NostrRegistry::global(cx).read(cx).client();
+        self.seen
+            .write()
+            .unwrap()
+            .insert(public_key, Instant::now());
+        cx.spawn(async move |this, cx| {
+            let filter = Filter::new()
+                .kind(Kind::Metadata)
+                .author(public_key)
+                .limit(1);
+            for event in client.database().query(filter.clone()).await? {
+                if let Ok(person) = Person::from_metadata_event(&event) {
+                    this.update(cx, |this, cx| this.insert(person, cx))?;
+                }
+            }
+            // Filter targets retain automatic outbox discovery.
+            let mut stream = client
+                .stream_events(filter)
+                .timeout(Duration::from_secs(10))
+                .await?;
+            while let Some((_, event)) = stream.next().await {
+                if let Ok(event) = event
+                    && let Ok(person) = Person::from_metadata_event(&event)
+                {
+                    this.update(cx, |this, cx| this.insert(person, cx))?;
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Get single person by public key
     pub fn get(&self, public_key: &PublicKey, cx: &App) -> Person {
         // Render cached metadata immediately, but still refresh it on first use

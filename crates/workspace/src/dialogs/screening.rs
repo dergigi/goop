@@ -28,16 +28,21 @@ pub struct Screening {
     public_key: PublicKey,
 
     /// Whether the person's address is verified.
-    verified: bool,
+    verified: Option<bool>,
+    verifying_address: Option<Nip05Address>,
+    verification_task: Option<Task<()>>,
+    profile_loading: bool,
+    activity_loading: bool,
 
     /// Whether the person is followed by current user.
-    followed: bool,
+    followed: Option<bool>,
 
     /// Last time the person was active.
     last_active: Option<Timestamp>,
 
     /// All mutual contacts of the person being screened.
     mutual_contacts: Vec<PublicKey>,
+    mutual_loading: bool,
 
     /// Async tasks
     tasks: SmallVec<[Task<()>; 3]>,
@@ -56,21 +61,42 @@ impl Screening {
         }));
 
         cx.defer_in(window, |this, _window, cx| {
+            this.load_profile(cx);
             this.check_contact(cx);
             this.check_wot(cx);
             this.check_last_activity(cx);
-            this.verify_identifier(cx);
         });
 
         Self {
             public_key,
-            verified: false,
-            followed: false,
+            verified: None,
+            verifying_address: None,
+            verification_task: None,
+            profile_loading: true,
+            activity_loading: true,
+            followed: None,
             last_active: None,
             mutual_contacts: vec![],
+            mutual_loading: true,
             tasks: smallvec![],
             _subscriptions: subscriptions,
         }
+    }
+
+    fn load_profile(&mut self, cx: &mut Context<Self>) {
+        self.profile_loading = true;
+        let task = PersonRegistry::global(cx)
+            .update(cx, |persons, cx| persons.refresh(self.public_key, cx));
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            if let Err(error) = task.await {
+                log::warn!("Could not refresh request profile: {error}");
+            }
+            this.update(cx, |this, cx| {
+                this.profile_loading = false;
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     fn check_contact(&mut self, cx: &mut Context<Self>) {
@@ -106,7 +132,7 @@ impl Screening {
             let result = task.await.unwrap_or(false);
 
             this.update(cx, |this, cx| {
-                this.followed = result;
+                this.followed = Some(result);
                 cx.notify();
             })
             .ok();
@@ -125,10 +151,26 @@ impl Screening {
         let task: Task<Result<Vec<PublicKey>, Error>> = cx.background_spawn(async move {
             // Check mutual contacts
             let filter = Filter::new().kind(Kind::ContactList).pubkey(public_key);
+            let own_contacts = client
+                .database()
+                .query(
+                    Filter::new()
+                        .kind(Kind::ContactList)
+                        .author(current_user)
+                        .limit(1),
+                )
+                .await?;
+            let followed: std::collections::HashSet<_> = own_contacts
+                .iter()
+                .flat_map(|event| event.tags.public_keys())
+                .collect();
             let mut mutual_contacts = vec![];
 
             if let Ok(events) = client.database().query(filter).await {
-                for event in events.into_iter().filter(|ev| ev.pubkey != current_user) {
+                for event in events
+                    .into_iter()
+                    .filter(|ev| followed.contains(&ev.pubkey) && ev.pubkey != public_key)
+                {
                     mutual_contacts.push(event.pubkey);
                 }
             }
@@ -141,12 +183,18 @@ impl Screening {
                 Ok(contacts) => {
                     this.update(cx, |this, cx| {
                         this.mutual_contacts = contacts;
+                        this.mutual_loading = false;
                         cx.notify();
                     })
                     .ok();
                 }
                 Err(e) => {
                     log::error!("Failed to fetch mutual contacts: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.mutual_loading = false;
+                        cx.notify();
+                    })
+                    .ok();
                 }
             };
         }));
@@ -174,7 +222,9 @@ impl Screening {
             {
                 while let Some((_url, event)) = stream.next().await {
                     if let Ok(event) = event {
-                        activity = Some(event.created_at);
+                        activity = Some(
+                            activity.map_or(event.created_at, |old| old.max(event.created_at)),
+                        );
                     }
                 }
             }
@@ -187,6 +237,7 @@ impl Screening {
 
             this.update(cx, |this, cx| {
                 this.last_active = result;
+                this.activity_loading = false;
                 cx.notify();
             })
             .ok();
@@ -202,14 +253,16 @@ impl Screening {
             return;
         };
 
+        self.verifying_address = Some(address.clone());
+        self.verified = None;
         let task: Task<Result<bool, Error>> =
             cx.background_spawn(async move { address.verify(&http_client, &public_key).await });
 
-        self.tasks.push(cx.spawn(async move |this, cx| {
+        self.verification_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await.unwrap_or(false);
 
             this.update(cx, |this, cx| {
-                this.verified = result;
+                this.verified = Some(result);
                 cx.notify();
             })
             .ok();
@@ -313,22 +366,45 @@ impl Render for Screening {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const CONTACT: &str = "This person is one of your contacts.";
         const NOT_CONTACT: &str = "This person is not one of your contacts.";
-        const NO_ACTIVITY: &str = "This person hasn't had any activity.";
+        const NO_ACTIVITY: &str = "No public activity found on the relays checked.";
         const RELAY_INFO: &str = "Only checked on public relays; may be inaccurate.";
-        const NO_MUTUAL: &str = "You don't have any mutual contacts.";
+        const NO_MUTUAL: &str = "No mutual contacts found.";
         const NIP05_MATCH: &str = "The address matches the user's public key.";
-        const NIP05_NOT_MATCH: &str = "The address does not match the user's public key.";
-        const NO_NIP05: &str = "This person has not set up their friendly address";
+        const NIP05_NOT_MATCH: &str = "Could not verify this address.";
+        const NO_NIP05: &str = "No address found in the available profile.";
 
+        let address = self.address(cx);
+        if address != self.verifying_address {
+            self.verification_task = None;
+            self.verifying_address = None;
+            self.verified = None;
+            if address.is_some() {
+                self.verify_identifier(cx);
+            }
+        }
         let profile = self.profile(cx);
         let shorten_pubkey = shorten_pubkey(self.public_key, 8);
 
-        let last_active = self.last_active.map(|_| true);
+        let last_active = if self.activity_loading {
+            None
+        } else {
+            Some(self.last_active.is_some())
+        };
         let mutuals = self.mutual_contacts.len();
-        let mutuals_str = format!("You have {} mutual contacts with this person.", mutuals);
+        let mutuals_str = format!(
+            "{} mutual contact{}",
+            mutuals,
+            if mutuals == 1 { "" } else { "s" }
+        );
 
         v_flex()
             .gap_4()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().text_muted)
+                    .child("This person wants to start a conversation with you."),
+            )
             .child(
                 v_flex()
                     .gap_3()
@@ -336,6 +412,28 @@ impl Render for Screening {
                     .justify_center()
                     .text_center()
                     .child(Avatar::new(profile.avatar()).large())
+                    .when(self.profile_loading, |this| {
+                        this.child(
+                            h_flex().gap_2().child(Indicator::new().small()).child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().text_muted)
+                                    .child("Loading profile…"),
+                            ),
+                        )
+                    })
+                    .when(
+                        !self.profile_loading && profile.metadata() == Metadata::default(),
+                        |this| {
+                            this.child(
+                                Button::new("retry-profile")
+                                    .label("Retry loading profile")
+                                    .small()
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| this.load_profile(cx))),
+                            )
+                        },
+                    )
                     .child(
                         div()
                             .font_semibold()
@@ -359,7 +457,19 @@ impl Render for Screening {
                             .text_ellipsis()
                             .text_center()
                             .line_height(relative(1.))
-                            .child(shorten_pubkey),
+                            .child(
+                                Button::new("copy-request-key")
+                                    .label(shorten_pubkey)
+                                    .small()
+                                    .ghost()
+                                    .tooltip("Copy public key")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let Ok(npub) = this.public_key.to_bech32();
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            npub,
+                                        ));
+                                    })),
+                            ),
                     )
                     .child(
                         h_flex()
@@ -396,17 +506,21 @@ impl Render for Screening {
                             .items_start()
                             .gap_2()
                             .text_sm()
-                            .child(status_badge(Some(self.followed), cx))
+                            .child(status_badge(self.followed, cx))
                             .child(
                                 v_flex().text_sm().child("Contact").child(
                                     div()
                                         .line_clamp(1)
                                         .text_color(cx.theme().text_muted)
                                         .child({
-                                            if self.followed {
+                                            if self.followed == Some(true) {
                                                 SharedString::from(CONTACT)
                                             } else {
-                                                SharedString::from(NOT_CONTACT)
+                                                SharedString::from(if self.followed.is_none() {
+                                                    "Checking contacts…"
+                                                } else {
+                                                    NOT_CONTACT
+                                                })
                                             }
                                         }),
                                 ),
@@ -422,17 +536,14 @@ impl Render for Screening {
                                 v_flex()
                                     .text_sm()
                                     .child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .child("Activity on Public Relays")
-                                            .child(
-                                                Button::new("active")
-                                                    .icon(IconName::Info)
-                                                    .xsmall()
-                                                    .ghost()
-                                                    .rounded()
-                                                    .tooltip(RELAY_INFO),
-                                            ),
+                                        h_flex().gap_0p5().child("Public activity").child(
+                                            Button::new("active")
+                                                .icon(IconName::Info)
+                                                .xsmall()
+                                                .ghost()
+                                                .rounded()
+                                                .tooltip(RELAY_INFO),
+                                        ),
                                     )
                                     .child(
                                         div()
@@ -446,7 +557,13 @@ impl Render for Screening {
                                                         t.to_human_time()
                                                     )))
                                                 } else {
-                                                    this.child(SharedString::from(NO_ACTIVITY))
+                                                    this.child(SharedString::from(
+                                                        if self.activity_loading {
+                                                            "Checking public activity…"
+                                                        } else {
+                                                            NO_ACTIVITY
+                                                        },
+                                                    ))
                                                 }
                                             }),
                                     ),
@@ -456,17 +573,22 @@ impl Render for Screening {
                         h_flex()
                             .items_start()
                             .gap_2()
-                            .child(status_badge(Some(self.verified), cx))
+                            .child(status_badge(
+                                if self.profile_loading || address.is_some() {
+                                    self.verified
+                                } else {
+                                    Some(false)
+                                },
+                                cx,
+                            ))
                             .child(
                                 v_flex()
                                     .text_sm()
                                     .child({
                                         if let Some(addr) = self.address(cx) {
-                                            SharedString::from(format!("{} validation", addr))
+                                            SharedString::from(format!("Address: {}", addr))
                                         } else {
-                                            SharedString::from(
-                                                "Friendly Address (NIP-05) validation",
-                                            )
+                                            SharedString::from("Profile address (NIP-05)")
                                         }
                                     })
                                     .child(
@@ -475,13 +597,23 @@ impl Render for Screening {
                                             .text_color(cx.theme().text_muted)
                                             .child({
                                                 if self.address(cx).is_some() {
-                                                    if self.verified {
+                                                    if self.verified == Some(true) {
                                                         SharedString::from(NIP05_MATCH)
                                                     } else {
-                                                        SharedString::from(NIP05_NOT_MATCH)
+                                                        SharedString::from(
+                                                            if self.verified.is_none() {
+                                                                "Verifying address…"
+                                                            } else {
+                                                                NIP05_NOT_MATCH
+                                                            },
+                                                        )
                                                     }
                                                 } else {
-                                                    SharedString::from(NO_NIP05)
+                                                    SharedString::from(if self.profile_loading {
+                                                        "Waiting for profile…"
+                                                    } else {
+                                                        NO_NIP05
+                                                    })
                                                 }
                                             }),
                                     ),
@@ -491,7 +623,14 @@ impl Render for Screening {
                         h_flex()
                             .items_start()
                             .gap_2()
-                            .child(status_badge(Some(mutuals > 0), cx))
+                            .child(status_badge(
+                                if self.mutual_loading {
+                                    None
+                                } else {
+                                    Some(mutuals > 0)
+                                },
+                                cx,
+                            ))
                             .child(
                                 h_flex()
                                     .text_sm()
@@ -503,7 +642,11 @@ impl Render for Screening {
                                                 if mutuals > 0 {
                                                     SharedString::from(mutuals_str)
                                                 } else {
-                                                    SharedString::from(NO_MUTUAL)
+                                                    SharedString::from(if self.mutual_loading {
+                                                        "Checking mutual contacts…"
+                                                    } else {
+                                                        NO_MUTUAL
+                                                    })
                                                 }
                                             }),
                                     )

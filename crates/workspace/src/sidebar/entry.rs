@@ -156,11 +156,12 @@ impl RenderOnce for RoomEntry {
 
                         window.open_modal(cx, move |this, _window, _cx| {
                             this.confirm()
+                                .title("Message request")
                                 .child(screening.clone())
                                 .button_props(
                                     ModalButtonProps::default()
                                         .cancel_text("Ignore")
-                                        .ok_text("Response"),
+                                        .ok_text("Accept"),
                                 )
                                 .on_cancel(move |_event, window, cx| {
                                     window.dispatch_action(Box::new(ClosePanel), cx);
