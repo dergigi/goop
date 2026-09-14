@@ -91,6 +91,8 @@ impl Sidebar {
         });
 
         let mut subscriptions = smallvec![];
+        subscriptions.push(cx.observe(&NostrRegistry::global(cx), |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&chat, |_, _, cx| cx.notify()));
 
         subscriptions.push(
             // Subscribe to find input events
@@ -511,7 +513,8 @@ impl Render for Sidebar {
         let nostr = NostrRegistry::global(cx);
         let chat = ChatRegistry::global(cx);
         let logged_in = nostr.read(cx).current_user().is_some();
-        let loading = chat.read(cx).loading() && logged_in;
+        let restoring = nostr.read(cx).identity_loading();
+        let loading = restoring || (chat.read(cx).loading() && logged_in);
 
         let total_rooms = chat.read(cx).count(self.filter.read(cx), cx);
 
@@ -783,7 +786,11 @@ impl Render for Sidebar {
                                 .font_semibold()
                                 .text_color(cx.theme().text_muted)
                                 .child(Indicator::new().small().color(cx.theme().icon_accent))
-                                .child("Getting messages..."),
+                                .child(if restoring {
+                                    "Restoring your identity…"
+                                } else {
+                                    "Loading conversations…"
+                                }),
                         ),
                 )
             })

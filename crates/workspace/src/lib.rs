@@ -18,6 +18,7 @@ use smallvec::{SmallVec, smallvec};
 use state::{IMAGE_CACHE_SIZE, NostrRegistry, StateEvent};
 use theme::{ActiveTheme, SIDEBAR_WIDTH, Theme, ThemeRegistry};
 use ui::avatar::Avatar;
+use ui::indicator::Indicator;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{ClosePanel, DockArea, DockItem, DockPlacement, PanelView};
 use ui::menu::{DropdownMenu, PopupMenuItem};
@@ -96,6 +97,8 @@ impl Workspace {
         let image_cache = GoopImageCache::new(IMAGE_CACHE_SIZE, cx);
 
         let mut subscriptions = smallvec![];
+        subscriptions.push(cx.observe(&nostr, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&chat, |_, _, cx| cx.notify()));
 
         subscriptions.push(
             // Observe system appearance and update theme
@@ -548,11 +551,27 @@ impl Workspace {
     fn titlebar_left(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let nostr = NostrRegistry::global(cx);
         let current_user = nostr.read(cx).current_user();
+        let restoring = nostr.read(cx).identity_loading();
+        let loading_chats = current_user.is_some() && ChatRegistry::global(cx).read(cx).loading();
 
         h_flex()
             .flex_shrink_0()
             .gap_2()
-            .when_none(&current_user, |this| {
+            .when(restoring || loading_chats, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(cx.theme().text_muted)
+                        .child(Indicator::new().small())
+                        .child(if restoring {
+                            "Restoring your identity…"
+                        } else {
+                            "Loading conversations…"
+                        }),
+                )
+            })
+            .when(current_user.is_none() && !restoring, |this| {
                 this.child(
                     div()
                         .text_xs()

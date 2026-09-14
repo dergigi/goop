@@ -85,6 +85,9 @@ pub struct NostrRegistry {
     /// Current user's public key
     current_user: Option<PublicKey>,
 
+    /// True until saved credentials and their signer have finished resolving.
+    identity_loading: bool,
+
     media_servers: Vec<Url>,
     media_servers_task: Option<Task<()>>,
 
@@ -138,7 +141,7 @@ impl NostrRegistry {
             this.connect_bootstrap_relays(cx);
 
             if cfg!(target_arch = "wasm32") {
-                cx.emit(StateEvent::NoSigner);
+                this.finish_identity_loading(cx);
             } else if let Some(secret) = cli_key {
                 // Use CLI-provided key -- same path as get_user_credential
                 let keys = Keys::new(secret);
@@ -152,6 +155,7 @@ impl NostrRegistry {
             client,
             signer,
             current_user: None,
+            identity_loading: true,
             media_servers: Vec::new(),
             media_servers_task: None,
             tasks: vec![],
@@ -171,6 +175,18 @@ impl NostrRegistry {
     /// Get the current user's public key
     pub fn current_user(&self) -> Option<PublicKey> {
         self.current_user
+    }
+
+    pub fn identity_loading(&self) -> bool {
+        self.identity_loading
+    }
+
+    fn finish_identity_loading(&mut self, cx: &mut Context<Self>) {
+        self.identity_loading = false;
+        if self.current_user.is_none() {
+            cx.emit(StateEvent::NoSigner);
+        }
+        cx.notify();
     }
 
     pub fn media_servers(&self) -> &[Url] {
@@ -203,12 +219,15 @@ impl NostrRegistry {
         <T as AsyncSignEvent>::Error: std::error::Error + Send + Sync + 'static,
         <T as AsyncNip44>::Error: std::error::Error + Send + Sync + 'static,
     {
+        self.identity_loading = true;
+        cx.notify();
         let task = cx.spawn(async move |this, cx| {
             match new_signer.get_public_key_async().await {
                 Ok(public_key) => {
                     this.update(cx, |this, cx| {
                         this.signer.swap_inner(new_signer);
                         this.current_user = Some(public_key);
+                        this.identity_loading = false;
                         this.media_servers.clear();
                         this.refresh_media_servers(cx);
                         cx.emit(StateEvent::SignerChanged);
@@ -216,7 +235,8 @@ impl NostrRegistry {
                     })?;
                 }
                 Err(e) => {
-                    this.update(cx, |_this, cx| {
+                    this.update(cx, |this, cx| {
+                        this.finish_identity_loading(cx);
                         cx.emit(StateEvent::error(e.to_string()));
                     })?;
                 }
@@ -267,47 +287,56 @@ impl NostrRegistry {
         let master_keyring = self.get_master_key(cx);
 
         self.tasks.push(cx.spawn(async move |this, cx| {
-            match user_keyring.await {
-                Ok(Some((_username, secret))) => {
-                    let content = String::from_utf8(secret)?;
+            let result: Result<(), Error> = async {
+                match user_keyring.await? {
+                    Some((_username, secret)) => {
+                        let content = String::from_utf8(secret)?;
 
-                    if content.starts_with("nsec1") {
-                        let secret_key = SecretKey::parse(&content)?;
-                        let keys = Keys::new(secret_key);
+                        if content.starts_with("nsec1") {
+                            let secret_key = SecretKey::parse(&content)?;
+                            let keys = Keys::new(secret_key);
 
-                        this.update(cx, |this, cx| {
-                            this.set_signer(keys, cx);
-                            cx.notify();
-                        })?;
-                    } else if content.starts_with("bunker://") {
-                        let keys = master_keyring.await;
-                        let timeout = Duration::from_secs(30);
-                        let uri = NostrConnectUri::parse(content)?;
+                            this.update(cx, |this, cx| {
+                                this.set_signer(keys, cx);
+                                cx.notify();
+                            })?;
+                        } else if content.starts_with("bunker://") {
+                            let keys = master_keyring.await;
+                            let timeout = Duration::from_secs(30);
+                            let uri = NostrConnectUri::parse(content)?;
 
-                        // Construct the nostr connect signer
-                        let mut signer = NostrConnect::new(uri, keys, timeout, None)?;
+                            // Construct the nostr connect signer
+                            let mut signer = NostrConnect::new(uri, keys, timeout, None)?;
 
-                        // Handle auth url with the default browser
-                        signer.auth_url_handler(GoopAuthUrlHandler);
+                            // Handle auth url with the default browser
+                            signer.auth_url_handler(GoopAuthUrlHandler);
 
-                        this.update(cx, |this, cx| {
-                            this.set_signer(signer, cx);
-                            cx.notify();
-                        })?;
-                    } else if content == "proxy" {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        this.update(cx, |this, cx| {
-                            this.connect_proxy(cx);
-                        })?;
+                            this.update(cx, |this, cx| {
+                                this.set_signer(signer, cx);
+                                cx.notify();
+                            })?;
+                        } else if content == "proxy" {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            this.update(cx, |this, cx| {
+                                this.connect_proxy(cx);
+                            })?;
+                        } else {
+                            return Err(anyhow!("Unrecognized saved identity format"));
+                        }
+                    }
+                    None => {
+                        this.update(cx, |this, cx| this.finish_identity_loading(cx))?;
                     }
                 }
-                _ => {
-                    this.update(cx, |_, cx| {
-                        cx.emit(StateEvent::NoSigner);
-                    })?;
-                }
+                Ok(())
             }
-
+            .await;
+            if let Err(error) = result {
+                this.update(cx, |this, cx| {
+                    this.finish_identity_loading(cx);
+                    cx.emit(StateEvent::error(error.to_string()));
+                })?;
+            }
             Ok(())
         }));
     }
