@@ -19,6 +19,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Refresh open delivery-status dialogs as recipients progress, including relay results, queued/paused states, and the retry button.
 - Include newly added icons in incremental builds so the Agent Guide robot icon appears.
 
 ## [2.1.0] - 2026-09-14

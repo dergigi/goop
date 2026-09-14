@@ -45,6 +45,7 @@ static EMOJI_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\p{Emoji}\u{200D}\u{FE0F}\u{20E3}]+$").unwrap());
 
 mod actions;
+mod delivery_status;
 mod find;
 mod text;
 
@@ -1195,6 +1196,7 @@ impl ChatPanel {
 
     fn render_sent_reports(&self, id: &EventId, cx: &App) -> impl IntoElement {
         let reports = self.sent_reports(id, cx);
+        let message_id = *id;
 
         let pending = reports
             .as_ref()
@@ -1238,27 +1240,33 @@ impl ChatPanel {
                     this.on_click(move |_e, window, cx| {
                         let reports = reports.clone();
 
-                        window.open_modal(cx, move |this, _window, cx| {
-                            this.title(SharedString::from("Delivery status"))
-                                .show_close(true)
-                                .when(pending || paused, |this| {
-                                    this.footer(|_, _, _, _| {
-                                        vec![Button::new("retry-outgoing")
-                                            .label("Retry queued messages")
-                                            .on_click(|_, _, cx| {
-                                                ChatRegistry::global(cx).read(cx).retry_outgoing()
-                                            })]
+                        ui::Root::update(window, cx, move |root, window, cx| {
+                            // Drop observers when the dialog closes.
+                            let subscriptions = [
+                                cx.observe(&ChatRegistry::global(cx), |_, _, cx| cx.notify()),
+                                cx.observe(&PersonRegistry::global(cx), |_, _, cx| cx.notify()),
+                            ];
+                            root.open_modal(move |this, _window, cx| {
+                                let _subscriptions = &subscriptions;
+                                let reports = ChatRegistry::global(cx).read(cx)
+                                    .outgoing_reports(&message_id)
+                                    .unwrap_or_else(|| reports.clone());
+                                let retryable = reports.iter().any(|r| r.pending() || r.paused);
+                                this.title(SharedString::from("Delivery status"))
+                                    .show_close(true)
+                                    .when(retryable, |this| {
+                                        this.footer(|_, _, _, _| {
+                                            vec![Button::new("retry-outgoing")
+                                                .label("Retry queued messages")
+                                                .on_click(|_, _, cx| {
+                                                    ChatRegistry::global(cx).read(cx).retry_outgoing()
+                                                })]
+                                        })
                                     })
-                                })
-                                .child(v_flex().gap_4().children({
-                                    let mut items = Vec::with_capacity(reports.len());
-
-                                    for report in reports.iter() {
-                                        items.push(Self::render_report(report, cx))
-                                    }
-
-                                    items
-                                }))
+                                    .child(v_flex().gap_4().children(
+                                        reports.iter().map(|report| Self::render_report(report, cx)),
+                                    ))
+                            }, window, cx);
                         });
                     })
                 })
@@ -1290,7 +1298,9 @@ impl ChatPanel {
                             .child(div().text_sm().font_semibold().child(name.clone()))
                             .child(
                                 div().text_xs().text_color(cx.theme().text_muted)
-                                    .child(if report.self_copy { "Your copy" } else { "Recipient" }),
+                                    .child(SharedString::from(format!("{} · {}",
+                                        if report.self_copy { "Your copy" } else { "Recipient" },
+                                        delivery_status::delivery_status_label(report)))),
                             ),
                     ),
             )
