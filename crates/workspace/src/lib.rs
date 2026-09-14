@@ -873,12 +873,12 @@ impl Workspace {
                         menu.separator()
                             .menu("Rescan all history", Box::new(Command::LoadOlderHistory))
                             .menu(
-                                "Search other configured relays",
-                                Box::new(Command::SearchOtherRelays),
-                            )
-                            .menu(
                                 "Retry failed decryptions",
                                 Box::new(Command::RetryDecryption),
+                            )
+                            .menu(
+                                "Broaden message scan to other relays",
+                                Box::new(Command::SearchOtherRelays),
                             )
                             .separator()
                             .menu_with_icon(
