@@ -22,6 +22,10 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 
 Quick search filters an in-memory snapshot of loaded items without querying relays as you type. Opening a profile can refresh its details. The sidebar buttons and account menu also expose the quick-search shortcuts.
 
+### Versioning and changelog
+
+Goop follows [Semantic Versioning 2.0.0](https://semver.org/) and [Keep a Changelog 1.0.0](https://keepachangelog.com/en/1.0.0/). See [CHANGELOG.md](CHANGELOG.md) for released and upcoming changes, and the [release guide](docs/releasing.md) for compatibility rules and the release process.
+
 Upstream: https://git.reya.info/reya/coop.git
 
 ### License
