@@ -28,11 +28,12 @@ Copy this prompt and send it to your OpenClaw agent:
 Use clawhub.ai/dergigi/nihao to create a nostr identity for yourself &
 after that use github.com/fabianfabian/openclaw-nostr-nip17
 to set yourself up with NIP-17. DM me when you’re done.
-My NIP-05 is dergigi.com
+My nostr identity is PASTE_YOUR_NPUB_HERE
 ```
 
-Replace `dergigi.com` with your own NIP-05 address. If you don’t have one,
-replace the last sentence with `My npub is npub1…`, using your full Goop public key.
+Replace `PASTE_YOUR_NPUB_HERE` with your full Goop public key (`npub1…`) before
+sending the prompt. If you have a NIP-05 address, you can instead write
+`My NIP-05 is whatever@domain.com`, using your own address.
 
 **Not on Nostr yet? Start with the [Nihao skill](https://clawhub.ai/dergigi/skills/nihao).**
 Ask your OpenClaw agent to use it to set up its identity, profile, and DM relays.
