@@ -16,6 +16,19 @@ struct QueueState {
     attempted: HashSet<EventId>,
 }
 
+struct EnqueuePermit {
+    state: Arc<Mutex<QueueState>>,
+    id: EventId,
+    armed: bool,
+}
+impl Drop for EnqueuePermit {
+    fn drop(&mut self) {
+        if self.armed {
+            self.state.lock().unwrap().pending.remove(&self.id);
+        }
+    }
+}
+
 /// Bound both network backpressure and concurrent remote-signer requests.
 #[derive(Debug, Clone)]
 pub(super) struct DecryptQueue {
@@ -54,10 +67,15 @@ impl DecryptQueue {
             }
             state.pending.insert(id);
         }
+        let mut permit = EnqueuePermit {
+            state: self.state.clone(),
+            id,
+            armed: true,
+        };
         if self.sender.send_async((event, historical)).await.is_err() {
-            self.state.lock().unwrap().pending.remove(&id);
             return Err(anyhow!("Message loading stopped"));
         }
+        permit.armed = false;
         Ok(())
     }
 
@@ -128,6 +146,36 @@ impl DecryptQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancelling_a_blocked_enqueue_does_not_prevent_retry() {
+        let (queue, receiver) = DecryptQueue::new();
+        for i in 0..256 {
+            let event = EventBuilder::new(Kind::GiftWrap, i.to_string())
+                .finalize(&Keys::generate())
+                .unwrap();
+            queue.enqueue(event, false).await.unwrap();
+        }
+        let event = EventBuilder::new(Kind::GiftWrap, "retry me")
+            .finalize(&Keys::generate())
+            .unwrap();
+        let cloned_queue = queue.clone();
+        let cloned_event = event.clone();
+        let blocked = tokio::spawn(async move { cloned_queue.enqueue(cloned_event, false).await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while queue.pending() != 257 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        blocked.abort();
+        let _ = blocked.await;
+        assert_eq!(queue.pending(), 256);
+        receiver.recv_async().await.unwrap();
+        queue.enqueue(event.clone(), false).await.unwrap();
+        assert!(receiver.try_iter().any(|(queued, _)| queued.id == event.id));
+    }
+
     #[tokio::test]
     async fn failed_decryption_can_be_retried_without_duplicate_jobs() {
         let client = Client::builder()

@@ -80,6 +80,7 @@ pub struct ChatRegistry {
 
     history: BTreeMap<RelayUrl, RelayHistory>,
     history_running: bool,
+    history_error: Option<String>,
     last_history: Option<Instant>,
     queue: Option<DecryptQueue>,
     history_task: Option<Task<Result<(), Error>>>,
@@ -172,6 +173,7 @@ impl ChatRegistry {
             event_map: Arc::new(RwLock::new(HashMap::default())),
             history: BTreeMap::new(),
             history_running: false,
+            history_error: None,
             last_history: None,
             queue: None,
             history_task: None,
@@ -320,6 +322,8 @@ impl ChatRegistry {
                 this.update(cx, |_this, cx| {
                     cx.emit(ChatEvent::InboxRelayNotFound);
                 })?;
+            } else {
+                this.update(cx, |this, cx| this.ensure_history(cx))?;
             }
 
             Ok(())
@@ -359,6 +363,7 @@ impl ChatRegistry {
         let client = nostr.read(cx).client();
         let signals = self.signal_tx.clone();
         self.history_running = true;
+        self.history_error = None;
         self.last_history = Some(Instant::now());
         self.history.clear();
         cx.notify();
@@ -419,6 +424,7 @@ impl ChatRegistry {
             this.update(cx, |this, cx| {
                 this.history_running = false;
                 if let Err(error) = &result {
+                    this.history_error = Some(error.to_string());
                     cx.emit(ChatEvent::Error(error.to_string()));
                 }
                 cx.notify();
@@ -465,6 +471,9 @@ impl ChatRegistry {
             .filter(|relay| relay.error.is_some())
             .count();
         let failed = self.count_trash_messages(cx);
+        if let Some(error) = &self.history_error {
+            return format!("History incomplete · {error} · {pending} pending · {failed} failed");
+        }
         let status = if self.history_running {
             "Loading history"
         } else if pending > 0 {
@@ -636,6 +645,8 @@ impl ChatRegistry {
 
     /// Reset the registry.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
+        self.tasks.clear();
+        self.history_error = None;
         self.history_task = None;
         self.decrypt_task = None;
         self.retry_task = None;
