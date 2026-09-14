@@ -1243,8 +1243,8 @@ impl ChatPanel {
                         ui::Root::update(window, cx, move |root, window, cx| {
                             // Drop observers when the dialog closes.
                             let subscriptions = [
-                                cx.observe(&ChatRegistry::global(cx), |_, _, cx| cx.notify()),
-                                cx.observe(&PersonRegistry::global(cx), |_, _, cx| cx.notify()),
+                                cx.observe_in(&ChatRegistry::global(cx), window, |_, _, window, _| window.refresh()),
+                                cx.observe_in(&PersonRegistry::global(cx), window, |_, _, window, _| window.refresh()),
                             ];
                             root.open_modal(move |this, _window, cx| {
                                 let _subscriptions = &subscriptions;
