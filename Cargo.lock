@@ -4988,9 +4988,11 @@ dependencies = [
  "gpui",
  "instant",
  "log",
+ "nostr-memory",
  "nostr-sdk",
  "smallvec",
  "state",
+ "tokio",
 ]
 
 [[package]]

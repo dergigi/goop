@@ -1,13 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::Error;
-use common::EventExt;
 use gpui::{App, AppContext, Context, Entity, Global, Task, Window};
 use instant::{Duration, Instant};
 use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
-use state::{Announcement, NostrRegistry, TIMEOUT, subscribe_profiles};
+use state::{Announcement, NostrRegistry};
 
 mod person;
 
@@ -36,6 +35,7 @@ pub struct PersonRegistry {
 
     /// Last metadata request for each public key
     seen: RwLock<HashMap<PublicKey, Instant>>,
+    pending: Arc<RwLock<HashSet<PublicKey>>>,
 
     /// Sender for requesting metadata
     sender: flume::Sender<PublicKey>,
@@ -66,15 +66,35 @@ impl PersonRegistry {
 
         let mut tasks = smallvec![];
 
+        let pending = Arc::new(RwLock::new(HashSet::new()));
+        let notifications_tx = tx.clone();
         let client2 = client.clone();
         tasks.push(cx.background_spawn(async move {
-            Self::handle_notifications(&client2, &tx).await;
+            Self::handle_notifications(&client2, &notifications_tx).await;
         }));
 
-        let client3 = client.clone();
+        // Disk lookup has its own worker: slow relays cannot hold cached avatars hostage.
+        let (network_tx, network_rx) = flume::unbounded();
+        let cache_client = client.clone();
+        let cache_tx = tx.clone();
         tasks.push(cx.background_spawn(async move {
-            Self::handle_requests(&client3, &metadata_rx).await;
+            dispatch_requests(&cache_client, metadata_rx, network_tx, &cache_tx).await;
         }));
+        // Reserve bounded parallelism for visible people; no idle batching timer.
+        for _ in 0..4 {
+            let client = client.clone();
+            let requests = network_rx.clone();
+            let tx = tx.clone();
+            let pending = pending.clone();
+            tasks.push(cx.background_spawn(async move {
+                while let Ok(public_key) = requests.recv_async().await {
+                    if let Err(error) = fetch_profile(&client, public_key, &tx).await {
+                        log::warn!("Could not refresh visible profile: {error}");
+                    }
+                    pending.write().unwrap().remove(&public_key);
+                }
+            }));
+        }
 
         tasks.push(cx.spawn(async move |this, cx| {
             while let Ok(event) = rx.recv_async().await {
@@ -103,6 +123,7 @@ impl PersonRegistry {
         Self {
             persons: HashMap::new(),
             seen: RwLock::new(HashMap::new()),
+            pending,
             sender: metadata_tx,
             tasks,
         }
@@ -120,6 +141,14 @@ impl PersonRegistry {
             };
 
             if let RelayMessage::Event { event, .. } = *message {
+                // Ignore history traffic before deduplication. Contact-list fanout
+                // must not block delivery of profile events already on the stream.
+                if !matches!(
+                    event.kind,
+                    Kind::Metadata | Kind::InboxRelays | Kind::Custom(10044)
+                ) {
+                    continue;
+                }
                 // Skip if the event has already been processed
                 if !processed.insert(event.id) {
                     continue;
@@ -134,12 +163,6 @@ impl PersonRegistry {
                             log::warn!("PersonRegistry channel closed, dropping metadata event");
                         }
                     }
-                    Kind::ContactList => {
-                        let public_keys = event.extract_public_keys();
-                        if let Err(e) = subscribe_profiles(client, public_keys).await {
-                            log::warn!("Failed to get metadata for contact list: {e}");
-                        }
-                    }
                     Kind::InboxRelays => {
                         tx.send_async(Dispatch::Relays(event.into_owned()))
                             .await
@@ -151,35 +174,6 @@ impl PersonRegistry {
                             .ok();
                     }
                     _ => {}
-                }
-            }
-        }
-    }
-
-    /// Handle request for metadata
-    async fn handle_requests(client: &Client, rx: &flume::Receiver<PublicKey>) {
-        let mut batch: HashSet<PublicKey> = HashSet::new();
-
-        loop {
-            match flume::Selector::new()
-                .recv(rx, |result| result.ok())
-                .wait_timeout(Duration::from_secs(TIMEOUT))
-            {
-                Ok(Some(public_key)) => {
-                    batch.insert(public_key);
-                    // Process the batch if it's full
-                    if batch.len() >= 20
-                        && let Err(e) = subscribe_profiles(client, std::mem::take(&mut batch)).await
-                    {
-                        log::warn!("Failed to get metadata batch: {e}");
-                    }
-                }
-                _ => {
-                    if !batch.is_empty()
-                        && let Err(e) = subscribe_profiles(client, std::mem::take(&mut batch)).await
-                    {
-                        log::warn!("Failed to get metadata batch: {e}");
-                    }
                 }
             }
         }
@@ -254,18 +248,22 @@ impl PersonRegistry {
     pub fn insert(&mut self, person: Person, cx: &mut App) {
         let public_key = person.public_key();
 
-        match self.persons.get(&public_key) {
-            Some(this) => {
-                this.update(cx, |this, cx| {
-                    this.merge_metadata(&person);
+        let changed = match self.persons.get(&public_key) {
+            Some(this) => this.update(cx, |this, cx| {
+                let changed = this.merge_metadata(&person);
+                if changed {
                     cx.notify();
-                });
-            }
+                }
+                changed
+            }),
             None => {
                 self.persons.insert(public_key, cx.new(|_| person));
+                true
             }
+        };
+        if changed {
+            cx.refresh_windows();
         }
-        cx.refresh_windows();
     }
 
     /// Refresh a visible profile immediately, without the background batch delay.
@@ -285,10 +283,8 @@ impl PersonRegistry {
                 .kind(Kind::Metadata)
                 .author(public_key)
                 .limit(1);
-            for event in client.database().query(filter.clone()).await? {
-                if let Ok(person) = Person::from_metadata_event(&event) {
-                    this.update(cx, |this, cx| this.insert(person, cx))?;
-                }
+            if let Some(person) = cached_profile(&client, public_key).await? {
+                this.update(cx, |this, cx| this.insert(person, cx))?;
             }
             // Filter targets retain automatic outbox discovery.
             let mut stream = client
@@ -331,7 +327,7 @@ impl PersonRegistry {
                 true
             }
         };
-        if should_request {
+        if should_request && self.pending.write().unwrap().insert(public_key) {
             let sender = self.sender.clone();
 
             // Spawn background task to request metadata
@@ -348,5 +344,154 @@ impl PersonRegistry {
             .get(&public_key)
             .map(|person| person.read(cx).clone())
             .unwrap_or_else(|| Person::new(public_key, Metadata::default()))
+    }
+}
+
+/// Query a visible author directly, including profiles outside the startup prewarm.
+async fn cached_profile(client: &Client, public_key: PublicKey) -> Result<Option<Person>, Error> {
+    let events = client
+        .database()
+        .query(
+            Filter::new()
+                .kind(Kind::Metadata)
+                .author(public_key)
+                .limit(1),
+        )
+        .await?;
+    Ok(events
+        .iter()
+        .find_map(|event| Person::from_metadata_event(event).ok()))
+}
+
+async fn fetch_profile(
+    client: &Client,
+    public_key: PublicKey,
+    tx: &flume::Sender<Dispatch>,
+) -> Result<(), Error> {
+    let filter = Filter::new()
+        .kind(Kind::Metadata)
+        .author(public_key)
+        .limit(1);
+    // Filter-based targeting preserves the SDK's automatic outbox discovery.
+    let mut stream = client
+        .stream_events(filter)
+        .timeout(Duration::from_secs(10))
+        .await?;
+    while let Some((_, event)) = stream.next().await {
+        if let Ok(event) = event
+            && let Ok(person) = Person::from_metadata_event(&event)
+        {
+            tx.send_async(Dispatch::Person(person)).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn dispatch_requests(
+    cache_client: &Client,
+    metadata_rx: flume::Receiver<PublicKey>,
+    network_tx: flume::Sender<PublicKey>,
+    cache_tx: &flume::Sender<Dispatch>,
+) {
+    while let Ok(public_key) = metadata_rx.recv_async().await {
+        match cached_profile(&cache_client, public_key).await {
+            Ok(Some(person)) => {
+                let _ = cache_tx.send_async(Dispatch::Person(person)).await;
+            }
+            Ok(None) => {}
+            Err(error) => log::warn!("Could not read cached profile: {error}"),
+        }
+        if network_tx.send(public_key).is_err() {
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod loading_tests {
+    use super::*;
+    fn profile(keys: &Keys, time: u64) -> Event {
+        EventBuilder::new(
+            Kind::Metadata,
+            r#"{"name":"Visible person","picture":"https://example.com/avatar.png"}"#,
+        )
+        .custom_created_at(Timestamp::from(time))
+        .finalize(keys)
+        .unwrap()
+    }
+    #[tokio::test]
+    async fn visible_cache_lookup_finds_profiles_outside_startup_prewarm() {
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let oldest = Keys::generate();
+        client
+            .database()
+            .save_event(&profile(&oldest, 1))
+            .await
+            .unwrap();
+        for time in 2..=201 {
+            client
+                .database()
+                .save_event(&profile(&Keys::generate(), time))
+                .await
+                .unwrap();
+        }
+        let prewarm = client
+            .database()
+            .query(Filter::new().kind(Kind::Metadata).limit(200))
+            .await
+            .unwrap();
+        assert!(
+            !prewarm
+                .iter()
+                .any(|event| event.pubkey == oldest.public_key())
+        );
+        let cached = cached_profile(&client, oldest.public_key())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.name().as_ref(), "Visible person");
+        assert_eq!(cached.avatar().as_ref(), "https://example.com/avatar.png");
+        client.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn cached_profiles_do_not_wait_for_queued_network_lookups() {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .build();
+            let first = Keys::generate();
+            let second = Keys::generate();
+            for keys in [&first, &second] {
+                client
+                    .database()
+                    .save_event(&profile(keys, 1))
+                    .await
+                    .unwrap();
+            }
+            let (requests, rx) = flume::unbounded();
+            let (network, network_rx) = flume::unbounded();
+            let (updates, update_rx) = flume::unbounded();
+            let worker_client = client.clone();
+            let worker = tokio::spawn(async move {
+                dispatch_requests(&worker_client, rx, network, &updates).await
+            });
+            for keys in [&first, &second] {
+                requests.send(keys.public_key()).unwrap();
+                let Dispatch::Person(person) = update_rx.recv_async().await.unwrap() else {
+                    panic!("Expected profile");
+                };
+                assert_eq!(person.public_key(), keys.public_key());
+            }
+            // Neither network request has been serviced, but both cached profiles arrived.
+            assert_eq!(network_rx.len(), 2);
+            drop(requests);
+            worker.await.unwrap();
+            client.shutdown().await;
+        })
+        .await
+        .unwrap();
     }
 }

@@ -15,3 +15,7 @@ anyhow.workspace = true
 smallvec.workspace = true
 flume.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+nostr-memory.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

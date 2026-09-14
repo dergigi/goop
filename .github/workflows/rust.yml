@@ -31,5 +31,5 @@ jobs:
       - name: Run tests
         run: cargo test --locked --verbose
 
-      - name: Run DM and signer recovery regressions
-        run: cargo test --locked --verbose -p chat -p state --lib
+      - name: Run DM, signer, and profile regressions
+        run: cargo test --locked --verbose -p chat -p state -p person --lib
