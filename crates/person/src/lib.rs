@@ -34,7 +34,7 @@ pub struct PersonRegistry {
     /// Collection of all persons (user profiles)
     persons: HashMap<PublicKey, Entity<Person>>,
 
-    /// Set of public keys that have been seen
+    /// Last metadata request for each public key
     seen: RwLock<HashMap<PublicKey, Instant>>,
 
     /// Sender for requesting metadata
@@ -270,11 +270,14 @@ impl PersonRegistry {
 
     /// Get single person by public key
     pub fn get(&self, public_key: &PublicKey, cx: &App) -> Person {
-        if let Some(person) = self.persons.get(public_key)
-            && person.read(cx).has_metadata()
-        {
-            return person.read(cx).clone();
-        }
+        // Render cached metadata immediately, but still refresh it on first use
+        // this session and periodically afterward. A cached profile without a
+        // picture must not prevent us from discovering a newer one on its outbox.
+        let has_metadata = self
+            .persons
+            .get(public_key)
+            .is_some_and(|person| person.read(cx).has_metadata());
+        let refresh_after = Duration::from_secs(if has_metadata { 60 * 60 } else { 30 });
 
         let public_key = *public_key;
 
@@ -282,7 +285,7 @@ impl PersonRegistry {
             let mut seen = self.seen.write().unwrap();
             if seen
                 .get(&public_key)
-                .is_some_and(|last| last.elapsed() < Duration::from_secs(30))
+                .is_some_and(|last| last.elapsed() < refresh_after)
             {
                 false
             } else {
