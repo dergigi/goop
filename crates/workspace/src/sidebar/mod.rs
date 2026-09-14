@@ -12,7 +12,6 @@ use std::ops::Range;
 use theme::{ActiveTheme, SIDEBAR_WIDTH};
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
-use ui::indicator::Indicator;
 use ui::scroll::Scrollbar;
 use ui::{IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
 pub(crate) mod entry;
@@ -249,35 +248,5 @@ impl Render for Sidebar {
                 )
                 .child(Scrollbar::vertical(&self.scroll_handle))
             }))
-            .when(loading, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .bottom_2()
-                        .left_0()
-                        .h_9()
-                        .w_full()
-                        .px_8()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .w_full()
-                                .h_9()
-                                .justify_center()
-                                .bg(cx.theme().background.opacity(0.85))
-                                .when(cx.theme().shadow, |this| this.shadow_md())
-                                .rounded_full()
-                                .text_xs()
-                                .font_semibold()
-                                .text_color(cx.theme().text_muted)
-                                .child(Indicator::new().small().color(cx.theme().icon_accent))
-                                .child(if restoring {
-                                    "Restoring your identity…"
-                                } else {
-                                    "Loading conversations…"
-                                }),
-                        ),
-                )
-            })
     }
 }
