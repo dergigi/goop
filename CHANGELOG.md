@@ -7,6 +7,33 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-14
+
+Goop 2.0 focuses on reliable NIP-17 messaging and fast keyboard navigation.
+
+**Upgrading:** Identity login now requires an external signer. If you previously
+used a plain secret key, configure that identity in your signer before upgrading.
+Keep an independent backup of your identity; Goop no longer offers identity backup
+or secret-key login. Existing bunker connections are retained and retry temporary
+connection failures.
+
+The first launch may take longer while Goop rebuilds verified message caches from
+retained encrypted events. If conversations are missing, use **Message History →
+Rescan all history**, or **Search other configured relays** for additional copies.
+Broader searches query your published general relays and add network traffic;
+outgoing messages still use inbox relays. NIP-04 is not supported.
+
+**Known limitations:** History coverage depends on what relays retain and return;
+“History checked” is not proof of complete account history. Timestamp ties under
+restrictive relay limits remain a coverage edge case. Full cross-client validation
+of encrypted attachments and groups, and GUI smoke tests on every target platform,
+remain incomplete; this release does not claim parity with Dark Wisp.
+
+**Downloads:** Choose arm64 for Apple Silicon/ARM or x64 for Intel/AMD. macOS and
+Windows installers lack developer-certificate signing; macOS is not notarized.
+Local Snap packages require `snap install --dangerous --classic <file.snap>`.
+`SHA256SUMS` lists checksums for all downloads.
+
 ### Added
 
 - Semantic Versioning policy, a Keep a Changelog history, and release validation that uses changelog entries for release notes.
@@ -59,5 +86,6 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/dergigi/goop/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/dergigi/goop/releases/tag/v1.1.0

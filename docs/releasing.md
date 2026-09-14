@@ -17,8 +17,7 @@ details, not a stable library API. Visual layout and wording are not API guarant
 - **PATCH**: backward-compatible bug fixes without new features.
 
 Automatic migrations that preserve access to existing data are compatible. Record
-breaking changes and migration instructions explicitly. The unreleased removal of
-plain-secret-key login requires the next stable release to increment MAJOR from
+breaking changes and migration instructions explicitly. The removal of plain-secret-key login in 2.0.0 increments MAJOR from
 1.1.0 under this policy. Do not select a smaller bump just because most changes are fixes.
 
 The workspace version in `Cargo.toml` is authoritative; application crates inherit
