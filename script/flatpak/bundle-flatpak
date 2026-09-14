@@ -18,8 +18,8 @@ archive=$(ls "target/release" | grep -E ${archive_match})
 export ARCHIVE="$archive"
 export APP_ID="com.dergigi.goop"
 export APP_NAME="Goop"
-export BRANDING_LIGHT="#FFE629"
-export BRANDING_DARK="#FFE629"
+export BRANDING_LIGHT="#8E4EC6"
+export BRANDING_DARK="#8E4EC6"
 export ICON_FILE="icon"
 export CHANNEL="stable"
 

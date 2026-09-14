@@ -135,7 +135,7 @@ impl ThemeColors {
             icon_muted: neutral().light().step_10(),
             icon_accent: brand().light().step_11(),
 
-            element_foreground: brand().light().step_12(),
+            element_foreground: gpui::white(),
             element_background: brand().light().step_9(),
             element_hover: brand().light_alpha().step_10(),
             element_active: brand().light().step_10(),
@@ -221,7 +221,7 @@ impl ThemeColors {
             icon_muted: neutral().dark().step_10(),
             icon_accent: brand().dark().step_11(),
 
-            element_foreground: brand().dark().step_1(),
+            element_foreground: gpui::white(),
             element_background: brand().dark().step_9(),
             element_hover: brand().dark_alpha().step_10(),
             element_active: brand().dark().step_10(),
@@ -280,7 +280,7 @@ fn neutral() -> ColorScaleSet {
 }
 
 fn brand() -> ColorScaleSet {
-    yellow()
+    purple()
 }
 
 fn danger() -> ColorScaleSet {

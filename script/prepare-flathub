@@ -15,8 +15,8 @@ cd "$(dirname "$0")/.."
 APP_ID="com.dergigi.goop"
 APP_NAME="Goop"
 REPO_URL="https://github.com/dergigi/goop"
-BRANDING_LIGHT="#FFE629"
-BRANDING_DARK="#FFE629"
+BRANDING_LIGHT="#8E4EC6"
+BRANDING_DARK="#8E4EC6"
 
 # Parse arguments
 RELEASE_DATE=""
