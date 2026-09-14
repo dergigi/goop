@@ -189,7 +189,7 @@ impl ChatRegistry {
         }
     }
 
-    /// Route live deliveries into the same bounded queue as downloaded history.
+    /// Route live deliveries into reserved capacity alongside downloaded history.
     fn handle_notifications(&mut self, cx: &mut Context<Self>) {
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();

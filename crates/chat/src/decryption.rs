@@ -29,24 +29,40 @@ impl Drop for EnqueuePermit {
     }
 }
 
-/// Bound both network backpressure and concurrent remote-signer requests.
+const HISTORY_CAPACITY: usize = 256;
+const INTERACTIVE_CAPACITY: usize = 64;
+const HISTORY_CONCURRENCY: usize = 3;
+
+pub(super) struct DecryptReceivers {
+    pub(super) history: flume::Receiver<(Event, bool)>,
+    pub(super) interactive: flume::Receiver<(Event, bool)>,
+}
+
+/// Reserve one of four signer slots for live messages and explicit retries.
+/// History retains three slots so neither workload can starve the other.
 #[derive(Debug, Clone)]
 pub(super) struct DecryptQueue {
-    sender: flume::Sender<(Event, bool)>,
+    history_sender: flume::Sender<(Event, bool)>,
+    interactive_sender: flume::Sender<(Event, bool)>,
     state: Arc<Mutex<QueueState>>,
     loaded: Arc<AtomicUsize>,
 }
 
 impl DecryptQueue {
-    pub fn new() -> (Self, flume::Receiver<(Event, bool)>) {
-        let (sender, receiver) = flume::bounded(256);
+    pub fn new() -> (Self, DecryptReceivers) {
+        let (history_sender, history) = flume::bounded(HISTORY_CAPACITY);
+        let (interactive_sender, interactive) = flume::bounded(INTERACTIVE_CAPACITY);
         (
             Self {
-                sender,
+                history_sender,
+                interactive_sender,
                 state: Arc::default(),
                 loaded: Arc::default(),
             },
-            receiver,
+            DecryptReceivers {
+                history,
+                interactive,
+            },
         )
     }
 
@@ -72,7 +88,13 @@ impl DecryptQueue {
             id,
             armed: true,
         };
-        if self.sender.send_async((event, historical)).await.is_err() {
+        // Retry priority must not turn an old message into a live notification.
+        let sender = if retry || !historical {
+            &self.interactive_sender
+        } else {
+            &self.history_sender
+        };
+        if sender.send_async((event, historical)).await.is_err() {
             return Err(anyhow!("Message loading stopped"));
         }
         permit.armed = false;
@@ -88,38 +110,46 @@ impl DecryptQueue {
 
     pub async fn run(
         &self,
-        receiver: flume::Receiver<(Event, bool)>,
+        receivers: DecryptReceivers,
         client: Client,
         signer: UniversalSigner,
         signals: flume::Sender<Signal>,
     ) -> Result<()> {
-        let mut jobs = receiver
-            .into_stream()
-            .map(|(event, historical)| {
-                let client = &client;
-                let signer = &signer;
-                async move {
-                    let mut result = Err(anyhow!("Signer unavailable"));
-                    // A transient signer disconnect gets one automatic retry. Further
-                    // failures stay on disk and can be retried explicitly/reconnected.
-                    for attempt in 0..2 {
-                        result = async_utility::time::timeout(
-                            Some(Duration::from_secs(30)),
-                            extract_rumor(client, signer, &event),
-                        )
-                        .await
-                        .unwrap_or_else(|| Err(anyhow!("Signer decryption timed out")));
-                        if result.is_ok() {
-                            break;
-                        }
-                        if attempt == 0 {
-                            async_utility::time::sleep(Duration::from_secs(2)).await;
-                        }
+        let decrypt_job = |(event, historical): (Event, bool)| {
+            let client = &client;
+            let signer = &signer;
+            async move {
+                let mut result = Err(anyhow!("Signer unavailable"));
+                // A transient signer disconnect gets one automatic retry. Further
+                // failures stay on disk and can be retried explicitly/reconnected.
+                for attempt in 0..2 {
+                    result = async_utility::time::timeout(
+                        Some(Duration::from_secs(30)),
+                        extract_rumor(client, signer, &event),
+                    )
+                    .await
+                    .unwrap_or_else(|| Err(anyhow!("Signer decryption timed out")));
+                    if result.is_ok() {
+                        break;
                     }
-                    (event, historical, result)
+                    if attempt == 0 {
+                        async_utility::time::sleep(Duration::from_secs(2)).await;
+                    }
                 }
-            })
-            .buffer_unordered(4);
+                (event, historical, result)
+            }
+        };
+        let history = receivers
+            .history
+            .into_stream()
+            .map(decrypt_job)
+            .buffer_unordered(HISTORY_CONCURRENCY);
+        let interactive = receivers
+            .interactive
+            .into_stream()
+            .map(decrypt_job)
+            .buffer_unordered(1);
+        let mut jobs = futures::stream::select(interactive, history);
         while let Some((event, historical, result)) = jobs.next().await {
             {
                 let mut state = self.state.lock().unwrap();
@@ -149,7 +179,7 @@ mod tests {
     #[tokio::test]
     async fn cancelling_a_blocked_enqueue_does_not_prevent_retry() {
         let (queue, receiver) = DecryptQueue::new();
-        for i in 0..256 {
+        for i in 0..HISTORY_CAPACITY {
             let event = EventBuilder::new(Kind::GiftWrap, i.to_string())
                 .finalize(&Keys::generate())
                 .unwrap();
@@ -171,9 +201,14 @@ mod tests {
         blocked.abort();
         let _ = blocked.await;
         assert_eq!(queue.pending(), 256);
-        receiver.recv_async().await.unwrap();
+        receiver.history.recv_async().await.unwrap();
         queue.enqueue(event.clone(), false).await.unwrap();
-        assert!(receiver.try_iter().any(|(queued, _)| queued.id == event.id));
+        assert!(
+            receiver
+                .history
+                .try_iter()
+                .any(|(queued, _)| queued.id == event.id)
+        );
     }
 
     #[tokio::test]
@@ -209,5 +244,167 @@ mod tests {
         assert!(matches!(second, Signal::Decrypted(id, Err(_)) if id == event.id));
         assert_eq!(queue.pending(), 0);
         worker.abort();
+    }
+    #[derive(Debug)]
+    struct GatedSigner {
+        keys: Keys,
+        blocked: HashSet<PublicKey>,
+        started: flume::Sender<()>,
+        release: flume::Receiver<()>,
+        active: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+
+    impl AsyncGetPublicKey for GatedSigner {
+        type Error = <Keys as AsyncGetPublicKey>::Error;
+        fn get_public_key_async(
+            &self,
+        ) -> futures::future::BoxFuture<'_, std::result::Result<PublicKey, Self::Error>> {
+            self.keys.get_public_key_async()
+        }
+    }
+
+    impl AsyncSignEvent for GatedSigner {
+        type Error = <Keys as AsyncSignEvent>::Error;
+        fn sign_event_async(
+            &self,
+            event: UnsignedEvent,
+        ) -> futures::future::BoxFuture<'_, std::result::Result<Event, Self::Error>> {
+            self.keys.sign_event_async(event)
+        }
+    }
+
+    impl AsyncNip44 for GatedSigner {
+        type Error = <Keys as AsyncNip44>::Error;
+        fn nip44_encrypt_async<'a>(
+            &'a self,
+            key: &'a PublicKey,
+            content: &'a str,
+        ) -> futures::future::BoxFuture<'a, std::result::Result<String, Self::Error>> {
+            self.keys.nip44_encrypt_async(key, content)
+        }
+        fn nip44_decrypt_async<'a>(
+            &'a self,
+            key: &'a PublicKey,
+            content: &'a str,
+        ) -> futures::future::BoxFuture<'a, std::result::Result<String, Self::Error>> {
+            Box::pin(async move {
+                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(active, Ordering::SeqCst);
+                if self.blocked.contains(key) {
+                    self.started.send_async(()).await.unwrap();
+                    self.release.recv_async().await.unwrap();
+                }
+                let result = self.keys.nip44_decrypt_async(key, content).await;
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                result
+            })
+        }
+    }
+
+    async fn gift_wrap(sender: &Keys, recipient: &Keys, content: &str) -> Event {
+        let rumor = EventBuilder::new(Kind::PrivateDirectMessage, content)
+            .tag(Tag::public_key(recipient.public_key()))
+            .finalize_unsigned(sender.public_key());
+        nip59::GiftWrapBuilder::new(recipient.public_key(), rumor)
+            .finalize_async(sender)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn live_messages_and_retries_finish_while_history_signer_requests_are_blocked() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .build();
+            let sender = Keys::generate();
+            let recipient = Keys::generate();
+            let (queue, receivers) = DecryptQueue::new();
+            let mut blocked = HashSet::new();
+            for i in 0..12 {
+                let event = gift_wrap(&sender, &recipient, &format!("history {i}")).await;
+                blocked.insert(event.pubkey);
+                queue.enqueue(event, false).await.unwrap();
+            }
+            let live = gift_wrap(&sender, &recipient, "live").await;
+            let retry = gift_wrap(&sender, &recipient, "retry").await;
+            let (started_tx, started_rx) = flume::unbounded();
+            let (release_tx, release_rx) = flume::unbounded();
+            let peak = Arc::new(AtomicUsize::new(0));
+            let signer = UniversalSigner::new(GatedSigner {
+                keys: recipient,
+                blocked,
+                started: started_tx,
+                release: release_rx,
+                active: Arc::default(),
+                peak: peak.clone(),
+            });
+            let (tx, rx) = flume::unbounded();
+            let worker_queue = queue.clone();
+            let worker =
+                tokio::spawn(async move { worker_queue.run(receivers, client, signer, tx).await });
+            // All historical slots are occupied by signer requests that cannot finish.
+            for _ in 0..HISTORY_CONCURRENCY {
+                started_rx.recv_async().await.unwrap();
+            }
+            queue.enqueue_live(live.clone()).await.unwrap();
+            queue.enqueue_live(live.clone()).await.unwrap();
+            queue.enqueue(retry.clone(), true).await.unwrap();
+            for (expected, historical) in [(live.id, false), (retry.id, true)] {
+                match rx.recv_async().await.unwrap() {
+                    Signal::Decrypted(id, Ok(message)) => {
+                        assert_eq!(id, expected);
+                        assert_eq!(message.historical, historical);
+                    }
+                    other => panic!("Unexpected result: {other:?}"),
+                }
+            }
+            assert_eq!(queue.pending(), 12);
+            assert_eq!(queue.loaded(), 2);
+            assert!(rx.is_empty());
+            // Release history and verify it still makes progress without duplicates.
+            for _ in 0..12 {
+                release_tx.send_async(()).await.unwrap();
+            }
+            let mut completed = HashSet::new();
+            for _ in 0..12 {
+                match rx.recv_async().await.unwrap() {
+                    Signal::Decrypted(id, Ok(message)) => {
+                        assert!(message.historical);
+                        assert!(completed.insert(id));
+                    }
+                    other => panic!("Unexpected result: {other:?}"),
+                }
+            }
+            assert_eq!(queue.pending(), 0);
+            assert_eq!(queue.loaded(), 14);
+            assert_eq!(peak.load(Ordering::SeqCst), 4);
+            worker.abort();
+            let _ = worker.await;
+        })
+        .await
+        .expect("live messages must not wait for blocked history");
+    }
+
+    #[tokio::test]
+    async fn a_full_history_queue_does_not_block_live_enqueue() {
+        let (queue, receivers) = DecryptQueue::new();
+        let keys = Keys::generate();
+        for i in 0..HISTORY_CAPACITY {
+            let event = EventBuilder::new(Kind::GiftWrap, i.to_string())
+                .finalize(&keys)
+                .unwrap();
+            queue.enqueue(event, false).await.unwrap();
+        }
+        let live = EventBuilder::new(Kind::GiftWrap, "live")
+            .finalize(&keys)
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), queue.enqueue_live(live.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(receivers.interactive.try_recv().unwrap().0.id, live.id);
+        assert_eq!(receivers.history.len(), HISTORY_CAPACITY);
     }
 }

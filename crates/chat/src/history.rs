@@ -365,8 +365,11 @@ mod integration_tests {
         .await
         .unwrap()
         .unwrap();
-        let received: std::collections::BTreeSet<_> =
-            receiver.try_iter().map(|(event, _)| event.id).collect();
+        let received: std::collections::BTreeSet<_> = receiver
+            .history
+            .try_iter()
+            .map(|(event, _)| event.id)
+            .collect();
         assert_eq!(received, expected);
         assert!(
             read_checkpoint(&client, &key)
@@ -388,7 +391,8 @@ mod integration_tests {
         scan_relay(&client, user, url, &queue, &signals, true)
             .await
             .unwrap();
-        assert!(receiver.is_empty());
+        assert!(receiver.history.is_empty());
+        assert!(receiver.interactive.is_empty());
         client.shutdown().await;
         relay.shutdown();
     }
