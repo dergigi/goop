@@ -847,7 +847,7 @@ impl Workspace {
 
                         // Footer
                         menu.separator()
-                            .menu("Load older history", Box::new(Command::LoadOlderHistory))
+                            .menu("Rescan all history", Box::new(Command::LoadOlderHistory))
                             .menu(
                                 "Retry failed decryptions",
                                 Box::new(Command::RetryDecryption),

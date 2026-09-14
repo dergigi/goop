@@ -236,7 +236,7 @@ pub(super) async fn scan_relay(
         });
         // Catch up arrivals since the last launch before resuming the old cursor.
         // Gift-wrap timestamps are randomized, so overlap the previous head.
-        if previous.is_some() {
+        if previous.is_some() && !force {
             let since = checkpoint.head.saturating_sub(WRAP_OVERLAP);
             let mut cursor = Some(now);
             let mut limit = PAGE_SIZE;
@@ -261,6 +261,8 @@ pub(super) async fn scan_relay(
         }
         if force {
             checkpoint.complete = false;
+            checkpoint.until = now;
+            checkpoint.head = now;
         }
         let mut limit = PAGE_SIZE;
         while !checkpoint.complete {
@@ -453,6 +455,51 @@ mod integration_tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn full_rescan_recovers_events_added_inside_an_already_scanned_period() {
+        let relay = LocalRelay::builder().build();
+        relay.run().await.unwrap();
+        let url = relay.url().await;
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let user = Keys::generate().public_key();
+        for time in [10, 30] {
+            relay
+                .add_event(
+                    EventBuilder::new(Kind::GiftWrap, "old ciphertext")
+                        .tag(Tag::public_key(user))
+                        .custom_created_at(Timestamp::from(time))
+                        .finalize(&Keys::generate())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+        let (queue, _receiver) = super::super::DecryptQueue::new();
+        let (signals, _rx) = flume::unbounded();
+        scan_relay(&client, user, url.clone(), &queue, &signals, false)
+            .await
+            .unwrap();
+        let missing = EventBuilder::new(Kind::GiftWrap, "previously missing ciphertext")
+            .tag(Tag::public_key(user))
+            .custom_created_at(Timestamp::from(20))
+            .finalize(&Keys::generate())
+            .unwrap();
+        relay.add_event(missing.clone()).await.unwrap();
+        scan_relay(&client, user, url.clone(), &queue, &signals, false)
+            .await
+            .unwrap();
+        assert!(!queue.scheduled_ids().contains(&missing.id));
+        scan_relay(&client, user, url, &queue, &signals, true)
+            .await
+            .unwrap();
+        assert!(queue.scheduled_ids().contains(&missing.id));
+        assert_eq!(queue.pending(), 3);
+        client.shutdown().await;
+        relay.shutdown();
     }
 
     #[tokio::test]

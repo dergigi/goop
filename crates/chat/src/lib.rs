@@ -441,7 +441,7 @@ impl ChatRegistry {
         }
     }
 
-    /// Explicitly retry incomplete relays and check for additional older history.
+    /// Explicitly rescan the entire retained history, including previously scanned gaps.
     pub fn load_older_history(&mut self, cx: &mut Context<Self>) {
         self.start_history(true, cx);
     }
