@@ -13,7 +13,7 @@ use crate::button::{Button, ButtonVariants as _};
 use crate::dock::dock::DockPlacement;
 use crate::dock::panel::{Panel, PanelView};
 use crate::dock::stack_panel::StackPanel;
-use crate::dock::{ClosePanel, DockArea, PanelEvent, PanelStyle, ToggleZoom};
+use crate::dock::{ClosePanel, DockArea, PanelEvent, PanelStyle};
 use crate::menu::{DropdownMenu, PopupMenu};
 use crate::tab::Tab;
 use crate::tab::tab_bar::TabBar;
@@ -22,7 +22,6 @@ use crate::{IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
 #[derive(Clone)]
 struct TabState {
     closable: bool,
-    zoomable: bool,
     draggable: bool,
     droppable: bool,
     active_panel: Option<Arc<dyn PanelView>>,
@@ -430,7 +429,6 @@ impl TabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let is_zoomed = self.zoomed && state.zoomable;
         let view = cx.entity().clone();
         let build_popup_menu = move |this, cx: &App| view.read(cx).popup_menu(this, cx);
         let toolbar = self.toolbar_buttons(window, cx);
@@ -441,33 +439,16 @@ impl TabPanel {
             .occlude()
             .rounded_full()
             .children(toolbar.into_iter().map(|btn| btn.small().ghost()))
-            .when(self.zoomed, |this| {
-                this.child(
-                    Button::new("zoom")
-                        .icon(IconName::Zoom)
-                        .small()
-                        .ghost()
-                        .tooltip("Zoom Out")
-                        .on_click(cx.listener(|view, _, window, cx| {
-                            view.on_action_toggle_zoom(&ToggleZoom, window, cx)
-                        })),
-                )
-            })
             .child(
                 Button::new("menu")
                     .icon(IconName::Ellipsis)
                     .small()
                     .ghost()
                     .dropdown_menu({
-                        let zoomable = state.zoomable;
                         let closable = state.closable;
 
                         move |this, _window, cx| {
                             build_popup_menu(this, cx)
-                                .when(zoomable, |this| {
-                                    let name = if is_zoomed { "Zoom Out" } else { "Zoom In" };
-                                    this.separator().menu(name, Box::new(ToggleZoom))
-                                })
                                 .when(closable, |this| {
                                     this.separator().menu("Close", Box::new(ClosePanel))
                                 })
@@ -1072,36 +1053,6 @@ impl TabPanel {
         }
     }
 
-    fn on_action_toggle_zoom(
-        &mut self,
-        _action: &ToggleZoom,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.zoomable(cx) {
-            return;
-        }
-
-        if !self.zoomed {
-            cx.emit(PanelEvent::ZoomIn)
-        } else {
-            cx.emit(PanelEvent::ZoomOut)
-        }
-
-        self.zoomed = !self.zoomed;
-
-        cx.spawn({
-            let is_zoomed = self.zoomed;
-            async move |view, cx| {
-                view.update(cx, |view, cx| {
-                    view.set_zoomed(is_zoomed, cx);
-                })
-                .ok();
-            }
-        })
-        .detach();
-    }
-
     fn on_action_close_panel(
         &mut self,
         _ev: &ClosePanel,
@@ -1139,7 +1090,6 @@ impl Render for TabPanel {
             closable: self.closable(cx),
             draggable: self.draggable(cx),
             droppable: self.droppable(cx),
-            zoomable: self.zoomable(cx),
             active_panel,
         };
 
@@ -1149,8 +1099,7 @@ impl Render for TabPanel {
 
         div()
             .when(!self.collapsed, |this| {
-                this.on_action(cx.listener(Self::on_action_toggle_zoom))
-                    .on_action(cx.listener(Self::on_action_close_panel))
+                this.on_action(cx.listener(Self::on_action_close_panel))
             })
             .id("tab-panel")
             .track_focus(&focus_handle)
