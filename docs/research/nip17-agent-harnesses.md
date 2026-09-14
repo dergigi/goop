@@ -1,6 +1,6 @@
 # NIP-17 messaging integrations for agent harnesses
 
-Goop can be the human-facing inbox for an agent when the integration sends ordinary NIP-17 chat messages, delivers them to the recipient’s DM relays, and keeps a receive path running. The most direct documented setup among the reviewed projects is OpenClaw’s community NIP-17 channel. NullClaw also implements a persistent NIP-17 channel. Most coding harnesses instead expose extension mechanisms through which a separate messaging tool can be connected.
+Goop can be the human-facing inbox for an agent when the integration sends ordinary NIP-17 chat messages, delivers them to the recipient’s DM relays, and keeps a receive path running. The most direct documented setup among the reviewed projects is OpenClaw’s community NIP-17 channel. Hermes has a community NIP-17 platform plugin, and NullClaw implements a persistent NIP-17 channel. Most coding harnesses instead expose extension mechanisms through which a separate messaging tool can be connected.
 
 This review covers public documentation and implementation snapshots checked on 2026-09-14. It distinguishes implemented capabilities from inferred host compatibility. It is not an end-to-end certification of the listed integrations with Goop, a security audit, or a popularity ranking. The public usage guide selects the shortest practical setup paths from these findings.
 
@@ -32,7 +32,7 @@ MCP host support establishes that a server can be connected, not that it has bee
 | Gemini CLI | MCP messaging server | Official command-based server configuration; same tool-driven receive limitation |
 | Cline | MCP messaging server | Official MCP support; messaging supplied by the external server |
 | Goose | Custom MCP extension | Official extension docs explicitly support arbitrary MCP servers |
-| Hermes | MCP messaging server | Official MCP support; dedicated NIP-17 gateway proposal #16769 is closed without merging |
+| Hermes | `boto-coder/hermes-nostr-platform` | Dedicated community platform plugin; receive/reply and scheduled delivery implemented; recipient relay connections need explicit configuration |
 | Windsurf / Cascade | MCP messaging server | Official documentation now distinguishes legacy Cascade configuration from the newer Devin Local agent; use the instructions matching the installed host |
 | Pi | NIP-17 CLI invoked through a skill or extension | Official extension model supports custom tools; the core site directs MCP users to extensions rather than promising built-in MCP |
 | Aider | NIP-17 CLI/listener with a custom wrapper | Official one-shot command-line mode can be invoked by an external process; no packaged Aider-specific integration verified |
@@ -77,9 +77,19 @@ Recommendation: document this as an alternative for implementers in the research
 
 Claude Code and Codex both document registering command-based MCP servers. Codex supports configuration through its CLI and TOML files; the configured executable, arguments, environment, and optional working directory determine how the local process starts. Hosted products should not be assumed to launch a local stdio executable merely because the corresponding desktop or CLI host can.[^7][^8]
 
-Cursor, OpenCode, Gemini CLI, Cline, Goose, and Hermes document external-tool integrations through MCP. Their settings formats and approval controls differ, so the public guide links each host’s own instructions. This avoids maintaining nine nearly identical examples with different configuration syntax.[^9][^10][^11][^12][^13][^14]
+Cursor, OpenCode, Gemini CLI, Cline, Goose, and Hermes document external-tool integrations through MCP. Their settings formats and approval controls differ; the sources below provide the host-specific instructions. These transport options belong in this research inventory rather than a repeated table in the public setup guide.[^9][^10][^11][^12][^13][^14]
 
-Hermes proposal #16769 contains a dedicated NIP-17 gateway design, including publication of an inbox list and sender authorization. The proposal is closed and has no merge timestamp. It is evidence of work on the integration, not evidence that a normal Hermes installation ships it. The guide therefore gives Hermes the verified MCP extension route.[^21]
+## Hermes: community platform plugin
+
+The community `boto-coder/hermes-nostr-platform` plugin is a direct Hermes messaging integration. Its documented setup enables `nostr-platform`, configures an agent identity and relays, and authorizes human public keys. `NOSTR_HOME_CHANNEL` selects a recipient for scheduled notifications. This is the appropriate primary Hermes route in the usage guide; generic MCP support is only an alternative.[^26]
+
+At commit `82951dd917bdd153b7a5ef3cf159b0b5dfc626c3`, the adapter unwraps incoming kind-1059 events, checks for kind-14 messages, applies the framework sender-authorization check, and dispatches to Hermes through `handle_message`. The crypto helper verifies the gift-wrap and seal signatures and requires the rumor author to match the seal author. Startup publishes profile metadata and a kind-10050 inbox list.[^27]
+
+There is a concrete routing limitation: `send` looks up the recipient’s kind-10050 list, but `_client_for` only returns an already-configured relay client. Discovered relays without existing connections are skipped. Configure the human recipient’s DM relays explicitly; discovery alone does not establish delivery. The lookup also searches configured relays, so it can miss announcements stored elsewhere.[^27]
+
+The README and plugin manifest disagree about the default for an empty sender allowlist. Configure an explicit allowed public key rather than relying on that default. The plugin has not been installed or tested end to end with Goop in this review.[^26][^27]
+
+The earlier Hermes core proposal #16769 is closed without merging. That establishes only the proposal’s status, not the absence of external plugins. The initial review missed this community adapter and incorrectly made MCP the primary Hermes recommendation; this revision corrects that omission.[^21]
 
 ## Command-line workflows
 
@@ -132,3 +142,6 @@ All sources accessed 2026-09-14. Source snapshots are pinned where implementatio
 [^23]: Sortis-AI. [Message implementation](https://github.com/Sortis-AI/agent-messenger/blob/da49fad838b7e9adf9a964290e990a16520299f8/crates/am-core/src/message.rs); [Configurable agent runner](https://github.com/Sortis-AI/agent-messenger/blob/da49fad838b7e9adf9a964290e990a16520299f8/crates/am-agent/src/main.rs).
 [^24]: NullClaw contributors. [Nostr setup](https://github.com/nullclaw/nullclaw/blob/d8a802fd967962be5d4f819ccd0cf1592a98f39c/README.md#nostr-channel-setup); [Nostr channel implementation](https://github.com/nullclaw/nullclaw/blob/d8a802fd967962be5d4f819ccd0cf1592a98f39c/src/channels/nostr.zig), snapshot 2026-07-13.
 [^25]: Moltis contributors. [Published Nostr guide](https://docs.moltis.org/nostr.html); [Receive path](https://github.com/moltis-org/moltis/blob/9d3238c322708e9d57fe235ce1c2b43ccc33af62/crates/nostr/src/bus.rs); [Gift-wrap send/receive helper](https://github.com/moltis-org/moltis/blob/9d3238c322708e9d57fe235ce1c2b43ccc33af62/crates/nostr/src/gift_wrap.rs), snapshot 2026-09-14.
+
+[^26]: boto-coder. [Hermes Nostr platform README](https://github.com/boto-coder/hermes-nostr-platform/blob/82951dd917bdd153b7a5ef3cf159b0b5dfc626c3/README.md), snapshot 2026-08-04.
+[^27]: Same project. [Hermes adapter and relay routing](https://github.com/boto-coder/hermes-nostr-platform/blob/82951dd917bdd153b7a5ef3cf159b0b5dfc626c3/adapter.py); [Gift-wrap verification](https://github.com/boto-coder/hermes-nostr-platform/blob/82951dd917bdd153b7a5ef3cf159b0b5dfc626c3/nostr_crypto.py); [Plugin manifest](https://github.com/boto-coder/hermes-nostr-platform/blob/82951dd917bdd153b7a5ef3cf159b0b5dfc626c3/plugin.yaml).

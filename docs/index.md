@@ -39,46 +39,18 @@ The plugin supports separate identities for multiple agents. Its current
 [implementation publishes the agent’s DM relay list on startup](https://github.com/fabianfabian/openclaw-nostr-nip17/blob/bcbd54516be347a426acec3be5e74944e590d534/src/nip17-bus.ts#L252),
 so check the installed version if relay discovery does not work.
 
-### Claude Code, Codex, Cursor, and other MCP harnesses
+### Hermes
 
-An MCP server gives your running agent tools to send and read NIP-17 messages.
-[Bray](https://github.com/forgesworn/bray) provides `dm-send`, `dm-read`, and
-`dm-conversation`, with support for a separate signer or an agent key file.
-Follow its identity setup, then add the server using your harness’s instructions:
+Install the community [Hermes NIP-17 platform plugin](https://github.com/boto-coder/hermes-nostr-platform)
+using its setup instructions. Give it the agent’s own identity, add your `npub` to
+`NOSTR_ALLOWED_PUBKEYS`, and keep the Hermes gateway running to receive messages
+and reply. Set `NOSTR_HOME_CHANNEL` to your `npub` if you also want scheduled
+notifications delivered to Goop.
 
-| Harness | Where to connect the NIP-17 tools |
-| --- | --- |
-| Claude Code | [Add a local MCP server](https://code.claude.com/docs/en/mcp). |
-| Codex | [Configure an MCP server](https://developers.openai.com/codex/mcp/) in the CLI or IDE extension. |
-| Cursor | [Add an MCP server](https://cursor.com/docs/mcp). |
-| OpenCode | [Configure a local MCP server](https://opencode.ai/docs/mcp-servers/). |
-| Gemini CLI | [Add an MCP server](https://geminicli.com/docs/tools/mcp-server/). |
-| Cline | [Connect an MCP server](https://docs.cline.bot/mcp/mcp-overview). |
-| Goose | [Add a custom MCP extension](https://github.com/aaif-goose/goose/blob/main/documentation/docs/getting-started/using-extensions.md). |
-| Hermes | [Add an MCP server](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp/). |
-| Windsurf / Cascade | [Configure MCP tools](https://docs.windsurf.com/windsurf/cascade/mcp) for your installed agent. |
-
-Ask the agent to send a short test message to your `npub`, then check for your reply.
-MCP tools alone do not keep an agent listening while its session is closed; an
-always-available conversation needs a running channel or a message-checking loop.
-
-**Relay setup matters:** configure the agent to receive on its published DM relays
-and send to the DM relays advertised by your Goop identity. Bray’s current
-[send implementation](https://github.com/forgesworn/bray/blob/a46eda90b9b5d3f060a8a0f59b821a7df7f13201/src/social/dm.ts#L100)
-needs explicit recipient DM relays for reliable routing when the automatically
-selected relays differ. Treat the first send-and-reply test as part of setup.
-
-### Pi and command-line workflows
-
-[Agent Messenger](https://github.com/Sortis-AI/agent-messenger) provides NIP-17
-`am send` and `am listen` commands. It also includes an optional listener and agent
-runner for processing incoming messages. Configure the relay lists explicitly for
-your two identities before using it with Goop.
-
-[Pi supports skills and extensions](https://pi.dev/docs/latest/extensions), so a
-skill can teach it to use those commands. For [Aider](https://aider.chat/docs/scripting.html),
-a wrapper can connect its command-line mode to the message listener. These paths
-need custom setup; they are not built-in Goop integrations.
+The plugin publishes the agent’s profile and DM relay list. For now, include your
+Goop identity’s DM relays in the plugin’s configured relays: its current
+[send path only uses existing relay connections](https://github.com/boto-coder/hermes-nostr-platform/blob/82951dd917bdd153b7a5ef3cf159b0b5dfc626c3/adapter.py#L284),
+even when it discovers additional recipient relays.
 
 ### NullClaw
 
@@ -86,6 +58,16 @@ need custom setup; they are not built-in Goop integrations.
 includes a NIP-17 channel. Install its `nak` dependency, run the onboarding wizard,
 and supply your `npub` as the owner. The channel publishes the agent’s DM relays and
 can respond to Goop text messages while NullClaw is running.
+
+### Other harnesses
+
+For harnesses without a verified messaging plugin, [Bray](https://github.com/forgesworn/bray)
+provides NIP-17 messaging tools through MCP, and
+[Agent Messenger](https://github.com/Sortis-AI/agent-messenger) provides command-line
+send/listen tools and an optional agent runner. Both need additional relay and
+receive-loop setup. These are building blocks for custom integrations; see the
+[detailed review](https://github.com/dergigi/goop/blob/master/docs/research/nip17-agent-harnesses.md)
+for the findings by harness.
 
 ### Check your setup
 
