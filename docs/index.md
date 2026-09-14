@@ -32,8 +32,6 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 
 Quick search filters an in-memory snapshot of loaded items without querying relays as you type. Opening a profile can refresh its details. The sidebar buttons and account menu also expose the quick-search shortcuts.
 
-<span id="how-to-use-goop-with-agents"></span>
-
 ## Agent Guide
 
 Your agents can send you updates and receive your replies as private NIP-17 messages.
