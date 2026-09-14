@@ -549,6 +549,14 @@ impl ChatRegistry {
         cx.notify();
     }
 
+    pub fn decryption_failures(&self, cx: &App) -> BTreeMap<String, usize> {
+        let mut reasons = BTreeMap::new();
+        for failure in self.trash.read(cx).iter() {
+            *reasons.entry(failure.reason.to_string()).or_default() += 1;
+        }
+        reasons
+    }
+
     pub fn history_relays(&self) -> &BTreeMap<RelayUrl, RelayHistory> {
         &self.history
     }

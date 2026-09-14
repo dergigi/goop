@@ -12,6 +12,7 @@ pub(crate) struct RefusingSigner {
     pub keys: Keys,
     pub refused: Arc<AtomicBool>,
     pub calls: Arc<AtomicUsize>,
+    failure: SignerFailure,
 }
 impl RefusingSigner {
     pub fn new(keys: Keys) -> Self {
@@ -19,12 +20,17 @@ impl RefusingSigner {
             keys,
             refused: Arc::new(AtomicBool::new(true)),
             calls: Arc::default(),
+            failure: SignerFailure::Rejected,
         }
+    }
+    pub fn with_failure(mut self, failure: SignerFailure) -> Self {
+        self.failure = failure;
+        self
     }
     fn check(&self) -> Result<(), SignerFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.refused.load(Ordering::SeqCst) {
-            Err(SignerFailure::Rejected)
+            Err(self.failure)
         } else {
             Ok(())
         }

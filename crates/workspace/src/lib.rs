@@ -845,6 +845,16 @@ impl Workspace {
                             }));
                         }
 
+                        for (reason, count) in registry.decryption_failures(cx) {
+                            menu = menu.item(PopupMenuItem::element(move |_, cx| {
+                                div()
+                                    .px_1()
+                                    .text_xs()
+                                    .text_color(cx.theme().text_muted)
+                                    .child(format!("{count} failed: {reason}"))
+                            }));
+                        }
+
                         // Footer
                         menu.separator()
                             .menu("Rescan all history", Box::new(Command::LoadOlderHistory))

@@ -1,10 +1,11 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
+use instant::Instant;
 use nostr_sdk::prelude::*;
 use state::{SignerFailure, UniversalSigner};
 
@@ -15,6 +16,46 @@ struct QueueState {
     pending: HashSet<EventId>,
     attempted: HashSet<EventId>,
     backlog: VecDeque<EventId>,
+    retry_at: HashMap<EventId, Instant>,
+    retry_attempts: HashMap<EventId, u32>,
+}
+
+fn transient(error: &anyhow::Error) -> bool {
+    matches!(
+        SignerFailure::classify(error.as_ref()),
+        SignerFailure::Timeout | SignerFailure::Disconnected
+    )
+}
+
+impl QueueState {
+    fn completed(&mut self, id: EventId, retry: bool, now: Instant) {
+        self.pending.remove(&id);
+        self.attempted.insert(id);
+        if retry {
+            let attempts = self.retry_attempts.entry(id).or_default();
+            let delay = 30u64.saturating_mul(1u64 << (*attempts).min(4)).min(300);
+            *attempts = attempts.saturating_add(1);
+            self.retry_at.insert(id, now + Duration::from_secs(delay));
+        } else {
+            self.retry_at.remove(&id);
+            self.retry_attempts.remove(&id);
+        }
+    }
+    fn retry_due(&mut self, now: Instant) {
+        let due: Vec<_> = self
+            .retry_at
+            .iter()
+            .filter(|(_, at)| **at <= now)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in due {
+            self.retry_at.remove(&id);
+            if self.pending.insert(id) {
+                self.attempted.remove(&id);
+                self.backlog.push_back(id);
+            }
+        }
+    }
 }
 
 struct EnqueuePermit {
@@ -89,7 +130,11 @@ impl DecryptQueue {
 
     async fn feed_history(&self, client: &Client) -> Result<()> {
         loop {
-            let id = self.state.lock().unwrap().backlog.pop_front();
+            let id = {
+                let mut state = self.state.lock().unwrap();
+                state.retry_due(Instant::now());
+                state.backlog.pop_front()
+            };
             if let Some(id) = id {
                 let events = client
                     .database()
@@ -101,7 +146,10 @@ impl DecryptQueue {
                     .ok_or_else(|| anyhow!("Queued ciphertext is missing from the database"))?;
                 self.history_sender.send_async((event, true, false)).await?;
             } else {
-                self.wake_rx.recv_async().await?;
+                let wake = self.wake_rx.recv_async().fuse();
+                let timer = async_utility::time::sleep(Duration::from_secs(30)).fuse();
+                futures::pin_mut!(wake, timer);
+                futures::select! { result = wake => { result?; }, _ = timer => {} }
             }
         }
     }
@@ -188,7 +236,8 @@ impl DecryptQueue {
                                 result = Err(anyhow!(reason));
                                 break;
                             }
-                            Err(_) => {}
+                            Err(error) if transient(error) => {}
+                            Err(_) => break,
                         }
                         if attempt == 0 {
                             async_utility::time::sleep(Duration::from_secs(2)).await;
@@ -215,8 +264,11 @@ impl DecryptQueue {
             while let Some((event, historical, result)) = jobs.next().await {
                 {
                     let mut state = self.state.lock().unwrap();
-                    state.pending.remove(&event.id);
-                    state.attempted.insert(event.id);
+                    state.completed(
+                        event.id,
+                        result.as_ref().err().is_some_and(transient),
+                        Instant::now(),
+                    );
                 }
                 let result = match result {
                     Ok((rumor, duplicate)) => {
@@ -242,6 +294,32 @@ impl DecryptQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn automatic_retries_back_off_and_do_not_resume_refusals() {
+        let id = EventId::from_byte_array([1; 32]);
+        let now = Instant::now();
+        let mut state = QueueState::default();
+        state.completed(id, transient(&SignerFailure::Timeout.into()), now);
+        state.retry_due(now + Duration::from_secs(29));
+        assert!(state.backlog.is_empty());
+        state.retry_due(now + Duration::from_secs(30));
+        assert_eq!(state.backlog.pop_front(), Some(id));
+        state.completed(id, transient(&SignerFailure::Disconnected.into()), now);
+        state.retry_due(now + Duration::from_secs(59));
+        assert!(state.backlog.is_empty());
+        state.retry_due(now + Duration::from_secs(60));
+        assert_eq!(state.backlog.pop_front(), Some(id));
+        for failure in [
+            SignerFailure::Rejected,
+            SignerFailure::Cancelled,
+            SignerFailure::Other,
+        ] {
+            state.completed(id, transient(&failure.into()), now);
+            state.retry_due(now + Duration::from_secs(1000));
+            assert!(state.backlog.is_empty());
+        }
+    }
+
     #[tokio::test]
     async fn cancelling_a_blocked_enqueue_does_not_prevent_retry() {
         let (queue, receiver) = DecryptQueue::new();
@@ -400,6 +478,33 @@ mod tests {
             let (tx, rx) = flume::unbounded();
             let worker_queue = queue.clone();
             let worker = tokio::spawn(async move { worker_queue.run(receivers, cache, UniversalSigner::new(owner), tx).await });
+            assert!(matches!(rx.recv_async().await.unwrap(), Signal::Decrypted(id, Ok(_)) if id == event.id));
+            assert_eq!(queue.pending(), 0);
+            worker.abort();
+            client.shutdown().await;
+        }).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transient_failure_recovers_from_durable_ciphertext_when_retry_is_due() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
+            let owner = Keys::generate();
+            let controlled = crate::test_signer::RefusingSigner::new(owner.clone()).with_failure(SignerFailure::Timeout);
+            let cache = crate::RumorCache::with_keys(client.clone(), owner.public_key(), Keys::generate());
+            let event = gift_wrap(&Keys::generate(), &owner, "recover after outage").await;
+            client.database().save_event(&event).await.unwrap();
+            let (queue, receivers) = DecryptQueue::new();
+            let (tx, rx) = flume::unbounded();
+            let worker_queue = queue.clone();
+            let signer = UniversalSigner::new(controlled.clone());
+            let worker = tokio::spawn(async move { worker_queue.run(receivers, cache, signer, tx).await });
+            queue.schedule(event.id);
+            assert!(matches!(rx.recv_async().await.unwrap(), Signal::Decrypted(_, Err(_))));
+            controlled.refused.store(false, Ordering::SeqCst);
+            // Advance the retry scheduler without waiting thirty wall-clock seconds.
+            queue.state.lock().unwrap().retry_due(Instant::now() + Duration::from_secs(31));
+            queue.wake.try_send(()).ok();
             assert!(matches!(rx.recv_async().await.unwrap(), Signal::Decrypted(id, Ok(_)) if id == event.id));
             assert_eq!(queue.pending(), 0);
             worker.abort();
