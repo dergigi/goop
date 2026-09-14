@@ -26,6 +26,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 async-utility = "0.3.2"
 fuzzy-matcher = "0.3.7"
+tempfile = "3.10"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 smol.workspace = true

@@ -78,6 +78,7 @@ pub struct ChatPanel {
 
     /// Mapping message (rumor event) ids to their reports
     reports_by_id: Arc<RwLock<BTreeMap<EventId, Vec<SendReport>>>>,
+    saving_outgoing: bool,
 
     /// Chat input state
     input: Entity<InputState>,
@@ -208,6 +209,7 @@ impl ChatPanel {
             render_markdown: AppSettings::get_render_markdown(cx),
             rendered_texts_by_id: BTreeMap::new(),
             reports_by_id,
+            saving_outgoing: false,
             uploading: false,
             subscriptions,
             tasks: vec![],
@@ -369,6 +371,9 @@ impl ChatPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.saving_outgoing {
+            return;
+        }
         if value.trim().is_empty() {
             window.push_notification("Cannot send an empty message", cx);
             return;
@@ -397,25 +402,29 @@ impl ChatPanel {
 
         let id = rumor.id.expect("rumor must have an id");
 
-        // Insert optimistic message and clear input
-        if rumor.kind != Kind::Reaction {
-            self.insert_message(&rumor, true, cx);
-            self.clear(window, cx);
-        } else {
-            self.insert_reaction(&rumor, cx);
-        }
-
-        // Update reports
-        self.insert_reports(id, vec![], cx);
-
-        // Spawn a single task to await the send and update reports
+        self.saving_outgoing = true;
+        // Keep the draft until its outgoing intent is safely stored on disk.
         self.tasks.push(cx.spawn_in(window, async move |this, cx| {
-            let outputs = send_task.await;
-
-            this.update(cx, |this, cx| {
-                this.insert_reports(id, outputs, cx);
+            let result = send_task.await;
+            this.update_in(cx, |this, window, cx| {
+                this.saving_outgoing = false;
+                match result {
+                    Ok(reports) => {
+                        if reaction {
+                            this.insert_reaction(&rumor, cx);
+                        } else {
+                            this.insert_message(&rumor, true, cx);
+                            if this.get_input_value(cx) == content {
+                                this.clear(window, cx);
+                            }
+                        }
+                        this.insert_reports(id, reports, cx);
+                    }
+                    Err(error) => {
+                        window.push_notification(format!("Could not save message: {error}"), cx);
+                    }
+                }
             })?;
-
             Ok(())
         }));
     }
@@ -439,12 +448,7 @@ impl ChatPanel {
 
     /// Insert reports
     fn insert_reports(&mut self, id: EventId, reports: Vec<SendReport>, cx: &mut Context<Self>) {
-        self.reports_by_id
-            .write()
-            .unwrap()
-            .entry(id)
-            .or_default()
-            .extend(reports);
+        self.reports_by_id.write().unwrap().insert(id, reports);
         cx.notify();
     }
 
@@ -503,13 +507,16 @@ impl ChatPanel {
     }
 
     /// Check if a message has any reports
-    fn has_reports(&self, id: &EventId) -> bool {
-        self.reports_by_id.read().unwrap().contains_key(id)
+    fn has_reports(&self, id: &EventId, cx: &App) -> bool {
+        self.sent_reports(id, cx).is_some()
     }
 
     /// Clone reports for a message (used for modal display, not called during render)
-    fn sent_reports(&self, id: &EventId) -> Option<Vec<SendReport>> {
-        self.reports_by_id.read().unwrap().get(id).cloned()
+    fn sent_reports(&self, id: &EventId, cx: &App) -> Option<Vec<SendReport>> {
+        ChatRegistry::global(cx)
+            .read(cx)
+            .outgoing_reports(id)
+            .or_else(|| self.reports_by_id.read().unwrap().get(id).cloned())
     }
 
     /// Get a message by its ID (O(1) lookup)
@@ -947,7 +954,7 @@ impl ChatPanel {
         let replies = message.replies_to.as_slice();
         let has_replies = !replies.is_empty();
         let has_reactions = self.has_reaction(&id);
-        let has_reports = self.has_reports(&id);
+        let has_reports = self.has_reports(&id, cx);
 
         // Hide avatar setting
         let hide_avatar = AppSettings::get_hide_avatar(cx);
@@ -1162,7 +1169,7 @@ impl ChatPanel {
     }
 
     fn render_sent_reports(&self, id: &EventId, cx: &App) -> impl IntoElement {
-        let reports = self.sent_reports(id);
+        let reports = self.sent_reports(id, cx);
 
         let pending = reports
             .as_ref()
@@ -1176,12 +1183,16 @@ impl ChatPanel {
             .as_ref()
             .is_some_and(|reports| !reports.is_empty() && reports.iter().all(|r| r.failed()));
 
-        let label = if success {
+        let label = if success && pending {
+            SharedString::from("• Partially sent · queued")
+        } else if success {
             SharedString::from("• Sent")
+        } else if failed && pending {
+            SharedString::from("• Queued for retry")
         } else if failed {
             SharedString::from("• Error")
         } else if pending {
-            SharedString::from("• Sending...")
+            SharedString::from("• Queued")
         } else {
             SharedString::from("• Unknown")
         };
@@ -1191,13 +1202,22 @@ impl ChatPanel {
             .child(label)
             .when(failed, |this| this.text_color(cx.theme().text_danger))
             .when_some(reports, |this, reports| {
-                this.when(!pending, |this| {
+                this.when(true, |this| {
                     this.on_click(move |_e, window, cx| {
                         let reports = reports.clone();
 
                         window.open_modal(cx, move |this, _window, cx| {
-                            this.title(SharedString::from("Sent Reports"))
+                            this.title(SharedString::from("Delivery status"))
                                 .show_close(true)
+                                .when(pending, |this| {
+                                    this.child(
+                                        Button::new("retry-outgoing")
+                                            .label("Retry queued messages")
+                                            .on_click(|_, _, cx| {
+                                                ChatRegistry::global(cx).read(cx).retry_outgoing()
+                                            }),
+                                    )
+                                })
                                 .child(v_flex().gap_4().children({
                                     let mut items = Vec::with_capacity(reports.len());
 
@@ -1226,7 +1246,11 @@ impl ChatPanel {
                 h_flex()
                     .gap_2()
                     .text_sm()
-                    .child(SharedString::from("Sent to:"))
+                    .child(SharedString::from(if report.self_copy {
+                        "Your copy:"
+                    } else {
+                        "Sent to:"
+                    }))
                     .child(
                         h_flex()
                             .gap_1()
@@ -1307,7 +1331,7 @@ impl ChatPanel {
                                             div()
                                                 .text_xs()
                                                 .line_height(relative(1.25))
-                                                .child(SharedString::from("Successfully")),
+                                                .child(SharedString::from("Accepted by relay")),
                                         ),
                                 )
                             }

@@ -17,7 +17,9 @@ use smallvec::{SmallVec, smallvec};
 use state::{NostrRegistry, StateEvent, USER_GIFTWRAP, UniversalSigner};
 mod decryption;
 mod history;
+mod outgoing;
 pub use history::RelayHistory;
+use outgoing::{OutgoingMessage, OutgoingQueue};
 
 mod message;
 mod room;
@@ -58,6 +60,8 @@ enum Signal {
     InboxReady,
     Decrypted(EventId, Result<NewMessage, FailedMessage>),
     History(RelayUrl, RelayHistory),
+    Outgoing(OutgoingMessage),
+    OutgoingError(String),
 }
 
 /// Chat Registry
@@ -86,6 +90,9 @@ pub struct ChatRegistry {
     history_task: Option<Task<Result<(), Error>>>,
     decrypt_task: Option<Task<Result<(), Error>>>,
     retry_task: Option<Task<Result<(), Error>>>,
+    outgoing_task: Option<Task<Result<(), Error>>>,
+    outgoing: Option<OutgoingQueue>,
+    outgoing_reports: HashMap<EventId, Vec<SendReport>>,
 
     /// Channel for sending signals to the UI.
     signal_tx: flume::Sender<Signal>,
@@ -160,6 +167,13 @@ impl ChatRegistry {
             }),
         );
 
+        let device = device::DeviceRegistry::global(cx);
+        subscriptions.push(cx.subscribe(&device, |this, device, _, cx| {
+            if let Some(queue) = &this.outgoing {
+                queue.set_encryption_signer(device.read(cx).signer(cx));
+            }
+        }));
+
         // Run at the end of the current cycle
         cx.defer_in(window, |this, _window, cx| {
             this.get_rooms(cx);
@@ -179,6 +193,9 @@ impl ChatRegistry {
             history_task: None,
             decrypt_task: None,
             retry_task: None,
+            outgoing_task: None,
+            outgoing: None,
+            outgoing_reports: HashMap::new(),
             matcher: CachedMatcher(SkimMatcherV2::default()),
             signal_rx: rx,
             signal_tx: tx,
@@ -247,6 +264,14 @@ impl ChatRegistry {
                 this.update(cx, |this, cx| {
                     match signal {
                         Signal::InboxReady => this.get_messages(cx),
+                        Signal::Outgoing(message) => {
+                            this.outgoing_reports
+                                .insert(message.id(), message.reports());
+                            let mut incoming = NewMessage::new(message.id(), message.rumor);
+                            incoming.historical = true;
+                            this.new_message(incoming, cx);
+                        }
+                        Signal::OutgoingError(error) => cx.emit(ChatEvent::Error(error)),
                         Signal::History(relay, progress) => {
                             this.history.insert(relay, progress);
                         }
@@ -271,6 +296,36 @@ impl ChatRegistry {
             }
             Ok(())
         }));
+        self.start_outgoing(cx);
+    }
+
+    fn start_outgoing(&mut self, cx: &mut Context<Self>) {
+        let nostr = NostrRegistry::global(cx);
+        let Some(owner) = nostr.read(cx).current_user() else {
+            return;
+        };
+        let client = nostr.read(cx).client();
+        let signer = nostr.read(cx).signer();
+        let encryption = device::DeviceRegistry::global(cx).read(cx).signer(cx);
+        let (queue, wake) = OutgoingQueue::new(client, owner, encryption);
+        self.outgoing = Some(queue.clone());
+        let signals = self.signal_tx.clone();
+        self.outgoing_task =
+            Some(cx.background_spawn(async move { queue.run(signer, wake, signals).await }));
+    }
+
+    pub(crate) fn outgoing_queue(&self) -> Option<OutgoingQueue> {
+        self.outgoing.clone()
+    }
+
+    pub fn outgoing_reports(&self, id: &EventId) -> Option<Vec<SendReport>> {
+        self.outgoing_reports.get(id).cloned()
+    }
+
+    pub fn retry_outgoing(&self) {
+        if let Some(queue) = &self.outgoing {
+            queue.retry();
+        }
     }
 
     pub fn get_metadata(&mut self, cx: &mut Context<Self>) {
@@ -490,6 +545,7 @@ impl ChatRegistry {
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.get_metadata(cx);
+        self.retry_outgoing();
         self.load_older_history(cx);
         self.retry_failed_messages(cx);
         self.get_rooms(cx);
@@ -650,6 +706,9 @@ impl ChatRegistry {
         self.history_task = None;
         self.decrypt_task = None;
         self.retry_task = None;
+        self.outgoing_task = None;
+        self.outgoing = None;
+        self.outgoing_reports.clear();
         self.notification_listener = None;
         self.signal_consumer = None;
         self.queue = None;

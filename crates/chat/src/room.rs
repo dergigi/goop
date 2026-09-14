@@ -1,25 +1,24 @@
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 
-use anyhow::{Error, anyhow};
+use anyhow::Error;
 use common::EventExt;
-use device::DeviceRegistry;
 use gpui::{App, AppContext, Context, EventEmitter, SharedString, Task};
 use instant::Duration;
 use itertools::Itertools;
 use nostr_sdk::prelude::*;
 use person::{Person, PersonRegistry};
 use settings::{RoomConfig, SignerKind};
-use state::{NostrRegistry, TIMEOUT, UniversalSigner};
+use state::{NostrRegistry, TIMEOUT};
 
 use crate::NewMessage;
-
-const NO_DEKEY: &str = "User hasn't set up a decoupled encryption key yet.";
-const USER_NO_DEKEY: &str = "You haven't set up a decoupled encryption key or it's not available.";
 
 #[derive(Debug, Clone)]
 pub struct SendReport {
     pub receiver: PublicKey,
+    pub queued: bool,
+    pub accepted: bool,
+    pub self_copy: bool,
     pub gift_wrap_id: Option<EventId>,
     pub error: Option<SharedString>,
     pub output: Option<Output<EventId, EventSendStatus>>,
@@ -29,6 +28,9 @@ impl SendReport {
     pub fn new(receiver: PublicKey) -> Self {
         Self {
             receiver,
+            queued: false,
+            accepted: false,
+            self_copy: false,
             gift_wrap_id: None,
             error: None,
             output: None,
@@ -58,20 +60,22 @@ impl SendReport {
 
     /// Returns true if the send is pending.
     pub fn pending(&self) -> bool {
-        self.error.is_none()
-            && self
-                .output
-                .as_ref()
-                .is_some_and(|o| o.success.is_empty() && o.failed.is_empty())
+        self.queued
+            || (self.error.is_none()
+                && self
+                    .output
+                    .as_ref()
+                    .is_some_and(|o| o.success.is_empty() && o.failed.is_empty()))
     }
 
     /// Returns true if the send was successful.
     pub fn success(&self) -> bool {
-        self.error.is_none()
-            && self
-                .output
-                .as_ref()
-                .is_some_and(|o| o.success.values().any(EventSendStatus::is_ack))
+        self.accepted
+            || self.error.is_none()
+                && self
+                    .output
+                    .as_ref()
+                    .is_some_and(|o| o.success.values().any(EventSendStatus::is_ack))
     }
 
     /// Returns true if the send failed.
@@ -464,189 +468,37 @@ impl Room {
         Some(event)
     }
 
-    /// Select the appropriate signer based on signer kind and available keys.
-    fn select_signer(
-        signer_kind: &SignerKind,
-        has_announcement: bool,
-        encryption_signer: &Option<UniversalSigner>,
-        user_signer: &UniversalSigner,
-    ) -> UniversalSigner {
-        match signer_kind {
-            SignerKind::Auto => {
-                if has_announcement {
-                    encryption_signer
-                        .clone()
-                        .unwrap_or_else(|| user_signer.clone())
-                } else {
-                    user_signer.clone()
-                }
-            }
-            SignerKind::Encryption => encryption_signer
-                .clone()
-                .expect("encryption signer must be set"),
-            SignerKind::User => user_signer.clone(),
-        }
-    }
-
-    /// Send rumor event to all members's messaging relays
-    pub fn send(&self, rumor: UnsignedEvent, cx: &App) -> Option<Task<Vec<SendReport>>> {
-        let config = self.config.clone();
-
-        let device = DeviceRegistry::global(cx);
-        let encryption_signer = device.read(cx).signer(cx);
-
+    /// Persist an outgoing intent; the account worker owns signing and delivery.
+    pub fn send(
+        &self,
+        rumor: UnsignedEvent,
+        cx: &App,
+    ) -> Option<Task<Result<Vec<SendReport>, Error>>> {
         let nostr = NostrRegistry::global(cx);
-        let client = nostr.read(cx).client();
-        let user_signer = nostr.read(cx).signer();
-        let current_user = nostr.read(cx).current_user()?;
-
-        // Get sender's profile
+        let owner = nostr.read(cx).current_user()?;
+        let queue = crate::ChatRegistry::global(cx).read(cx).outgoing_queue()?;
         let persons = PersonRegistry::global(cx);
-        let sender = persons.read(cx).get(&current_user, cx);
-
-        // Get all members (excluding sender)
-        let members: Vec<Person> = self
+        let destinations = self
             .members
             .iter()
-            .filter(|public_key| public_key != &&sender.public_key())
-            .map(|member| persons.read(cx).get(member, cx))
+            .copied()
+            .filter(|key| *key != owner)
+            .chain(std::iter::once(owner))
+            .map(|key| {
+                let person = persons.read(cx).get(&key, cx);
+                crate::outgoing::Destination::new(
+                    key,
+                    person.announcement().map(|a| a.public_key()),
+                    key == owner,
+                )
+            })
             .collect();
-
+        let kind = self.config.signer_kind().clone();
         Some(cx.background_spawn(async move {
-            let signer_kind = config.signer_kind();
-            let backup = config.backup();
-
-            let mut sents = 0;
-            let mut reports = Vec::new();
-
-            // Process each member
-            for member in members {
-                let announcement = member.announcement();
-                let public_key = member.public_key();
-
-                // Handle encryption signer requirements
-                if signer_kind.encryption() {
-                    // Receiver didn't set up a decoupled encryption key
-                    if announcement.is_none() {
-                        reports.push(SendReport::new(public_key).error(NO_DEKEY));
-                        continue;
-                    }
-
-                    // Sender didn't set up a decoupled encryption key
-                    if encryption_signer.is_none() {
-                        reports.push(SendReport::new(sender.public_key()).error(USER_NO_DEKEY));
-                        continue;
-                    }
-                }
-
-                // Determine the signer to use
-                let signer = Self::select_signer(
-                    signer_kind,
-                    announcement.is_some(),
-                    &encryption_signer,
-                    &user_signer,
-                );
-
-                // Send the gift wrap event and collect the report
-                match send_gift_wrap(&client, &signer, &member, &rumor, signer_kind).await {
-                    Ok(report) => {
-                        if report.success() {
-                            sents += 1;
-                        }
-                        reports.push(report);
-                    }
-                    Err(error) => {
-                        let report = SendReport::new(public_key).error(error.to_string());
-                        reports.push(report);
-                    }
-                }
-            }
-
-            // Send backup to current user if needed
-            if backup && sents >= 1 {
-                let public_key = sender.public_key();
-
-                // Determine the signer to use
-                let signer = Self::select_signer(
-                    signer_kind,
-                    sender.announcement().is_some(),
-                    &encryption_signer,
-                    &user_signer,
-                );
-
-                match send_gift_wrap(&client, &signer, &sender, &rumor, signer_kind).await {
-                    Ok(report) => reports.push(report),
-                    Err(error) => {
-                        let report = SendReport::new(public_key).error(error.to_string());
-                        reports.push(report);
-                    }
-                }
-            }
-
-            reports
+            let message = crate::outgoing::OutgoingMessage::new(owner, rumor, kind, destinations)?;
+            queue.enqueue(message).await
         }))
     }
-}
-
-// Helper function to send a gift-wrapped event
-async fn send_gift_wrap(
-    client: &Client,
-    signer: &UniversalSigner,
-    receiver: &Person,
-    rumor: &UnsignedEvent,
-    config: &SignerKind,
-) -> Result<SendReport, Error> {
-    let k_tag = Tag::custom("k", vec!["14"]);
-    let mut extra_tags = vec![k_tag];
-
-    // Determine the receiver public key based on the config
-    let receiver = match config {
-        SignerKind::Auto => {
-            if let Some(announcement) = receiver.announcement().as_ref() {
-                extra_tags.push(Tag::public_key(receiver.public_key()));
-                announcement.public_key()
-            } else {
-                receiver.public_key()
-            }
-        }
-        SignerKind::Encryption => {
-            if let Some(announcement) = receiver.announcement().as_ref() {
-                extra_tags.push(Tag::public_key(receiver.public_key()));
-                announcement.public_key()
-            } else {
-                return Err(anyhow!("User has no encryption announcement"));
-            }
-        }
-        SignerKind::User => receiver.public_key(),
-    };
-
-    // Construct the gift wrap event
-    let event = nip59::GiftWrapBuilder::new(receiver, rumor.clone())
-        .extra_tags(extra_tags)
-        .finalize_async(signer)
-        .await?;
-
-    publish_gift_wrap(client, receiver, &event).await
-}
-
-async fn publish_gift_wrap(
-    client: &Client,
-    receiver: PublicKey,
-    event: &Event,
-) -> Result<SendReport, Error> {
-    // The SDK subscribes to acknowledgements before publishing and handles AUTH retries.
-    let report = client
-        .send_event(event)
-        .to_nip17()
-        .ack_policy(AckPolicy::all())
-        .await
-        .map(|output| {
-            SendReport::new(receiver)
-                .gift_wrap_id(event.id)
-                .output(output)
-        })?;
-
-    Ok(report)
 }
 
 #[cfg(test)]
@@ -695,15 +547,25 @@ mod delivery_tests {
             .await
             .unwrap();
         // No UI listener or post-send registration: the relay responds immediately.
-        let report = publish_gift_wrap(&client, recipient.public_key(), &event)
-            .await
-            .unwrap();
+        let mut destination =
+            crate::outgoing::Destination::new(recipient.public_key(), None, false);
+        destination.wrap = Some(event.clone());
+        crate::outgoing::publish(&client, &mut destination).await;
+        let job = crate::outgoing::OutgoingMessage::new(
+            sender.public_key(),
+            EventBuilder::new(Kind::PrivateDirectMessage, "test")
+                .finalize_unsigned(sender.public_key()),
+            settings::SignerKind::User,
+            vec![destination],
+        )
+        .unwrap();
+        let report = job.reports().remove(0);
         assert!(report.success());
         assert!(!report.pending());
         assert!(!report.failed());
         let output = report.output.unwrap();
         assert_eq!(output.success.len(), 1);
-        assert!(output.success[&inbox.url().await].is_ack());
+        assert!(output.success.contains_key(&inbox.url().await));
         assert!(output.failed.is_empty());
         client.shutdown().await;
     }
