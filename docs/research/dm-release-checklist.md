@@ -2,7 +2,7 @@
 
 Release Goop for macOS, Windows, and Linux after the remaining DM improvements and validation are complete. This is the follow-up to the [Dark Wisp review](dark-wisp-nip17.md). Source inspection and unit tests alone do not establish equivalent real-world reliability.
 
-The agreed scope remains NIP-17, external identity signers, and history from the account's current inbox relays. Do not add NIP-04 or separate history relays as coverage workarounds.
+The agreed scope remains NIP-17, external identity signers, and history from the account's current inbox relays, with an explicit recovery search of the account's published general-relay list. Do not add NIP-04 or separate history relays as coverage workarounds.
 
 ## Implemented and checked
 
@@ -14,7 +14,7 @@ The agreed scope remains NIP-17, external identity signers, and history from the
 - [x] Attempt the sender copy independently of recipient delivery; display partial delivery and retry controls.
 - [x] Keep outgoing jobs and queued plaintext account-scoped and separate from the relay database. Stop work on account changes and freeze in-flight signing identity (`988b4a3`).
 
-The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 29 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. A development candidate containing these changes has been rebuilt and installed on the development Mac; see the validation record below.
+The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 38 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. A development candidate containing these changes has been rebuilt and installed on the development Mac; see the validation record below.
 
 ## Remaining implementation and regression coverage
 
@@ -54,3 +54,10 @@ History checkpoints now require the persistent local provenance key as well as t
 - CI now explicitly runs chat/state recovery tests on macOS, Windows, and Linux; default workspace tests previously covered only the desktop package.
 - [Six-platform installer validation](https://github.com/dergigi/goop/actions/runs/34866724438) started at `62284dc` with draft-release creation disabled. Build and platform smoke-test results are not yet claimed.
 - Diagnostics, additional history boundary/disconnection cases, avatar/performance measurements, encrypted-file interoperability, real external-signer/cross-client exercises, and release publication remain open. This development install is not the final release candidate.
+
+## Additional development checks
+
+- History downloads now save ciphertext and queue IDs without waiting for signer throughput. A regression downloads 600 wraps without an active decrypt worker.
+- “Rescan all history” revisits previously scanned ranges; “Search other configured relays” additionally scans the account’s published general relays, with two concurrent scans and duplicate suppression. Sending still uses inbox relays. Requests made during a scan are queued visibly.
+- Transient decryption failures retry with backoff; signer refusals remain paused until explicit retry. The history menu groups failures by reason.
+- Local conversation/profile quick search uses loaded snapshots and performs no database or relay queries while typing. Matching tests and the desktop compile check pass; interactive keyboard/focus checks remain part of candidate testing.
