@@ -106,6 +106,7 @@ pub struct ChatPanel {
     /// Upload state
     uploading: bool,
     pending_uploads: VecDeque<PathBuf>,
+    current_upload: Option<PathBuf>,
 
     /// Async operations
     tasks: Vec<Task<Result<(), Error>>>,
@@ -227,6 +228,7 @@ impl ChatPanel {
             saving_outgoing: false,
             uploading: false,
             pending_uploads: VecDeque::new(),
+            current_upload: None,
             subscriptions,
             tasks: vec![],
         }
@@ -618,8 +620,15 @@ impl ChatPanel {
         }));
     }
 
+    fn drop_files(&mut self, paths: &gpui::ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        self.upload_paths(paths.paths().to_vec(), window, cx);
+        self.focus_composer(window, cx);
+        cx.stop_propagation();
+    }
+
     fn upload_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_uploads.extend(paths);
+        cx.notify();
         if self.uploading || self.pending_uploads.is_empty() {
             return;
         }
@@ -629,6 +638,8 @@ impl ChatPanel {
             loop {
                 let path = this.update(cx, |this, cx| {
                     let path = this.pending_uploads.pop_front();
+                    this.current_upload = path.clone();
+                    cx.notify();
                     if path.is_none() {
                         this.set_uploading(false, cx);
                     }
@@ -1739,13 +1750,9 @@ impl Render for ChatPanel {
         }
         v_flex()
             .image_cache(goop_cache(self.id.clone(), 100))
-            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
-                this.upload_paths(paths.paths().to_vec(), window, cx);
-                this.focus_composer(window, cx);
-            }))
-            .drag_over::<gpui::ExternalPaths>(|style, _, _, cx| {
-                style.bg(cx.theme().ghost_element_hover)
-            })
+            .relative()
+            .group("chat-file-drop")
+            .on_drop(cx.listener(Self::drop_files))
             .on_action(cx.listener(Self::on_command))
             .on_action(cx.listener(Self::escape_find))
             .size_full()
@@ -1809,6 +1816,22 @@ impl Render for ChatPanel {
                     .p_2()
                     .w_full()
                     .gap_1p5()
+                    .when(self.uploading, |view| {
+                        let filename = self.current_upload.as_ref()
+                            .and_then(|path| path.file_name())
+                            .map(|name| name.to_string_lossy().into_owned());
+                        let label = match filename {
+                            Some(name) => format!("Uploading {name}…"),
+                            None => "Preparing attachments…".to_owned(),
+                        };
+                        view.child(h_flex().px_2().py_1().gap_2().text_sm()
+                            .text_color(cx.theme().text_muted)
+                            .child(ui::indicator::Indicator::new().small())
+                            .child(div().flex_1().min_w_0().truncate().child(label))
+                            .when(!self.pending_uploads.is_empty(), |row| {
+                                row.child(format!("{} queued", self.pending_uploads.len()))
+                            }))
+                    })
                     .children(self.render_attachment_list(window, cx))
                     .children(self.render_reply_list(window, cx))
                     .child(
@@ -1847,6 +1870,21 @@ impl Render for ChatPanel {
                                     ),
                             ),
                     ),
+            )
+            .child(
+                v_flex()
+                    .absolute().inset_2()
+                    .invisible()
+                    .group_drag_over::<gpui::ExternalPaths>("chat-file-drop", |style| style.visible())
+                    .items_center().justify_center().gap_3().p_6()
+                    .rounded(cx.theme().radius_lg)
+                    .border_2().border_dashed().border_color(cx.theme().text_accent)
+                    .bg(cx.theme().surface_background.opacity(0.96))
+                    .child(Icon::new(IconName::Upload).large().text_color(cx.theme().text_accent))
+                    .child(div().font_semibold().child("Drop files to attach"))
+                    .child(div().text_sm().text_color(cx.theme().text_muted)
+                        .child("Add them to your message before sending."))
+                    .on_drop(cx.listener(Self::drop_files)),
             )
     }
 }
