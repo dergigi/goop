@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "assets"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "gpui",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "auto_update"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "gpui",
  "gpui-updater",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "chat"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "async-utility",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "chat_ui"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "chat",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -1746,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "device"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "common",
@@ -2609,7 +2609,7 @@ dependencies = [
 
 [[package]]
 name = "goop"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "assets",
  "auto_update",
@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "goop_web"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "assets",
  "chat",
@@ -5014,7 +5014,7 @@ dependencies = [
 
 [[package]]
 name = "person"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "common",
@@ -6444,7 +6444,7 @@ dependencies = [
 
 [[package]]
 name = "settings"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "common",
@@ -6688,7 +6688,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "state"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -7044,7 +7044,7 @@ dependencies = [
 
 [[package]]
 name = "theme"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "gpui",
@@ -7593,7 +7593,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "common",
@@ -8989,7 +8989,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "workspace"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "auto_update",

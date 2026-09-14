@@ -67,21 +67,24 @@ pub async fn upload_encrypted(fallback: Url, path: PathBuf, cx: &AsyncApp)
     let mime = from_path(&path).first_or_octet_stream().to_string();
     let plaintext = smol::fs::read(path).await?;
     let encrypted = EncryptedFile::encrypt(&plaintext, mime)?;
-    let (client, owner) = cx.update(|cx| {
+    let (client, owner, signer) = cx.update(|cx| {
         let registry = NostrRegistry::global(cx).read(cx);
-        (registry.client(), registry.current_user())
+        (registry.client(), registry.current_user(), registry.signer().snapshot())
     });
     let owner = owner.ok_or_else(|| anyhow!("Sign in before uploading media"))?;
     let file = Tokio::spawn(cx, async move {
         let servers = upload_servers(load_media_servers(&client, owner).await, fallback);
-        let upload_key = Keys::generate();
         let url = try_upload_servers(servers, |server| {
             let ciphertext = encrypted.ciphertext.clone();
-            let key = upload_key.clone();
+            let signer = signer.clone();
             async move {
                 anyhow::ensure!(server.scheme() == "https", "Media uploads require HTTPS");
+                anyhow::ensure!(signer.get_public_key_async().await? == owner,
+                    "Account changed during upload; please try again");
+                // Authorize with the account accepted by private Blossom servers.
+                // Only ciphertext is uploaded; decryption metadata stays in the DM.
                 let blob = BlossomClient::new(server)
-                    .upload_blob(ciphertext, Some("application/octet-stream".into()), None, Some(&key))
+                    .upload_blob(ciphertext, Some("application/octet-stream".into()), None, Some(&signer))
                     .await?;
                 Ok(blob.url)
             }

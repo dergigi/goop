@@ -7,14 +7,21 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-15
+
+Goop 2.2 encrypts new chat attachments before uploading them and adds message-content search, drag-and-drop attachments, and notification copying.
+
+Encrypted attachments require a server that accepts binary blobs and a client that supports NIP-17 kind-15 file messages. Dark Wisp compatibility has been checked against its source and regression fixtures; live cross-client testing remains pending.
+
 ### Security
 
 - Encrypt chat attachments locally with per-file AES-256-GCM keys before Blossom uploads. Send keys and metadata only inside NIP-17 kind-15 gift-wrapped messages; authenticate and decrypt received files locally.
-- Use fresh upload identities for chat attachments instead of the user's Nostr identity. Public profile-picture uploads remain separate.
+- Authorize encrypted attachment uploads with the logged-in signer for account-whitelisted Blossom servers. Servers can identify the uploader but cannot decrypt the file. Public profile-picture uploads remain separate.
 - Previously uploaded unencrypted attachments remain unencrypted; removing an attachment from a draft does not delete its server copy.
 
 ### Added
 
+- Copy notification titles and messages to the clipboard directly from the notification popover.
 - Cmd/Ctrl+K searches loaded message contents as well as names, with name matches first and snippets for content matches.
 - Drop files onto a chat to attach them to the draft, using the same upload flow as the + picker; multiple files upload in order.
 - A pinned sidebar footer with New Group, Relays, Help, and Settings; Cmd/Ctrl+Shift+N opens group creation directly.
@@ -32,6 +39,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Accept encrypted attachments with Dark Wisp's original-file `size` tag and emit the same size convention; retain support for earlier Goop attachments.
 - Give draft attachments a working remove button with its own hit area; clicking the thumbnail opens a large image preview instead of removing it.
 - Refresh open delivery-status dialogs as recipients progress, including relay results, queued/paused states, and the retry button.
 - Include newly added icons in incremental builds so the Agent Guide robot icon appears.
@@ -153,7 +161,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/dergigi/goop/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/dergigi/goop/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/dergigi/goop/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/dergigi/goop/releases/tag/v1.1.0

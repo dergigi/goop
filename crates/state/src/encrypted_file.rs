@@ -43,18 +43,21 @@ impl EncryptedFile {
                 url: Url::parse("https://invalid.invalid/pending")?, mime,
                 key: key.into(), nonce: nonce.into(),
                 hash: digest(&ciphertext), original_hash: Some(digest(plaintext)),
-                size: Some(ciphertext.len()),
+                size: Some(plaintext.len()),
             }, ciphertext,
         })
     }
 
     pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>> {
         ensure!(ciphertext.len() <= MAX_FILE_BYTES + 16, "Encrypted attachment is too large");
-        ensure!(self.size.is_none_or(|size| size == ciphertext.len()), "Attachment size mismatch");
         ensure!(digest(ciphertext) == self.hash, "Attachment hash mismatch");
         let plaintext = Aes256Gcm::new_from_slice(&self.key).unwrap()
             .decrypt(Nonce::from_slice(&self.nonce), ciphertext)
             .map_err(|_| anyhow!("Attachment authentication failed"))?;
+        // Dark Wisp sends the original size. Accept Goop's earlier ciphertext
+        // size tags too, after authenticating the complete ciphertext.
+        ensure!(self.size.is_none_or(|size| size == plaintext.len() || size == ciphertext.len()),
+            "Attachment size mismatch");
         if let Some(hash) = &self.original_hash {
             ensure!(digest(&plaintext) == *hash, "Original attachment hash mismatch");
         }
@@ -172,5 +175,30 @@ mod tests {
             mime: "application/octet-stream".into(), key: [0;32], nonce: [0;12],
             hash: digest(&ciphertext), original_hash: None, size: None };
         assert_eq!(file.decrypt(&ciphertext).unwrap(), [0;16]);
+    }
+
+    #[test]
+    fn dark_wisp_original_size_and_legacy_goop_size_are_supported() {
+        // AES-256-GCM fixture with Dark Wisp's kind-15 tag layout and
+        // original-byte size, independent of Goop's encrypt/tag builders.
+        let ciphertext = hex::decode("cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919").unwrap();
+        let tags = Tags::from_list(vec![
+            Tag::custom("file-type", ["image/png"]),
+            Tag::custom("encryption-algorithm", ["aes-gcm"]),
+            Tag::custom("decryption-key", ["00".repeat(32)]),
+            Tag::custom("decryption-nonce", ["00".repeat(12)]),
+            Tag::custom("x", [digest(&ciphertext)]),
+            Tag::custom("ox", [digest(&[0; 16])]),
+            Tag::custom("size", ["16"]),
+        ]);
+        let mut file = EncryptedFile::from_tags("https://example.com/blob", &tags).unwrap();
+        assert_eq!(file.decrypt(&ciphertext).unwrap(), [0; 16]);
+        file.size = Some(32);
+        assert_eq!(file.decrypt(&ciphertext).unwrap(), [0; 16]);
+        file.size = Some(17);
+        assert!(file.decrypt(&ciphertext).is_err());
+
+        let upload = EncryptedFile::encrypt(&[0; 16], "image/png".into()).unwrap();
+        assert!(upload.file.tags().iter().any(|tag| tag.as_slice() == ["size", "16"]));
     }
 }

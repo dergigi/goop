@@ -5,7 +5,7 @@ use instant::Duration;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Anchor, Animation, AnimationExt, AnyElement, App, AppContext, ClickEvent, Context,
+    Anchor, Animation, AnimationExt, AnyElement, App, AppContext, ClickEvent, ClipboardItem, Context,
     DismissEvent, ElementId, Entity, EventEmitter, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
     Subscription, Window, div, px, relative,
@@ -375,12 +375,28 @@ impl Render for Notification {
                     }),
             )
             .child(
-                div()
-                    .absolute()
-                    .top(px(6.5))
-                    .right(px(6.5))
-                    .invisible()
-                    .group_hover("", |this| this.visible())
+                v_flex()
+                    .flex_shrink_0()
+                    .gap_1()
+                    .when(self.title.is_some() || self.message.is_some(), |this| {
+                        this.child(
+                            Button::new("copy")
+                                .icon(IconName::Copy)
+                                .tooltip("Copy notification")
+                                .ghost()
+                                .xsmall()
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    cx.stop_propagation();
+                                    let text = [this.title.as_ref(), this.message.as_ref()]
+                                        .into_iter()
+                                        .flatten()
+                                        .map(|text| text.as_ref())
+                                        .collect::<Vec<&str>>()
+                                        .join("\n\n");
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("close")
                             .icon(IconName::Close)
