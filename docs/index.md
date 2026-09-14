@@ -5,7 +5,7 @@ title: Usage guide
 
 # Goop usage guide
 
-Goop is a private Nostr messenger for people who love the keyboard.
+Goop is a NIP-17 messaging client for private, encrypted conversations on Nostr, designed for people who love the keyboard.
 This guide covers Goop 2.1.
 
 ## Keyboard shortcuts
