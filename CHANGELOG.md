@@ -17,6 +17,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Simplify conversation and profile search dialogs with descriptive placeholders and no title bar or close button.
 - Align delivery-status recipients in padded rows and move retry into the dialog footer; allow error details to size to their content.
 - Open the online usage guide from Help → Usage Guide.
 

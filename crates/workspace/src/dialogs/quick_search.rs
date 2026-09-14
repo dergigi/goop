@@ -117,16 +117,11 @@ pub fn open(profiles: bool, window: &mut Window, cx: &mut App) {
             });
         }
     }
-    let view = cx.new(|cx| QuickSearch::new(entries, window, cx));
+    let view = cx.new(|cx| QuickSearch::new(entries, profiles, window, cx));
     window.open_modal(cx, move |modal, _, _| {
         modal
             .width(px(560.))
-            .show_close(true)
-            .title(if profiles {
-                "Search profiles"
-            } else {
-                "Search conversations"
-            })
+            .show_close(false)
             .child(view.clone())
     });
 }
@@ -141,9 +136,9 @@ struct QuickSearch {
 }
 
 impl QuickSearch {
-    fn new(entries: Vec<Entry>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(entries: Vec<Entry>, profiles: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Search by name, address, or npub…"));
+            .new(|cx| InputState::new(window, cx).placeholder(if profiles { "Search profiles…" } else { "Search conversations…" }));
         let subscription =
             cx.subscribe_in(
                 &input,
@@ -242,6 +237,7 @@ impl QuickSearch {
 impl Render for QuickSearch {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .pt_3()
             .gap_2()
             .capture_action(cx.listener(|this, _: &ui::input::MoveUp, _, cx| {
                 this.move_selection(false, cx);
@@ -251,7 +247,8 @@ impl Render for QuickSearch {
                 this.move_selection(true, cx);
                 cx.stop_propagation();
             }))
-            .child(Input::new(&self.input))
+            .child(div().pb_2().border_b_1().border_color(cx.theme().border)
+                .child(Input::new(&self.input).appearance(false)))
             .child(
                 div()
                     .text_xs()

@@ -450,18 +450,20 @@ impl RenderOnce for Modal {
                             .top(y)
                             .w(self.width)
                             .when_some(self.max_width, |this, w| this.max_w(w))
-                            .child(
-                                div()
-                                    .px_4()
-                                    .h_8()
-                                    .w_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .when_some(self.title, |this, title| {
-                                        this.h_10().font_semibold().text_center().child(title)
-                                    }),
-                            )
+                            .when(self.title.is_some() || self.show_close, |this| {
+                                this.child(
+                                    div()
+                                        .px_4()
+                                        .h_8()
+                                        .w_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .when_some(self.title, |this, title| {
+                                            this.h_10().font_semibold().text_center().child(title)
+                                        }),
+                                )
+                            })
                             .when(self.show_close, |this| {
                                 this.child(
                                     Button::new("close")
