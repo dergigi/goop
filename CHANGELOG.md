@@ -7,24 +7,6 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- Open keyboard shortcut help with ? outside inputs or through Help. Get Started now offers New Chat, Search Conversations, and Keyboard Shortcuts with their bindings.
-
-- Navigate New Chat with Up/Down and Enter, matching conversation search. Enter selects recipients in group mode.
-
-### Fixed
-
-- Show the profile menu before the loading indicator in the title bar.
-
-- Hide a sidebar when its final tab closes, including its resize handle and empty toggle. Reopening a tab restores its sidebar.
-
-- Selecting a person in New Chat immediately opens the existing conversation or starts a new chat, without a message-request dialog. Group recipient selection is available through New group chat.
-
-### Changed
-
-- Replace the theme collection with fixed Light and Dark palettes and a System preference, enabled by default. Existing theme choices migrate to System while other settings are retained.
-
 ## [2.1.0] - 2026-09-14
 
 Goop 2.1 makes the desktop interface calmer and easier to use with a keyboard.
@@ -32,12 +14,15 @@ Existing identities, settings, and message storage remain compatible.
 
 ### Added
 
+- Open keyboard shortcut help with ? outside inputs or through Help. Get Started now offers New Chat, Search Conversations, and Keyboard Shortcuts with their bindings.
+- Navigate New Chat with Up/Down and Enter, matching conversation search. Enter selects recipients in group mode.
 - Find in the current chat with Cmd/Ctrl+F or its toolbar button. Matching text is highlighted; Enter and Shift+Enter move between matching messages, and Escape restores focus. Search covers decrypted messages already available in the chat and updates as history arrives.
 - Native File, Edit, View, Window, and Help menus, standard editing and window actions, and an About dialog showing the version and build.
 - A Message history toolbar button that shows or hides history status and recovery controls.
 
 ### Changed
 
+- Replace the theme collection with fixed Light and Dark palettes and a System preference, enabled by default. Existing theme choices migrate to System while other settings are retained.
 - Use one resizable left sidebar for Inbox/Requests, toggled with Cmd/Ctrl+B. Profile, contact, and relay settings open in the right dock without replacing other configuration tabs.
 - Replace the sidebar search box with New Chat and Search actions with shortcut badges. Inbox and Requests keep their labels and positions. Cmd/Ctrl+K opens conversation search; Cmd/Ctrl+P searches cached profiles.
 - Move contact selection and group creation into New Chat, opened with Cmd/Ctrl+N or Cmd/Ctrl+T. Typing filters contacts locally; explicit name@domain addresses, npubs, and nprofiles resolve directly without global relay text search.
@@ -45,6 +30,9 @@ Existing identities, settings, and message storage remain compatible.
 
 ### Fixed
 
+- Show the profile menu before the loading indicator in the title bar.
+- Hide a sidebar when its final tab closes, including its resize handle and empty toggle. Reopening a tab restores its sidebar.
+- Selecting a person in New Chat immediately opens the existing conversation or starts a new chat, without a message-request dialog. Group recipient selection is available through New group chat.
 - Find contacts by the names already displayed in New Chat, without failed relay searches. Preserve recipient selections while changing the filter.
 - Show conversation loading once in the title bar; remove the duplicate sidebar overlay.
 - Remove the unnecessary “Loaded items only” search-footer label.
