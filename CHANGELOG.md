@@ -7,22 +7,37 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-14
+
+Goop 2.1 makes the desktop interface calmer and easier to use with a keyboard.
+Existing identities, settings, and message storage remain compatible.
+
 ### Added
 
-- Native application menus with File, Edit, View, Window, and Help, including standard editing actions, sidebar and chat shortcuts, and an About dialog.
-
-- Find in the current chat with Cmd/Ctrl+F or its toolbar button, highlighted matches, next/previous navigation, and Escape to restore focus.
+- Find in the current chat with Cmd/Ctrl+F or its toolbar button. Matching text is highlighted; Enter and Shift+Enter move between matching messages, and Escape restores focus. Search covers decrypted messages already available in the chat and updates as history arrives.
+- Native File, Edit, View, Window, and Help menus, standard editing and window actions, and an About dialog showing the version and build.
+- A Message history toolbar button that shows or hides history status and recovery controls.
 
 ### Changed
 
-- Use a resizable left dock for Inbox/Requests, toggled with Cmd/Ctrl+B. Profile, contact, and relay settings open in the right dock without replacing other configuration tabs.
+- Use one resizable left sidebar for Inbox/Requests, toggled with Cmd/Ctrl+B. Profile, contact, and relay settings open in the right dock without replacing other configuration tabs.
+- Replace the sidebar search box with New Chat and Search actions with shortcut badges. Inbox and Requests keep their labels and positions. Cmd/Ctrl+K opens conversation search; Cmd/Ctrl+P searches cached profiles.
+- Move contact selection and group creation into New Chat, opened with Cmd/Ctrl+N or Cmd/Ctrl+T. Typing filters contacts locally; explicit name@domain addresses, npubs, and nprofiles resolve directly without global relay text search.
+- Rename the broader relay action to “Broaden message scan to other relays” and place it after “Retry failed decryptions”.
 
-- Hide chat history status and recovery controls behind a Message history toolbar toggle.
+### Fixed
 
-- New Chat filters existing contacts immediately without relay text search. Explicit NIP-05 addresses, npubs, and nprofiles resolve directly; recipient selections survive filtering.
+- Find contacts by the names already displayed in New Chat, without failed relay searches. Preserve recipient selections while changing the filter.
+- Show conversation loading once in the title bar; remove the duplicate sidebar overlay.
+- Remove the unnecessary “Loaded items only” search-footer label.
 
-- Replace sidebar search with New Chat and Search actions with visible keyboard shortcuts. Search opens the local conversation search modal; Inbox and Requests keep their labels and positions.
-- Move contact discovery and group creation into a New Chat dialog, available with Cmd/Ctrl+N or Cmd/Ctrl+T.
+**Validation and limitations:** Regression coverage includes contact-query classification,
+local filtering, literal and Unicode chat matching, match navigation, Markdown
+highlighting, and existing messaging recovery. Full interactive GUI smoke tests on
+every platform remain incomplete. Find does not search messages the app has not
+retrieved and decrypted. Existing relay-retention and cross-client limitations from
+2.0.0 still apply. macOS bundles are ad-hoc signed, not notarized; Windows installers
+do not carry a developer certificate.
 
 ## [2.0.0] - 2026-09-14
 
@@ -103,6 +118,7 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/dergigi/goop/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/dergigi/goop/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/dergigi/goop/releases/tag/v1.1.0
