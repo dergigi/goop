@@ -1,0 +1,374 @@
+//! Verified plaintext cache: local provenance, account isolation, and rumor identity.
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+use std::sync::{Arc, RwLock};
+
+use anyhow::{Result, anyhow, bail};
+use common::EventExt;
+use futures::lock::Mutex;
+use nostr_sdk::prelude::*;
+
+#[derive(Debug, Clone)]
+pub(super) struct RumorCache {
+    client: Client,
+    pub owner: PublicKey,
+    keys: Keys,
+    write_lock: Arc<Mutex<()>>,
+    rooms: Arc<RwLock<BTreeMap<EventId, u64>>>,
+    reaction_targets: Arc<RwLock<BTreeSet<EventId>>>,
+}
+
+impl RumorCache {
+    pub fn open(client: Client, owner: PublicKey) -> Result<Self> {
+        // This is an internal cache-signing key, never an identity signer or relay credential.
+        let dir = common::config_dir();
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join("rumor-cache-key-v1");
+        if !path.exists() {
+            let keys = Keys::generate();
+            let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+            temp.write_all(&keys.secret_key().to_secret_bytes())?;
+            temp.as_file().sync_all()?;
+            if let Err(error) = temp.persist_noclobber(&path)
+                && error.error.kind() != std::io::ErrorKind::AlreadyExists
+            {
+                return Err(error.error.into());
+            }
+            #[cfg(unix)]
+            std::fs::File::open(dir)?.sync_all()?;
+        }
+        let keys = Keys::new(SecretKey::from_slice(&std::fs::read(path)?)?);
+        Ok(Self::with_keys(client, owner, keys))
+    }
+
+    pub fn with_keys(client: Client, owner: PublicKey, keys: Keys) -> Self {
+        Self {
+            client,
+            owner,
+            keys,
+            write_lock: Arc::default(),
+            rooms: Arc::default(),
+            reaction_targets: Arc::default(),
+        }
+    }
+
+    fn filter(&self) -> Filter {
+        Filter::new()
+            .kind(Kind::ApplicationSpecificData)
+            .author(self.keys.public_key())
+            .pubkey(self.owner)
+    }
+
+    fn parse(&self, event: &Event) -> Result<UnsignedEvent> {
+        event.verify()?;
+        let rumor = UnsignedEvent::from_json(&event.content)?;
+        validate(&rumor, self.owner)?;
+        Ok(rumor)
+    }
+
+    pub fn note(&self, rumor: &UnsignedEvent) {
+        if let Some(id) = rumor.id {
+            if is_chat(rumor.kind) {
+                self.rooms.write().unwrap().insert(id, rumor.uniq_id());
+            }
+            if rumor.kind == Kind::Reaction {
+                self.reaction_targets
+                    .write()
+                    .unwrap()
+                    .extend(rumor.tags.event_ids());
+            }
+        }
+    }
+
+    pub fn reaction_room(&self, rumor: &UnsignedEvent) -> Option<u64> {
+        rumor
+            .tags
+            .event_ids()
+            .last()
+            .and_then(|id| self.rooms.read().unwrap().get(&id).copied())
+    }
+
+    pub fn has_reactions(&self, id: EventId) -> bool {
+        self.reaction_targets.read().unwrap().contains(&id)
+    }
+
+    pub async fn get(&self, wrap: EventId) -> Result<UnsignedEvent> {
+        let records = self
+            .client
+            .database()
+            .query(
+                self.filter()
+                    .custom_tag(SingleLetterTag::LOWERCASE_G, wrap.to_hex())
+                    .limit(1),
+            )
+            .await?;
+        let event = records
+            .first()
+            .ok_or_else(|| anyhow!("Rumor is not cached for this account"))?;
+        let rumor = self.parse(event)?;
+        self.note(&rumor);
+        Ok(rumor)
+    }
+
+    /// Returns true for a new rumor, false for a different wrap of an existing rumor.
+    pub async fn put(&self, wrap: EventId, rumor: &UnsignedEvent) -> Result<bool> {
+        validate(rumor, self.owner)?;
+        let _guard = self.write_lock.lock().await;
+        let id = rumor.id.ok_or_else(|| anyhow!("Rumor has no ID"))?;
+        let identifier = format!("goop-rumor-v1:{}:{id}", self.owner);
+        let old = self
+            .client
+            .database()
+            .query(self.filter().identifier(&identifier))
+            .await?;
+        let mut wraps: BTreeSet<String> = old
+            .iter()
+            .flat_map(|e| e.tags.iter())
+            .filter(|tag| tag.kind() == "g")
+            .filter_map(|tag| tag.content().map(str::to_owned))
+            .collect();
+        wraps.insert(wrap.to_hex());
+        let mut tags = vec![
+            Tag::identifier(identifier),
+            Tag::public_key(self.owner),
+            Tag::custom("k", [rumor.kind.to_string()]),
+        ];
+        if is_chat(rumor.kind) {
+            tags.push(Tag::custom("r", [rumor.uniq_id().to_string()]));
+        }
+        tags.extend(wraps.into_iter().map(|id| Tag::custom("g", [id])));
+        let timestamp = old
+            .iter()
+            .map(|e| e.created_at.as_secs().saturating_add(1))
+            .max()
+            .unwrap_or(0)
+            .max(Timestamp::now().as_secs());
+        let event = EventBuilder::new(Kind::ApplicationSpecificData, rumor.as_json())
+            .tags(tags)
+            .custom_created_at(Timestamp::from(timestamp))
+            .finalize(&self.keys)?;
+        if !self
+            .client
+            .database()
+            .save_event(&event)
+            .await?
+            .is_success()
+        {
+            bail!("Could not persist decrypted message");
+        }
+        self.note(rumor);
+        Ok(old.is_empty())
+    }
+
+    pub async fn all(&self) -> Result<Vec<UnsignedEvent>> {
+        let records = self.client.database().query(self.filter()).await?;
+        let mut messages = BTreeMap::new();
+        for record in records {
+            let rumor = self.parse(&record)?;
+            self.note(&rumor);
+            messages.insert(rumor.id.unwrap(), rumor);
+        }
+        Ok(messages.into_values().collect())
+    }
+}
+
+pub(super) fn is_chat(kind: Kind) -> bool {
+    kind == Kind::PrivateDirectMessage || kind == Kind::Custom(15)
+}
+
+pub(super) fn validate(rumor: &UnsignedEvent, owner: PublicKey) -> Result<()> {
+    rumor.verify_id()?;
+    if rumor.id.is_none() {
+        bail!("Rumor ID missing");
+    }
+    if !is_chat(rumor.kind) && rumor.kind != Kind::Reaction {
+        bail!("Unsupported private event kind: {}", rumor.kind);
+    }
+    if is_chat(rumor.kind)
+        && rumor.pubkey != owner
+        && !rumor.tags.public_keys().any(|key| key == owner)
+    {
+        bail!("Account is not a participant in this message");
+    }
+    if rumor.kind == Kind::Reaction && rumor.tags.event_ids().next().is_none() {
+        bail!("Reaction has no target message");
+    }
+    Ok(())
+}
+
+/// A reaction is part of its target's room, not a room inferred from reaction p-tags.
+pub(super) fn for_room(messages: Vec<UnsignedEvent>, room: u64) -> Vec<UnsignedEvent> {
+    let targets: BTreeSet<_> = messages
+        .iter()
+        .filter(|m| is_chat(m.kind) && m.uniq_id() == room)
+        .filter_map(|m| m.id)
+        .collect();
+    let mut result: Vec<_> = messages
+        .into_iter()
+        .filter(|m| {
+            (is_chat(m.kind) && m.uniq_id() == room)
+                || (m.kind == Kind::Reaction
+                    && m.tags
+                        .event_ids()
+                        .last()
+                        .is_some_and(|id| targets.contains(&id)))
+        })
+        .collect();
+    result.sort_by_key(|m| (m.created_at, m.id));
+    result.dedup_by_key(|m| m.id);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(
+        sender: &Keys,
+        recipients: &[PublicKey],
+        kind: Kind,
+        content: &str,
+    ) -> UnsignedEvent {
+        let mut rumor = EventBuilder::new(kind, content)
+            .tags(recipients.iter().copied().map(Tag::public_key))
+            .finalize_unsigned(sender.public_key());
+        rumor.ensure_id();
+        rumor
+    }
+
+    #[tokio::test]
+    async fn cache_is_account_scoped_and_deduplicates_wraps_after_restart() {
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let local = Keys::generate();
+        let alice = Keys::generate();
+        let bob = Keys::generate();
+        let sender = Keys::generate();
+        let rumor = message(
+            &sender,
+            &[alice.public_key(), bob.public_key()],
+            Kind::PrivateDirectMessage,
+            "group",
+        );
+        let a = RumorCache::with_keys(client.clone(), alice.public_key(), local.clone());
+        let b = RumorCache::with_keys(client.clone(), bob.public_key(), local.clone());
+        let first = EventId::from_byte_array([1; 32]);
+        let second = EventId::from_byte_array([2; 32]);
+        let third = EventId::from_byte_array([3; 32]);
+        assert!(a.put(first, &rumor).await.unwrap());
+        assert!(b.all().await.unwrap().is_empty());
+        assert!(b.get(first).await.is_err());
+        let clone = a.clone();
+        let (one, two) = futures::join!(a.put(second, &rumor), clone.put(third, &rumor));
+        assert!(!one.unwrap());
+        assert!(!two.unwrap());
+        let restarted = RumorCache::with_keys(client.clone(), alice.public_key(), local);
+        assert_eq!(restarted.all().await.unwrap(), vec![rumor.clone()]);
+        for wrap in [first, second, third] {
+            assert_eq!(restarted.get(wrap).await.unwrap(), rumor);
+        }
+        assert!(b.put(first, &rumor).await.unwrap());
+        assert_eq!(b.all().await.unwrap(), vec![rumor]);
+        client.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn unsigned_provenance_and_legacy_records_are_not_trusted() {
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let owner = Keys::generate();
+        let sender = Keys::generate();
+        let cache = RumorCache::with_keys(client.clone(), owner.public_key(), Keys::generate());
+        let rumor = message(
+            &sender,
+            &[owner.public_key()],
+            Kind::PrivateDirectMessage,
+            "hello",
+        );
+        let wrap = EventId::from_byte_array([1; 32]);
+        for identifier in [
+            wrap.to_hex(),
+            format!("goop-rumor-v1:{}:{}", owner.public_key(), rumor.id.unwrap()),
+        ] {
+            let forged = EventBuilder::new(Kind::ApplicationSpecificData, rumor.as_json())
+                .tags([
+                    Tag::identifier(identifier),
+                    Tag::public_key(owner.public_key()),
+                    Tag::custom("g", [wrap.to_hex()]),
+                    Tag::custom("k", ["14"]),
+                ])
+                .finalize(&sender)
+                .unwrap();
+            client.database().save_event(&forged).await.unwrap();
+        }
+        assert!(cache.all().await.unwrap().is_empty());
+        assert!(cache.get(wrap).await.is_err());
+        client.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn group_reactions_wait_for_their_target_and_keep_the_target_room() {
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let owner = Keys::generate();
+        let sender = Keys::generate();
+        let third = Keys::generate();
+        let cache = RumorCache::with_keys(client.clone(), owner.public_key(), Keys::generate());
+        let target = message(
+            &sender,
+            &[owner.public_key(), third.public_key()],
+            Kind::PrivateDirectMessage,
+            "group",
+        );
+        let mut reaction = EventBuilder::new(Kind::Reaction, "+")
+            .tags([
+                Tag::event(target.id.unwrap()),
+                Tag::public_key(sender.public_key()),
+            ])
+            .finalize_unsigned(third.public_key());
+        reaction.ensure_id();
+        assert_ne!(reaction.uniq_id(), target.uniq_id());
+        cache
+            .put(EventId::from_byte_array([1; 32]), &reaction)
+            .await
+            .unwrap();
+        assert!(cache.reaction_room(&reaction).is_none());
+        assert!(for_room(cache.all().await.unwrap(), target.uniq_id()).is_empty());
+        cache
+            .put(EventId::from_byte_array([2; 32]), &target)
+            .await
+            .unwrap();
+        assert_eq!(cache.reaction_room(&reaction), Some(target.uniq_id()));
+        assert!(cache.has_reactions(target.id.unwrap()));
+        assert_eq!(
+            for_room(cache.all().await.unwrap(), target.uniq_id()).len(),
+            2
+        );
+        client.shutdown().await;
+    }
+
+    #[test]
+    fn rejects_unsupported_events_and_messages_for_other_accounts() {
+        let sender = Keys::generate();
+        let owner = Keys::generate().public_key();
+        assert!(
+            validate(
+                &message(&sender, &[owner], Kind::TextNote, "public note"),
+                owner
+            )
+            .is_err()
+        );
+        assert!(
+            validate(
+                &message(&sender, &[], Kind::PrivateDirectMessage, "not yours"),
+                owner
+            )
+            .is_err()
+        );
+        assert!(validate(&message(&sender, &[owner], Kind::Reaction, "+"), owner).is_err());
+        assert!(validate(&message(&sender, &[owner], Kind::Custom(15), "file"), owner).is_ok());
+    }
+}

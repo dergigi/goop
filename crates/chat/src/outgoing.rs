@@ -217,7 +217,7 @@ impl OutgoingQueue {
         Ok(load(&self.root, self.owner)
             .await?
             .into_iter()
-            .filter(|job| job.rumor.uniq_id() == room)
+            .filter(|job| job.rumor.uniq_id() == room || job.rumor.kind == Kind::Reaction)
             .map(|job| job.rumor)
             .collect())
     }

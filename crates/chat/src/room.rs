@@ -5,7 +5,6 @@ use anyhow::Error;
 use common::EventExt;
 use gpui::{App, AppContext, Context, EventEmitter, SharedString, Task};
 use instant::Duration;
-use itertools::Itertools;
 use nostr_sdk::prelude::*;
 use person::{Person, PersonRegistry};
 use settings::{RoomConfig, SignerKind};
@@ -385,31 +384,19 @@ impl Room {
 
     /// Get all messages belonging to the room
     pub fn get_messages(&self, cx: &App) -> Task<Result<Vec<UnsignedEvent>, Error>> {
-        let nostr = NostrRegistry::global(cx);
-        let client = nostr.read(cx).client();
         let room_id = self.id;
-        let outgoing = crate::ChatRegistry::global(cx).read(cx).outgoing_queue();
-
+        let registry = crate::ChatRegistry::global(cx);
+        let cache = registry.read(cx).incoming_cache();
+        let outgoing = registry.read(cx).outgoing_queue();
         cx.background_spawn(async move {
-            let filter = Filter::new()
-                .kind(Kind::ApplicationSpecificData)
-                .custom_tag(SingleLetterTag::LOWERCASE_R, room_id.to_string());
-
-            let mut messages: Vec<_> = client
-                .database()
-                .query(filter)
-                .await?
-                .into_iter()
-                .filter_map(|event| UnsignedEvent::from_json(&event.content).ok())
-                .sorted_by_key(|message| message.created_at)
-                .collect();
-
+            let mut messages = match cache {
+                Some(cache) => cache.all().await?,
+                None => vec![],
+            };
             if let Some(outgoing) = outgoing {
                 messages.extend(outgoing.messages(room_id).await?);
-                messages.sort_by_key(|message| (message.created_at, message.id));
-                messages.dedup_by_key(|message| message.id);
             }
-            Ok(messages)
+            Ok(crate::cache::for_room(messages, room_id))
         })
     }
 

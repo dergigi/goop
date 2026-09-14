@@ -111,12 +111,12 @@ impl DecryptQueue {
     pub async fn run(
         &self,
         receivers: DecryptReceivers,
-        client: Client,
+        cache: super::RumorCache,
         signer: UniversalSigner,
         signals: flume::Sender<Signal>,
     ) -> Result<()> {
         let decrypt_job = |(event, historical): (Event, bool)| {
-            let client = &client;
+            let cache = &cache;
             let signer = &signer;
             async move {
                 let mut result = Err(anyhow!("Signer unavailable"));
@@ -125,7 +125,7 @@ impl DecryptQueue {
                 for attempt in 0..2 {
                     result = async_utility::time::timeout(
                         Some(Duration::from_secs(30)),
-                        extract_rumor(client, signer, &event),
+                        extract_rumor(cache, signer, &event),
                     )
                     .await
                     .unwrap_or_else(|| Err(anyhow!("Signer decryption timed out")));
@@ -157,10 +157,10 @@ impl DecryptQueue {
                 state.attempted.insert(event.id);
             }
             let result = match result {
-                Ok(rumor) => {
+                Ok((rumor, duplicate)) => {
                     self.loaded.fetch_add(1, Ordering::Relaxed);
                     let mut message = NewMessage::new(event.id, rumor);
-                    message.historical = historical;
+                    message.historical = historical || duplicate;
                     Ok(message)
                 }
                 Err(error) => Err(FailedMessage::new(&event, error.to_string())),
@@ -216,15 +216,19 @@ mod tests {
         let client = Client::builder()
             .database(nostr_memory::MemoryDatabase::unbounded())
             .build();
-        let signer = UniversalSigner::new(Keys::generate());
+        let recipient = Keys::generate();
+        let cache =
+            super::super::RumorCache::with_keys(client, recipient.public_key(), Keys::generate());
+        let signer = UniversalSigner::new(recipient.clone());
         let event = EventBuilder::new(Kind::GiftWrap, "invalid ciphertext")
+            .tag(Tag::public_key(recipient.public_key()))
             .finalize(&Keys::generate())
             .unwrap();
         let (queue, receiver) = DecryptQueue::new();
         let (tx, rx) = flume::unbounded();
         let worker_queue = queue.clone();
         let worker =
-            tokio::spawn(async move { worker_queue.run(receiver, client, signer, tx).await });
+            tokio::spawn(async move { worker_queue.run(receiver, cache, signer, tx).await });
         queue.enqueue(event.clone(), false).await.unwrap();
         queue.enqueue(event.clone(), false).await.unwrap();
         let first = tokio::time::timeout(Duration::from_secs(5), rx.recv_async())
@@ -332,6 +336,11 @@ mod tests {
             let (started_tx, started_rx) = flume::unbounded();
             let (release_tx, release_rx) = flume::unbounded();
             let peak = Arc::new(AtomicUsize::new(0));
+            let cache = super::super::RumorCache::with_keys(
+                client,
+                recipient.public_key(),
+                Keys::generate(),
+            );
             let signer = UniversalSigner::new(GatedSigner {
                 keys: recipient,
                 blocked,
@@ -343,7 +352,7 @@ mod tests {
             let (tx, rx) = flume::unbounded();
             let worker_queue = queue.clone();
             let worker =
-                tokio::spawn(async move { worker_queue.run(receivers, client, signer, tx).await });
+                tokio::spawn(async move { worker_queue.run(receivers, cache, signer, tx).await });
             // All historical slots are occupied by signer requests that cannot finish.
             for _ in 0..HISTORY_CONCURRENCY {
                 started_rx.recv_async().await.unwrap();

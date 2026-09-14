@@ -15,6 +15,8 @@ use instant::{Duration, Instant};
 use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
 use state::{NostrRegistry, StateEvent, USER_GIFTWRAP, UniversalSigner};
+mod cache;
+use cache::RumorCache;
 mod decryption;
 mod history;
 mod outgoing;
@@ -92,6 +94,7 @@ pub struct ChatRegistry {
     retry_task: Option<Task<Result<(), Error>>>,
     outgoing_task: Option<Task<Result<(), Error>>>,
     outgoing: Option<OutgoingQueue>,
+    incoming: Option<RumorCache>,
     outgoing_reports: HashMap<EventId, Vec<SendReport>>,
 
     /// Channel for sending signals to the UI.
@@ -195,6 +198,7 @@ impl ChatRegistry {
             retry_task: None,
             outgoing_task: None,
             outgoing: None,
+            incoming: None,
             outgoing_reports: HashMap::new(),
             matcher: CachedMatcher(SkimMatcherV2::default()),
             signal_rx: rx,
@@ -217,12 +221,20 @@ impl ChatRegistry {
         let (queue, receiver) = DecryptQueue::new();
         self.queue = Some(queue.clone());
         let decrypt_queue = queue.clone();
-        let decrypt_client = client.clone();
+        let cache = match RumorCache::open(client.clone(), user) {
+            Ok(cache) => cache,
+            Err(error) => {
+                cx.emit(ChatEvent::Error(format!(
+                    "Could not open message cache: {error}"
+                )));
+                return;
+            }
+        };
+        self.incoming = Some(cache.clone());
+        let signer = signer.snapshot();
         let signals = self.signal_tx.clone();
         self.decrypt_task = Some(cx.background_spawn(async move {
-            decrypt_queue
-                .run(receiver, decrypt_client, signer, signals)
-                .await
+            decrypt_queue.run(receiver, cache, signer, signals).await
         }));
         let seen = self.seen.clone();
         let tx = self.signal_tx.clone();
@@ -312,6 +324,10 @@ impl ChatRegistry {
         let signals = self.signal_tx.clone();
         self.outgoing_task =
             Some(cx.background_spawn(async move { queue.run(signer, wake, signals).await }));
+    }
+
+    pub(crate) fn incoming_cache(&self) -> Option<RumorCache> {
+        self.incoming.clone()
     }
 
     pub(crate) fn outgoing_queue(&self) -> Option<OutgoingQueue> {
@@ -711,6 +727,7 @@ impl ChatRegistry {
         }
         self.outgoing_task = None;
         self.outgoing = None;
+        self.incoming = None;
         self.outgoing_reports.clear();
         self.notification_listener = None;
         self.signal_consumer = None;
@@ -791,6 +808,7 @@ impl ChatRegistry {
         let client = nostr.read(cx).client();
         let signer = nostr.read(cx).signer();
 
+        let cache = self.incoming.clone();
         cx.background_spawn(async move {
             let public_key = signer.get_public_key_async().await?;
 
@@ -810,22 +828,13 @@ impl ChatRegistry {
                 .map(|event| event.tags.public_keys().collect())
                 .unwrap_or_default();
 
-            let filter = Filter::new()
-                .kind(Kind::ApplicationSpecificData)
-                .custom_tag(SingleLetterTag::LOWERCASE_K, "14");
-
-            let events = client.database().query(filter).await?;
+            let messages = match cache {
+                Some(cache) => cache.all().await?,
+                None => vec![],
+            };
             let mut grouped: HashMap<u64, Vec<UnsignedEvent>> = HashMap::new();
-
-            for raw in events.into_iter() {
-                if let Ok(rumor) = UnsignedEvent::from_json(&raw.content)
-                    && rumor.tags.public_keys().next().is_some()
-                {
-                    if rumor.pubkey != public_key
-                        && !rumor.tags.public_keys().any(|k| k == public_key)
-                    {
-                        continue;
-                    }
+            for rumor in messages {
+                if cache::is_chat(rumor.kind) {
                     grouped.entry(rumor.uniq_id()).or_default().push(rumor);
                 }
             }
@@ -856,12 +865,32 @@ impl ChatRegistry {
     ///
     /// If the room doesn't exist, it will be created.
     /// Updates room ordering based on the most recent messages.
-    pub fn new_message(&mut self, message: NewMessage, cx: &mut Context<Self>) {
+    pub fn new_message(&mut self, mut message: NewMessage, cx: &mut Context<Self>) {
         let nostr = NostrRegistry::global(cx);
 
         let Some(public_key) = nostr.read(cx).current_user() else {
             return;
         };
+
+        let mut refresh_reactions = false;
+        if let Some(cache) = &self.incoming {
+            cache.note(&message.rumor);
+            if message.rumor.kind == Kind::Reaction {
+                let Some(room) = cache.reaction_room(&message.rumor) else {
+                    return;
+                };
+                message.room = room;
+                if !self.room_index.contains_key(&room) {
+                    return;
+                }
+            } else if cache::is_chat(message.rumor.kind) {
+                refresh_reactions = message.rumor.id.is_some_and(|id| cache.has_reactions(id));
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
 
         match self.room_index.get(&message.room).cloned() {
             Some(room) => {
@@ -870,6 +899,9 @@ impl ChatRegistry {
                         this.set_ongoing(cx);
                     }
                     this.push_message(message, cx);
+                    if refresh_reactions {
+                        this.emit_refresh(cx);
+                    }
                 });
                 self.sort(cx);
             }
@@ -894,13 +926,19 @@ impl ChatRegistry {
 
 /// Unwraps a gift-wrapped event and processes its contents.
 async fn extract_rumor(
-    client: &Client,
+    cache: &RumorCache,
     signer: &UniversalSigner,
     gift_wrap: &Event,
-) -> Result<UnsignedEvent, Error> {
+) -> Result<(UnsignedEvent, bool), Error> {
+    gift_wrap.verify()?;
+    if gift_wrap.kind != Kind::GiftWrap
+        || !gift_wrap.tags.public_keys().any(|key| key == cache.owner)
+    {
+        return Err(anyhow!("Gift wrap is not addressed to this account"));
+    }
     // Try to get cached rumor first
-    if let Ok(rumor) = get_rumor(client, gift_wrap.id).await {
-        return Ok(rumor);
+    if let Ok(rumor) = cache.get(gift_wrap.id).await {
+        return Ok((rumor, true));
     }
 
     // Try to unwrap with the available signer
@@ -916,12 +954,8 @@ async fn extract_rumor(
     rumor.verify_id()?;
     rumor.ensure_id();
 
-    // Cache the rumor
-    if let Err(e) = set_rumor(client, gift_wrap.id, &rumor).await {
-        log::error!("Failed to cache rumor: {e:?}");
-    }
-
-    Ok(rumor)
+    let inserted = cache.put(gift_wrap.id, &rumor).await?;
+    Ok((rumor, !inserted))
 }
 
 /// Attempts to unwrap a gift wrap event with a given signer.
@@ -954,40 +988,6 @@ async fn try_unwrap_with(
         sender: seal.pubkey,
         rumor,
     })
-}
-
-/// Stores an unwrapped event in local database with reference to original
-async fn set_rumor(client: &Client, id: EventId, rumor: &UnsignedEvent) -> Result<(), Error> {
-    let room_id = rumor.uniq_id().to_string();
-
-    let tags = vec![
-        Tag::identifier(id),
-        Tag::public_key(rumor.pubkey),
-        Tag::custom("r", [room_id]),
-        Tag::custom("k", ["14"]),
-    ];
-
-    let event = EventBuilder::new(Kind::ApplicationSpecificData, rumor.as_json())
-        .tags(tags)
-        .finalize_async(&*LOCAL_KEYS)
-        .await?;
-
-    client.database().save_event(&event).await?;
-
-    Ok(())
-}
-
-/// Retrieves a previously unwrapped event from local database
-async fn get_rumor(client: &Client, gift_wrap: EventId) -> Result<UnsignedEvent, Error> {
-    let filter = Filter::new().identifier(gift_wrap).limit(1);
-
-    if let Some(event) = client.database().query(filter).await?.into_iter().next() {
-        let rumor = UnsignedEvent::from_json(event.content)?;
-        rumor.verify_id()?;
-        Ok(rumor)
-    } else {
-        Err(anyhow!("Event is not cached yet."))
-    }
 }
 
 #[cfg(test)]
@@ -1033,6 +1033,7 @@ mod validation_tests {
         let client = Client::builder()
             .database(nostr_memory::MemoryDatabase::unbounded())
             .build();
+        let cache = RumorCache::with_keys(client.clone(), recipient.public_key(), Keys::generate());
         let rumor = EventBuilder::new(Kind::PrivateDirectMessage, "hello")
             .tag(Tag::public_key(recipient.public_key()))
             .finalize_unsigned(sender.public_key());
@@ -1076,11 +1077,68 @@ mod validation_tests {
         for (name, seal) in cases {
             let wrap = wrap_seal(&recipient, &seal).await;
             assert!(
-                extract_rumor(&client, &signer, &wrap).await.is_err(),
+                extract_rumor(&cache, &signer, &wrap).await.is_err(),
                 "{name}"
             );
-            assert!(get_rumor(&client, wrap.id).await.is_err(), "cached {name}");
+            assert!(cache.get(wrap.id).await.is_err(), "cached {name}");
         }
+        client.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn raw_history_rebuilds_legacy_cache_and_duplicate_wraps_are_identified() {
+        let sender = Keys::generate();
+        let recipient = Keys::generate();
+        let signer = UniversalSigner::new(recipient.clone());
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let cache = RumorCache::with_keys(client.clone(), recipient.public_key(), Keys::generate());
+        let mut rumor = EventBuilder::new(Kind::PrivateDirectMessage, "retained history")
+            .tag(Tag::public_key(recipient.public_key()))
+            .finalize_unsigned(sender.public_key());
+        rumor.ensure_id();
+        let seal = seal_rumor(&sender, &recipient, &rumor, Kind::Seal, vec![]).await;
+        let first = wrap_seal(&recipient, &seal).await;
+        let second = wrap_seal(&recipient, &seal).await;
+        let legacy = EventBuilder::new(Kind::ApplicationSpecificData, rumor.as_json())
+            .tags([Tag::identifier(first.id), Tag::custom("k", ["14"])])
+            .finalize(&*LOCAL_KEYS)
+            .unwrap();
+        client.database().save_event(&legacy).await.unwrap();
+        client.database().save_event(&first).await.unwrap();
+        assert!(cache.get(first.id).await.is_err());
+        let raw = client
+            .database()
+            .query(
+                Filter::new()
+                    .kind(Kind::GiftWrap)
+                    .pubkey(recipient.public_key()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(raw.len(), 1);
+        assert_eq!(
+            extract_rumor(&cache, &signer, raw.first().unwrap())
+                .await
+                .unwrap(),
+            (rumor.clone(), false)
+        );
+        assert_eq!(
+            extract_rumor(&cache, &signer, &second).await.unwrap(),
+            (rumor.clone(), true)
+        );
+        assert_eq!(cache.all().await.unwrap(), vec![rumor]);
+        // A matching cache alias does not bypass outer signature/recipient validation.
+        let mut forged = first.clone();
+        forged.content.push('x');
+        assert!(extract_rumor(&cache, &signer, &forged).await.is_err());
+        let other = RumorCache::with_keys(
+            client.clone(),
+            Keys::generate().public_key(),
+            Keys::generate(),
+        );
+        assert!(extract_rumor(&other, &signer, &first).await.is_err());
         client.shutdown().await;
     }
 
@@ -1092,6 +1150,7 @@ mod validation_tests {
         let client = Client::builder()
             .database(nostr_memory::MemoryDatabase::unbounded())
             .build();
+        let cache = RumorCache::with_keys(client.clone(), recipient.public_key(), Keys::generate());
         for include_id in [false, true] {
             let mut rumor = EventBuilder::new(Kind::PrivateDirectMessage, "valid message")
                 .tag(Tag::public_key(recipient.public_key()))
@@ -1104,9 +1163,9 @@ mod validation_tests {
             let expected_id = rumor.compute_id();
             let seal = seal_rumor(&sender, &recipient, &rumor, Kind::Seal, vec![]).await;
             let wrap = wrap_seal(&recipient, &seal).await;
-            let result = extract_rumor(&client, &signer, &wrap).await.unwrap();
+            let (result, _) = extract_rumor(&cache, &signer, &wrap).await.unwrap();
             assert_eq!(result.id, Some(expected_id));
-            assert_eq!(get_rumor(&client, wrap.id).await.unwrap(), result);
+            assert_eq!(cache.get(wrap.id).await.unwrap(), result);
         }
         client.shutdown().await;
     }

@@ -14,13 +14,13 @@ The agreed scope remains NIP-17, external identity signers, and history from the
 - [x] Attempt the sender copy independently of recipient delivery; display partial delivery and retry controls.
 - [x] Keep outgoing jobs and queued plaintext account-scoped and separate from the relay database. Stop work on account changes and freeze in-flight signing identity (`988b4a3`).
 
-The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 20 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. It has not yet been rebuilt and installed with these changes.
+The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 25 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. It has not yet been rebuilt and installed with these changes.
 
 ## Remaining implementation and regression coverage
 
 - [ ] Classify signer rejection, cancellation, disconnection, and timeout. Avoid repeatedly prompting for an explicitly rejected operation while retaining its retryable intent.
-- [ ] Scope the existing decrypted incoming-message cache to the account; deduplicate displayed messages by validated rumor ID across different gift wraps.
-- [ ] Separate incoming rumor kinds in storage and routing. Reactions and unsupported payloads must not create phantom conversations.
+- [x] Scope decrypted incoming messages to the account and locally signed cache provenance; deduplicate by validated rumor ID across gift wraps, including after restart.
+- [x] Store actual rumor kinds; route reactions through their target message, retain reactions arriving before their targets, and reject unsupported payloads before room creation.
 - [ ] Expose current inbox relay connection, authentication, history, and delivery failures in a useful diagnostic view.
 - [ ] Extend history tests for disconnects during a page, inbox-list changes during a scan, and timestamp ties under a server-imposed cap smaller than the request. Do not label query exhaustion as proof of complete account history.
 - [ ] Validate consistent profile refresh and avatars across sidebar, tabs, and conversations during backfill. Measure missing metadata separately from failed image downloads or view refreshes.
@@ -36,3 +36,5 @@ The outgoing implementation is covered by disk-backed restart tests, controlled 
 - [ ] Set the release version, document the changes and any known limitations, publish artifacts, and verify downloads/update metadata.
 
 Do not publish solely because the implementation checklist is complete. The release should follow the interoperability, recovery, and platform checks above.
+
+Incoming cache migration preserves raw encrypted events and rebuilds verified account-scoped records by replaying them through the signer. Legacy plaintext records lack reliable account/provenance information and are not read. The first upgraded startup can therefore require extra decryption work. Regression tests cover legacy replay, untrusted cache records, account isolation, concurrent duplicate wraps, and group reactions arriving before their target.
