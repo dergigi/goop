@@ -7,6 +7,11 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Replace sidebar search with New Chat and Search actions with visible keyboard shortcuts. Search opens the local conversation search modal; Inbox and Requests keep their labels and positions.
+- Move contact discovery and group creation into a New Chat dialog, available with Cmd/Ctrl+N or Cmd/Ctrl+T. Cmd/Ctrl+F now opens conversation search.
+
 ## [2.0.0] - 2026-09-14
 
 Goop 2.0 focuses on reliable NIP-17 messaging and fast keyboard navigation.

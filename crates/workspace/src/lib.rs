@@ -58,6 +58,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         KeyBinding::new(&format!("{modifier}-2"), Command::ShowRequests, None),
         KeyBinding::new(&format!("{modifier}-3"), Command::FocusComposer, None),
         KeyBinding::new(&format!("{modifier}-t"), Command::NewConversation, None),
+        KeyBinding::new(&format!("{modifier}-n"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-w"), ClosePanel, None),
         KeyBinding::new(&format!("{modifier}-shift-w"), CloseAllPanels, None),
         KeyBinding::new(&format!("{modifier}-shift-t"), ReopenClosedPanel, None),
@@ -327,18 +328,14 @@ impl Workspace {
                     .into_iter()
                     .find_map(|panel| panel.view().downcast::<chat_ui::ChatPanel>().ok())
                 {
-                    self.sidebar
-                        .update(cx, |sidebar, cx| sidebar.dismiss_search(window, cx));
                     chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
                 }
             }
-            Command::SearchConversations | Command::SearchProfiles => {
+            Command::Search | Command::SearchConversations | Command::SearchProfiles => {
                 dialogs::quick_search::open(matches!(command, Command::SearchProfiles), window, cx);
             }
-            Command::Search | Command::NewConversation => {
-                self.sidebar.update(cx, |sidebar, cx| {
-                    sidebar.focus_search(matches!(command, Command::NewConversation), window, cx)
-                });
+            Command::NewConversation => {
+                dialogs::new_chat::open(window, cx);
             }
             Command::ShowSettings => {
                 let view = settings::init(window, cx);
