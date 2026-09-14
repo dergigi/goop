@@ -72,6 +72,8 @@ pub struct ChatPanel {
     /// All reactions
     reactions: BTreeMap<EventId, Vec<(SharedString, PublicKey)>>,
 
+    render_markdown: bool,
+
     /// Mapping message ids to their rendered texts
     rendered_texts_by_id: BTreeMap<EventId, RenderedText>,
 
@@ -164,6 +166,19 @@ impl ChatPanel {
             ),
         );
 
+        subscriptions.push(cx.observe(&AppSettings::global(cx), |this, _, cx| {
+            let markdown = AppSettings::get_render_markdown(cx);
+            if this.render_markdown != markdown {
+                this.render_markdown = markdown;
+                this.rendered_texts_by_id.clear();
+                let scroll_top = this.list_state.logical_scroll_top();
+                this.list_state
+                    .splice(0..this.messages.len(), this.messages.len());
+                this.list_state.scroll_to(scroll_top);
+                cx.notify();
+            }
+        }));
+
         // Define all functions that will run after the current cycle
         cx.defer_in(window, |this, window, cx| {
             this.connect(cx);
@@ -185,6 +200,7 @@ impl ChatPanel {
             subject_bar,
             replies_to,
             attachments,
+            render_markdown: AppSettings::get_render_markdown(cx),
             rendered_texts_by_id: BTreeMap::new(),
             reports_by_id,
             sent_ids: Arc::new(Mutex::new(Vec::new())),
@@ -936,7 +952,13 @@ impl ChatPanel {
                 .rendered_texts_by_id
                 .entry(message.id)
                 .or_insert_with(|| {
-                    RenderedText::new(&message.content, &message.mentions, &persons, cx)
+                    RenderedText::new(
+                        &message.content,
+                        &message.mentions,
+                        &persons,
+                        self.render_markdown,
+                        cx,
+                    )
                 })
                 .element(ix.into(), window, cx);
 

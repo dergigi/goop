@@ -63,6 +63,7 @@ impl Render for Preferences {
         const RESET: &str = "Reset the theme to the default one.";
 
         let screening = AppSettings::get_screening(cx);
+        let render_markdown = AppSettings::get_render_markdown(cx);
         let hide_avatar = AppSettings::get_hide_avatar(cx);
         let nip4e = AppSettings::get_nip4e(cx);
         let theme_mode = AppSettings::get_theme_mode(cx);
@@ -98,6 +99,18 @@ impl Render for Preferences {
                     .id("appearance")
                     .title("Appearance")
                     .fill()
+                    .child(
+                        Switch::new("render-markdown")
+                            .label("Render Markdown")
+                            .description(
+                                "Format chat messages with bold, italic, code, links, and lists.",
+                            )
+                            .checked(render_markdown)
+                            .on_click(move |_, _window, cx| {
+                                AppSettings::update_render_markdown(!render_markdown, cx);
+                                cx.refresh_windows();
+                            }),
+                    )
                     .child(
                         h_flex()
                             .gap_3()

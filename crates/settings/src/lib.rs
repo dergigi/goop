@@ -39,6 +39,7 @@ setting_accessors! {
     pub theme: Option<String>,
     pub theme_mode: ThemeMode,
     pub hide_avatar: bool,
+    pub render_markdown: bool,
     pub screening: bool,
     pub nip4e: bool,
     pub trusted_relays: Vec<String>,
@@ -116,6 +117,10 @@ pub struct Settings {
     /// Hide user avatars
     pub hide_avatar: bool,
 
+    /// Render Markdown formatting in chat bubbles
+    #[serde(default = "default_render_markdown")]
+    pub render_markdown: bool,
+
     /// Enable screening for unknown chat requests
     pub screening: bool,
 
@@ -129,12 +134,17 @@ pub struct Settings {
     pub file_server: Url,
 }
 
+fn default_render_markdown() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: None,
             theme_mode: ThemeMode::default(),
             hide_avatar: false,
+            render_markdown: default_render_markdown(),
             screening: true,
             nip4e: false,
             trusted_relays: vec![],
@@ -181,6 +191,7 @@ impl AppSettings {
             // Observe and automatically save settings on changes
             cx.observe(&inner, |this, _inner, cx| {
                 this.save(cx);
+                cx.notify();
             }),
         );
 
@@ -309,5 +320,31 @@ impl AppSettings {
                 cx.notify();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_keep_preferences_and_enable_markdown() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("render_markdown");
+        value["hide_avatar"] = true.into();
+        let settings: Settings = serde_json::from_value(value).unwrap();
+        assert!(settings.render_markdown);
+        assert!(settings.hide_avatar);
+    }
+
+    #[test]
+    fn markdown_opt_out_survives_serialization() {
+        let settings = Settings {
+            render_markdown: false,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert!(!restored.render_markdown);
     }
 }
