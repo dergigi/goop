@@ -225,6 +225,18 @@ impl Room {
         self
     }
 
+    /// An older outgoing message can establish a conversation; a newer incoming
+    /// message can never revoke that evidence.
+    pub(crate) fn merge_loaded(&mut self, incoming: Self) {
+        let ongoing = self.kind == RoomKind::Ongoing || incoming.kind == RoomKind::Ongoing;
+        if incoming.created_at > self.created_at {
+            *self = incoming;
+        }
+        if ongoing {
+            self.kind = RoomKind::Ongoing;
+        }
+    }
+
     /// Sets this room is ongoing conversation
     pub fn set_ongoing(&mut self, cx: &mut Context<Self>) {
         self.kind = RoomKind::Ongoing;
@@ -574,5 +586,32 @@ mod delivery_tests {
         assert!(report.failed());
         assert!(!report.success());
         assert!(!report.pending());
+    }
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+    fn room(time: u64, kind: RoomKind) -> Room {
+        let event = EventBuilder::new(Kind::PrivateDirectMessage, "message")
+            .custom_created_at(Timestamp::from(time))
+            .finalize_unsigned(Keys::generate().public_key());
+        Room::from(event).kind(kind)
+    }
+    #[test]
+    fn newer_incoming_history_cannot_demote_an_established_chat() {
+        let mut established = room(10, RoomKind::Ongoing);
+        established.merge_loaded(room(20, RoomKind::Request));
+        assert_eq!(established.kind, RoomKind::Ongoing);
+        assert_eq!(established.created_at, Timestamp::from(20));
+    }
+    #[test]
+    fn older_or_equal_history_can_promote_without_replacing_latest_message() {
+        for time in [10, 20] {
+            let mut request = room(20, RoomKind::Request);
+            request.merge_loaded(room(time, RoomKind::Ongoing));
+            assert_eq!(request.kind, RoomKind::Ongoing);
+            assert_eq!(request.created_at, Timestamp::from(20));
+        }
     }
 }

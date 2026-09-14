@@ -19,6 +19,7 @@ use crate::dialogs::screening;
 #[derive(IntoElement)]
 pub struct RoomEntry {
     ix: usize,
+    room_id: Option<u64>,
     public_key: Option<PublicKey>,
     name: Option<SharedString>,
     avatar: Option<SharedString>,
@@ -33,6 +34,7 @@ impl RoomEntry {
     pub fn new(ix: usize) -> Self {
         Self {
             ix,
+            room_id: None,
             public_key: None,
             name: None,
             avatar: None,
@@ -41,6 +43,11 @@ impl RoomEntry {
             handler: None,
             selected: false,
         }
+    }
+
+    pub fn room_id(mut self, id: u64) -> Self {
+        self.room_id = Some(id);
+        self
     }
 
     pub fn public_key(mut self, public_key: PublicKey) -> Self {
@@ -152,6 +159,7 @@ impl RenderOnce for RoomEntry {
                         && self.kind != Some(RoomKind::Ongoing)
                         && screening
                     {
+                        let room_id = self.room_id;
                         let screening = screening::init(public_key, window, cx);
 
                         window.open_modal(cx, move |this, _window, _cx| {
@@ -163,6 +171,10 @@ impl RenderOnce for RoomEntry {
                                         .cancel_text("Ignore")
                                         .ok_text("Accept"),
                                 )
+                                .on_ok(move |_, _, cx| {
+                                    room_id.is_some_and(|id| chat::ChatRegistry::global(cx)
+                                        .update(cx, |chat, cx| chat.accept_room(id, cx)))
+                                })
                                 .on_cancel(move |_event, window, cx| {
                                     window.dispatch_action(Box::new(ClosePanel), cx);
                                     true

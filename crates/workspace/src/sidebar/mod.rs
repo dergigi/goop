@@ -461,6 +461,7 @@ impl Sidebar {
                 });
 
                 RoomEntry::new(range.start + ix)
+                    .room_id(room.id)
                     .name(room.display_name(cx))
                     .avatar(room.display_image(cx))
                     .public_key(public_key)

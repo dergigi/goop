@@ -218,6 +218,15 @@ impl OutgoingQueue {
         Ok(())
     }
 
+    pub async fn all_messages(&self) -> Result<Vec<UnsignedEvent>> {
+        self.ensure_active()?;
+        Ok(load(&self.root, self.owner)
+            .await?
+            .into_iter()
+            .map(|job| job.rumor)
+            .collect())
+    }
+
     pub async fn messages(&self, room: u64) -> Result<Vec<UnsignedEvent>> {
         self.ensure_active()?;
         Ok(load(&self.root, self.owner)

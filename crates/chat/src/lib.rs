@@ -21,6 +21,7 @@ mod cache;
 use cache::RumorCache;
 mod decryption;
 mod history;
+mod inbox;
 mod outgoing;
 #[cfg(test)]
 mod test_signer;
@@ -65,6 +66,7 @@ pub enum ChatEvent {
 enum Signal {
     /// Inbox Relays found, the app is ready to subscribe messages
     InboxReady,
+    ContactsChanged,
     Decrypted(EventId, Result<NewMessage, FailedMessage>),
     History(RelayUrl, RelayHistory),
     Outgoing(OutgoingMessage),
@@ -100,6 +102,9 @@ pub struct ChatRegistry {
     outgoing_task: Option<Task<Result<(), Error>>>,
     outgoing: Option<OutgoingQueue>,
     incoming: Option<RumorCache>,
+    inbox: Option<inbox::Inbox>,
+    contacts: HashSet<PublicKey>,
+    classification_ready: bool,
     outgoing_reports: HashMap<EventId, Vec<SendReport>>,
 
     /// Channel for sending signals to the UI.
@@ -204,6 +209,9 @@ impl ChatRegistry {
             outgoing_task: None,
             outgoing: None,
             incoming: None,
+            inbox: None,
+            contacts: HashSet::new(),
+            classification_ready: false,
             outgoing_reports: HashMap::new(),
             matcher: CachedMatcher(SkimMatcherV2::default()),
             signal_rx: rx,
@@ -222,6 +230,15 @@ impl ChatRegistry {
         let signer = nostr.read(cx).signer();
         let Some(user) = nostr.read(cx).current_user() else {
             return;
+        };
+        self.inbox = match inbox::Inbox::open(common::config_dir(), user) {
+            Ok(inbox) => Some(inbox),
+            Err(error) => {
+                cx.emit(ChatEvent::Error(format!(
+                    "Could not load Inbox state: {error}"
+                )));
+                return;
+            }
         };
         let (queue, receiver) = DecryptQueue::new();
         self.queue = Some(queue.clone());
@@ -254,6 +271,9 @@ impl ChatRegistry {
                     subscription_id,
                 } = *message
                 {
+                    if event.kind == Kind::ContactList && event.pubkey == user {
+                        tx.send_async(Signal::ContactsChanged).await?;
+                    }
                     if event.kind == Kind::InboxRelays && event.pubkey == user {
                         tx.send_async(Signal::InboxReady).await?;
                     }
@@ -280,6 +300,7 @@ impl ChatRegistry {
             while let Ok(signal) = rx.recv_async().await {
                 this.update(cx, |this, cx| {
                     match signal {
+                        Signal::ContactsChanged => this.get_rooms(cx),
                         Signal::InboxReady => this.get_messages(cx),
                         Signal::Outgoing(message) => {
                             this.outgoing_reports
@@ -573,7 +594,9 @@ impl ChatRegistry {
     }
 
     pub fn loading(&self) -> bool {
-        self.history_running || self.pending_messages() > 0
+        (self.inbox.is_some() && !self.classification_ready)
+            || self.history_running
+            || self.pending_messages() > 0
     }
 
     /// Get a weak reference to a room by its ID
@@ -585,6 +608,7 @@ impl ChatRegistry {
     pub fn rooms(&self, filter: &RoomKind, cx: &App) -> Vec<Entity<Room>> {
         self.rooms
             .iter()
+            .filter(|_| *filter != RoomKind::Request || self.classification_ready)
             .filter(|room| &room.read(cx).kind == filter)
             .cloned()
             .collect()
@@ -594,6 +618,7 @@ impl ChatRegistry {
     pub fn count(&self, filter: &RoomKind, cx: &App) -> usize {
         self.rooms
             .iter()
+            .filter(|_| *filter != RoomKind::Request || self.classification_ready)
             .filter(|room| &room.read(cx).kind == filter)
             .count()
     }
@@ -637,6 +662,24 @@ impl ChatRegistry {
             .unwrap_or_default()
     }
 
+    /// Accepting is local to this account and does not send a message or follow anyone.
+    pub fn accept_room(&mut self, id: u64, cx: &mut Context<Self>) -> bool {
+        let Some(inbox) = &mut self.inbox else {
+            return false;
+        };
+        if let Err(error) = inbox.remember([id]) {
+            cx.emit(ChatEvent::Error(format!(
+                "Could not save acceptance: {error}"
+            )));
+            return false;
+        }
+        if let Some(room) = self.room_index.get(&id) {
+            room.update(cx, |room, cx| room.set_ongoing(cx));
+        }
+        cx.notify();
+        true
+    }
+
     /// Add a new room to the start of list.
     pub fn add_room<I>(&mut self, room: I, cx: &mut Context<Self>)
     where
@@ -647,8 +690,19 @@ impl ChatRegistry {
             return;
         };
 
-        let room: Room = room.into().organize(&public_key);
+        let mut room: Room = room.into().organize(&public_key);
+        if self
+            .inbox
+            .as_ref()
+            .is_some_and(|inbox| inbox.contains(room.id))
+            || room.members.iter().any(|key| self.contacts.contains(key))
+        {
+            room.kind = RoomKind::Ongoing;
+        }
         let room_id = room.id;
+        if room.kind == RoomKind::Ongoing {
+            self.accept_room(room_id, cx);
+        }
         let entity = cx.new(|_| room);
 
         self.room_index.insert(room_id, entity.clone());
@@ -733,6 +787,9 @@ impl ChatRegistry {
         self.outgoing_task = None;
         self.outgoing = None;
         self.incoming = None;
+        self.inbox = None;
+        self.contacts.clear();
+        self.classification_ready = false;
         self.outgoing_reports.clear();
         self.notification_listener = None;
         self.signal_consumer = None;
@@ -767,10 +824,8 @@ impl ChatRegistry {
             // Check if we already have a room with this ID
             if let Some(&index) = room_map.get(&new_room.id) {
                 self.rooms[index].update(cx, |this, cx| {
-                    if new_room.created_at > this.created_at {
-                        *this = new_room;
-                        cx.notify();
-                    }
+                    this.merge_loaded(new_room);
+                    cx.notify();
                 });
             } else {
                 let new_room_id = new_room.id;
@@ -778,7 +833,7 @@ impl ChatRegistry {
                 self.room_index.insert(new_room_id, entity.clone());
                 self.rooms.push(entity);
 
-                let new_index = self.rooms.len();
+                let new_index = self.rooms.len() - 1;
                 room_map.insert(new_room_id, new_index);
             }
         }
@@ -786,14 +841,57 @@ impl ChatRegistry {
 
     /// Load all rooms from the database.
     pub fn get_rooms(&mut self, cx: &mut Context<Self>) {
+        if NostrRegistry::global(cx).read(cx).current_user().is_none() {
+            return;
+        }
         let task = self.get_rooms_task(cx);
 
         self.tasks.push(cx.spawn(async move |this, cx| {
             match task.await {
-                Ok(rooms) => {
+                Ok((mut rooms, contacts)) => {
                     this.update(cx, |this, cx| {
+                        this.contacts = contacts;
+                        this.classification_ready = true;
+                        if let Some(inbox) = &mut this.inbox {
+                            let established = rooms
+                                .iter()
+                                .filter(|room| room.kind == RoomKind::Ongoing)
+                                .map(|room| room.id)
+                                .chain(this.rooms.iter().filter_map(|room| {
+                                    let room = room.read(cx);
+                                    (room.kind == RoomKind::Ongoing
+                                        || room
+                                            .members
+                                            .iter()
+                                            .any(|key| this.contacts.contains(key)))
+                                    .then_some(room.id)
+                                }));
+                            if let Err(error) = inbox.remember(established) {
+                                cx.emit(ChatEvent::Error(format!(
+                                    "Could not save Inbox state: {error}"
+                                )));
+                            }
+                            rooms = rooms
+                                .into_iter()
+                                .map(|mut room| {
+                                    if inbox.contains(room.id) {
+                                        room.kind = RoomKind::Ongoing;
+                                    }
+                                    room
+                                })
+                                .collect();
+                        }
+                        // Contacts arriving after live messages also promote existing rooms.
+                        for room in &this.rooms {
+                            room.update(cx, |room, cx| {
+                                if room.members.iter().any(|key| this.contacts.contains(key)) {
+                                    room.set_ongoing(cx);
+                                }
+                            });
+                        }
                         this.extend_rooms(rooms, cx);
                         this.sort(cx);
+                        cx.notify();
                     })?;
                 }
                 Err(e) => {
@@ -808,14 +906,14 @@ impl ChatRegistry {
     }
 
     /// Create a task to load rooms from the database
-    fn get_rooms_task(&self, cx: &App) -> Task<Result<HashSet<Room>, Error>> {
+    fn get_rooms_task(&self, cx: &App) -> Task<Result<(HashSet<Room>, HashSet<PublicKey>), Error>> {
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();
-        let signer = nostr.read(cx).signer();
-
+        let public_key = nostr.read(cx).current_user();
+        let outgoing = self.outgoing.clone();
         let cache = self.incoming.clone();
         cx.background_spawn(async move {
-            let public_key = signer.get_public_key_async().await?;
+            let public_key = public_key.ok_or_else(|| anyhow!("No account"))?;
 
             // Query the latest contact list (previously `NostrDatabaseExt::contacts_public_keys`)
             let filter = Filter::new()
@@ -833,10 +931,13 @@ impl ChatRegistry {
                 .map(|event| event.tags.public_keys().collect())
                 .unwrap_or_default();
 
-            let messages = match cache {
+            let mut messages = match cache {
                 Some(cache) => cache.all().await?,
                 None => vec![],
             };
+            if let Some(outgoing) = outgoing {
+                messages.extend(outgoing.all_messages().await?);
+            }
             let mut grouped: HashMap<u64, Vec<UnsignedEvent>> = HashMap::new();
             for rumor in messages {
                 if cache::is_chat(rumor.kind) {
@@ -862,7 +963,7 @@ impl ChatRegistry {
                 rooms.insert(room);
             }
 
-            Ok(rooms)
+            Ok((rooms, contacts))
         })
     }
 
@@ -895,6 +996,10 @@ impl ChatRegistry {
             }
         } else {
             return;
+        }
+
+        if message.rumor.pubkey == public_key {
+            self.accept_room(message.room, cx);
         }
 
         match self.room_index.get(&message.room).cloned() {
