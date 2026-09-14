@@ -87,16 +87,18 @@ jobs:
       - name: Build with cargo-packager (Windows/macOS)
         if: runner.os != 'Linux'
         working-directory: desktop
+        shell: bash
         run: |
           cargo install cargo-packager --locked
-          cargo packager --release
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            cargo packager --release --formats app
+          else
+            cargo packager --release
+          fi
 
       - name: Seal macOS bundles and rebuild disk images
         if: runner.os == 'macOS'
-        run: |
-          for installer in dist/*.dmg; do
-            bash script/sign-macos-dmg "$installer"
-          done
+        run: bash script/sign-macos-dmg dist/Goop.app
 
       - name: Name Windows/macOS installers
         if: runner.os != 'Linux'

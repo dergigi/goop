@@ -20,7 +20,7 @@ jobs:
       - name: Check release tooling
         run: |
           python3 script/test-release.py
-          bash -n script/release
+          bash -n script/release script/sign-macos-dmg
 
   build:
     strategy:
