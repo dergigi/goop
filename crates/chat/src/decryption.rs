@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use nostr_sdk::prelude::*;
-use state::UniversalSigner;
+use state::{SignerFailure, UniversalSigner};
 
 use super::{FailedMessage, NewMessage, Signal, extract_rumor};
 
@@ -34,16 +34,16 @@ const INTERACTIVE_CAPACITY: usize = 64;
 const HISTORY_CONCURRENCY: usize = 3;
 
 pub(super) struct DecryptReceivers {
-    pub(super) history: flume::Receiver<(Event, bool)>,
-    pub(super) interactive: flume::Receiver<(Event, bool)>,
+    pub(super) history: flume::Receiver<(Event, bool, bool)>,
+    pub(super) interactive: flume::Receiver<(Event, bool, bool)>,
 }
 
 /// Reserve one of four signer slots for live messages and explicit retries.
 /// History retains three slots so neither workload can starve the other.
 #[derive(Debug, Clone)]
 pub(super) struct DecryptQueue {
-    history_sender: flume::Sender<(Event, bool)>,
-    interactive_sender: flume::Sender<(Event, bool)>,
+    history_sender: flume::Sender<(Event, bool, bool)>,
+    interactive_sender: flume::Sender<(Event, bool, bool)>,
     state: Arc<Mutex<QueueState>>,
     loaded: Arc<AtomicUsize>,
 }
@@ -94,7 +94,7 @@ impl DecryptQueue {
         } else {
             &self.history_sender
         };
-        if sender.send_async((event, historical)).await.is_err() {
+        if sender.send_async((event, historical, retry)).await.is_err() {
             return Err(anyhow!("Message loading stopped"));
         }
         permit.armed = false;
@@ -115,27 +115,48 @@ impl DecryptQueue {
         signer: UniversalSigner,
         signals: flume::Sender<Signal>,
     ) -> Result<()> {
-        let decrypt_job = |(event, historical): (Event, bool)| {
+        let decrypt_job = |(event, historical, retry): (Event, bool, bool)| {
             let cache = &cache;
             let signer = &signer;
             async move {
-                let mut result = Err(anyhow!("Signer unavailable"));
-                // A transient signer disconnect gets one automatic retry. Further
-                // failures stay on disk and can be retried explicitly/reconnected.
-                for attempt in 0..2 {
-                    result = async_utility::time::timeout(
-                        Some(Duration::from_secs(30)),
-                        extract_rumor(cache, signer, &event),
-                    )
-                    .await
-                    .unwrap_or_else(|| Err(anyhow!("Signer decryption timed out")));
-                    if result.is_ok() {
-                        break;
+                let result = async {
+                    if retry {
+                        cache.set_paused(event.id, None).await?;
+                    } else if let Some(reason) = cache.paused(event.id).await? {
+                        return Err(anyhow!(reason));
                     }
-                    if attempt == 0 {
-                        async_utility::time::sleep(Duration::from_secs(2)).await;
+                    let mut result = Err(anyhow!("Signer unavailable"));
+                    for attempt in 0..2 {
+                        result = async_utility::time::timeout(
+                            Some(Duration::from_secs(30)),
+                            extract_rumor(cache, signer, &event),
+                        )
+                        .await
+                        .unwrap_or_else(|| {
+                            Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into())
+                        });
+                        match &result {
+                            Ok(_) => break,
+                            Err(error)
+                                if SignerFailure::classify(error.as_ref()).requires_retry() =>
+                            {
+                                let reason = format!(
+                                    "Signer {:?}; paused until you retry",
+                                    SignerFailure::classify(error.as_ref())
+                                );
+                                cache.set_paused(event.id, Some(&reason)).await?;
+                                result = Err(anyhow!(reason));
+                                break;
+                            }
+                            Err(_) => {}
+                        }
+                        if attempt == 0 {
+                            async_utility::time::sleep(Duration::from_secs(2)).await;
+                        }
                     }
+                    result
                 }
+                .await;
                 (event, historical, result)
             }
         };
@@ -207,7 +228,7 @@ mod tests {
             receiver
                 .history
                 .try_iter()
-                .any(|(queued, _)| queued.id == event.id)
+                .any(|(queued, _, _)| queued.id == event.id)
         );
     }
 
@@ -314,6 +335,48 @@ mod tests {
             .finalize_async(sender)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn refused_decryption_stays_paused_across_worker_restart_until_explicit_retry() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .build();
+            let owner = Keys::generate();
+            let local = Keys::generate();
+            let controlled = crate::test_signer::RefusingSigner::new(owner.clone());
+            let signer = UniversalSigner::new(controlled.clone());
+            let wrap = gift_wrap(&Keys::generate(), &owner, "paused incoming").await;
+            for retry in [false, false, true] {
+                let cache =
+                    crate::RumorCache::with_keys(client.clone(), owner.public_key(), local.clone());
+                let (queue, receivers) = DecryptQueue::new();
+                let (tx, rx) = flume::unbounded();
+                let worker_queue = queue.clone();
+                let signer = signer.clone();
+                let worker =
+                    tokio::spawn(
+                        async move { worker_queue.run(receivers, cache, signer, tx).await },
+                    );
+                queue.enqueue(wrap.clone(), retry).await.unwrap();
+                let Signal::Decrypted(_, result) = rx.recv_async().await.unwrap() else {
+                    panic!("wrong signal");
+                };
+                if retry {
+                    assert!(result.is_ok());
+                    assert!(controlled.calls.load(Ordering::SeqCst) > 1);
+                } else {
+                    assert!(result.unwrap_err().reason.contains("paused"));
+                    assert_eq!(controlled.calls.load(Ordering::SeqCst), 1);
+                    controlled.refused.store(false, Ordering::SeqCst);
+                }
+                worker.abort();
+            }
+            client.shutdown().await;
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

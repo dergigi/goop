@@ -27,7 +27,7 @@ pub use constants::*;
 pub use nip4e::*;
 pub use nip05::*;
 pub use profiles::subscribe_profiles;
-pub use signer::{GoopAuthUrlHandler, UniversalSigner};
+pub use signer::{GoopAuthUrlHandler, SignerFailure, UniversalSigner};
 
 pub fn init(window: &mut Window, cx: &mut App) {
     // rustls uses the `aws_lc_rs` provider by default

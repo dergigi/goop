@@ -17,6 +17,8 @@ opaquerr::define_kind! {
         Timeout => "timeout",
         /// The operation cannot be completed in the current state.
         State => "invalid state",
+        /// The signer returned an error for the requested operation.
+        Rejected => "operation rejected",
         /// Anything not covered by the stable categories above.
         Other => "other error",
     }
@@ -38,7 +40,7 @@ impl Error {
     where
         S: Into<String>,
     {
-        Self::new(ErrorKind::Other, message.into())
+        Self::new(ErrorKind::Rejected, message.into())
     }
 
     pub(crate) fn timeout() -> Self {

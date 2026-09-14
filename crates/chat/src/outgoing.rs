@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use futures::{FutureExt, lock::Mutex};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use settings::SignerKind;
-use state::{Announcement, UniversalSigner};
+use state::{Announcement, SignerFailure, UniversalSigner};
 
 use super::{SendReport, Signal};
 use common::EventExt;
@@ -54,6 +54,8 @@ pub(super) struct OutgoingMessage {
     pub signer_kind: SignerKind,
     pub destinations: Vec<Destination>,
     revision: u64,
+    #[serde(default)]
+    paused: bool,
 }
 
 impl OutgoingMessage {
@@ -75,6 +77,7 @@ impl OutgoingMessage {
             signer_kind,
             destinations,
             revision: 0,
+            paused: false,
         })
     }
 
@@ -91,7 +94,8 @@ impl OutgoingMessage {
             .map(|destination| {
                 let mut report = SendReport::new(destination.receiver);
                 report.self_copy = destination.self_copy;
-                report.queued = !destination.complete();
+                report.paused = self.paused && !destination.complete();
+                report.queued = !self.paused && !destination.complete();
                 report.accepted = !destination.accepted.is_empty();
                 report.error = destination.error.clone().map(Into::into);
                 if let Some(wrap) = &destination.wrap {
@@ -172,6 +176,7 @@ pub(super) struct OutgoingQueue {
     enqueue_lock: Arc<Mutex<()>>,
     encryption: Arc<RwLock<Option<UniversalSigner>>>,
     active: Arc<AtomicBool>,
+    resume_requested: Arc<AtomicBool>,
 }
 
 impl OutgoingQueue {
@@ -190,6 +195,7 @@ impl OutgoingQueue {
                 enqueue_lock: Arc::default(),
                 encryption: Arc::new(RwLock::new(encryption.map(|signer| signer.snapshot()))),
                 active: Arc::new(AtomicBool::new(true)),
+                resume_requested: Arc::default(),
             },
             receiver,
         )
@@ -197,12 +203,12 @@ impl OutgoingQueue {
 
     pub fn set_encryption_signer(&self, signer: Option<UniversalSigner>) {
         *self.encryption.write().unwrap() = signer.map(|signer| signer.snapshot());
-        self.retry();
+        self.wake();
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::SeqCst);
-        self.retry();
+        self.wake();
     }
 
     fn ensure_active(&self) -> Result<()> {
@@ -223,6 +229,11 @@ impl OutgoingQueue {
     }
 
     pub fn retry(&self) {
+        self.resume_requested.store(true, Ordering::SeqCst);
+        self.wake();
+    }
+
+    fn wake(&self) {
         let _ = self.wake.try_send(());
     }
 
@@ -237,12 +248,12 @@ impl OutgoingQueue {
             .into_iter()
             .find(|job| job.id() == message.id())
         {
-            self.retry();
+            self.wake();
             return Ok(existing.reports());
         }
         // Persist intent before requesting signatures, clearing the composer, or publishing.
         save(&self.root, &mut message).await?;
-        self.retry();
+        self.wake();
         Ok(message.reports())
     }
 
@@ -283,7 +294,12 @@ impl OutgoingQueue {
         announced: &mut BTreeMap<EventId, u64>,
     ) -> Result<()> {
         self.ensure_active()?;
+        let resume = self.resume_requested.swap(false, Ordering::SeqCst);
         for mut message in load(&self.root, self.owner).await? {
+            if resume && message.paused {
+                message.paused = false;
+                save(&self.root, &mut message).await?;
+            }
             self.ensure_active()?;
             // Restore only this account's conversation state from its local queue.
             if announced.get(&message.id()) != Some(&message.revision) {
@@ -292,7 +308,7 @@ impl OutgoingQueue {
                     .await?;
                 announced.insert(message.id(), message.revision);
             }
-            if message.complete() {
+            if message.complete() || message.paused {
                 continue;
             }
             for index in 0..message.destinations.len() {
@@ -300,23 +316,21 @@ impl OutgoingQueue {
                     continue;
                 }
                 self.ensure_active()?;
-                let signing_owner = async_utility::time::timeout(
-                    Some(Duration::from_secs(30)),
-                    signer.get_public_key_async(),
-                )
-                .await
-                .ok_or_else(|| anyhow!("Signer identity request timed out"))??;
-                if signing_owner != self.owner {
-                    bail!("Outgoing account changed");
-                }
                 if message.destinations[index].wrap.is_none() {
                     let encryption = self.encryption.read().unwrap().clone();
-                    let result = async_utility::time::timeout(
-                        Some(Duration::from_secs(30)),
-                        prepare(&self.client, signer, encryption.as_ref(), &message, index),
-                    )
-                    .await
-                    .unwrap_or_else(|| Err(anyhow!("Signer preparation timed out")));
+                    let result =
+                        async_utility::time::timeout(Some(Duration::from_secs(30)), async {
+                            let signing_owner = signer.get_public_key_async().await?;
+                            if signing_owner != self.owner {
+                                bail!("Outgoing account changed");
+                            }
+                            prepare(&self.client, signer, encryption.as_ref(), &message, index)
+                                .await
+                        })
+                        .await
+                        .unwrap_or_else(|| {
+                            Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into())
+                        });
                     self.ensure_active()?;
                     match result {
                         Ok(wrap) => {
@@ -324,7 +338,13 @@ impl OutgoingQueue {
                             message.destinations[index].error = None;
                         }
                         Err(error) => {
-                            message.destinations[index].error = Some(error.to_string());
+                            let failure = SignerFailure::classify(error.as_ref());
+                            message.paused = failure.requires_retry();
+                            message.destinations[index].error = Some(if message.paused {
+                                format!("Signer {failure:?}; paused until you retry")
+                            } else {
+                                format!("Signer {failure:?}: {error}")
+                            });
                         }
                     }
                     // A prepared wrap must survive a crash before it can leave this machine.
@@ -339,6 +359,9 @@ impl OutgoingQueue {
                     .send_async(Signal::Outgoing(message.clone()))
                     .await?;
                 announced.insert(message.id(), message.revision);
+                if message.paused {
+                    break;
+                }
             }
         }
         Ok(())
@@ -669,6 +692,71 @@ mod tests {
         ) -> futures::future::BoxFuture<'a, std::result::Result<String, Self::Error>> {
             self.0.nip44_decrypt_async(key, content)
         }
+    }
+
+    #[tokio::test]
+    async fn refusal_survives_restart_and_only_explicit_retry_resumes_signing() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Keys::generate();
+        let recipient = Keys::generate();
+        let inbox = MockRelay::run().await.unwrap();
+        let discovery = MockRelay::run().await.unwrap();
+        for keys in [&owner, &recipient] {
+            discovery
+                .add_event(
+                    InboxRelayList::new([inbox.url().await])
+                        .finalize(keys)
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+        let client = client(&discovery.url().await).await;
+        let first = queue(client.clone(), owner.public_key(), dir.path());
+        let controlled = crate::test_signer::RefusingSigner::new(owner.clone());
+        let signer = UniversalSigner::new(controlled.clone());
+        let original = message(&owner, &[recipient.public_key()]);
+        let id = original.id();
+        first.enqueue(original).await.unwrap();
+        let (signals, _rx) = flume::unbounded();
+        first
+            .process(&signer, &signals, &mut BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(controlled.calls.load(Ordering::SeqCst), 1);
+        let saved = load(dir.path(), owner.public_key())
+            .await
+            .unwrap()
+            .remove(0);
+        assert!(saved.paused);
+        assert!(saved.reports().iter().all(|r| r.paused && !r.pending()));
+        assert!(saved.destinations.iter().all(|d| d.wrap.is_none()));
+        first
+            .process(&signer, &signals, &mut BTreeMap::new())
+            .await
+            .unwrap();
+        let restarted = queue(client.clone(), owner.public_key(), dir.path());
+        // A signer reconnect must not reverse the user's refusal.
+        controlled.refused.store(false, Ordering::SeqCst);
+        restarted.set_encryption_signer(Some(signer.clone()));
+        restarted
+            .process(&signer, &signals, &mut BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(controlled.calls.load(Ordering::SeqCst), 1);
+        restarted.retry();
+        restarted
+            .process(&signer, &signals, &mut BTreeMap::new())
+            .await
+            .unwrap();
+        let saved = load(dir.path(), owner.public_key())
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(saved.id(), id);
+        assert!(!saved.paused);
+        assert!(saved.complete());
+        client.shutdown().await;
     }
 
     #[tokio::test]

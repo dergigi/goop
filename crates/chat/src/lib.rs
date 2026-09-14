@@ -20,6 +20,8 @@ use cache::RumorCache;
 mod decryption;
 mod history;
 mod outgoing;
+#[cfg(test)]
+mod test_signer;
 pub use history::RelayHistory;
 use outgoing::{OutgoingMessage, OutgoingQueue};
 

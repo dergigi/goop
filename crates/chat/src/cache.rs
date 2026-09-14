@@ -160,6 +160,67 @@ impl RumorCache {
         Ok(old.is_empty())
     }
 
+    /// Refusals are local, account-scoped state and survive history replay/restart.
+    pub async fn paused(&self, wrap: EventId) -> Result<Option<String>> {
+        let records = self
+            .client
+            .database()
+            .query(
+                Filter::new()
+                    .kind(Kind::Custom(30079))
+                    .author(self.keys.public_key())
+                    .pubkey(self.owner)
+                    .identifier(format!("goop-decrypt-pause-v1:{}:{wrap}", self.owner)),
+            )
+            .await?;
+        match records.first() {
+            Some(record) => {
+                record.verify()?;
+                Ok((!record.content.is_empty()).then(|| record.content.clone()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn set_paused(&self, wrap: EventId, reason: Option<&str>) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        let identifier = format!("goop-decrypt-pause-v1:{}:{wrap}", self.owner);
+        let old = self
+            .client
+            .database()
+            .query(
+                Filter::new()
+                    .kind(Kind::Custom(30079))
+                    .author(self.keys.public_key())
+                    .pubkey(self.owner)
+                    .identifier(&identifier),
+            )
+            .await?;
+        if old.is_empty() && reason.is_none() {
+            return Ok(());
+        }
+        let timestamp = old
+            .iter()
+            .map(|e| e.created_at.as_secs().saturating_add(1))
+            .max()
+            .unwrap_or(0)
+            .max(Timestamp::now().as_secs());
+        let event = EventBuilder::new(Kind::Custom(30079), reason.unwrap_or_default())
+            .tags([Tag::identifier(identifier), Tag::public_key(self.owner)])
+            .custom_created_at(Timestamp::from(timestamp))
+            .finalize(&self.keys)?;
+        if !self
+            .client
+            .database()
+            .save_event(&event)
+            .await?
+            .is_success()
+        {
+            bail!("Could not save signer retry state");
+        }
+        Ok(())
+    }
+
     pub async fn all(&self) -> Result<Vec<UnsignedEvent>> {
         let records = self.client.database().query(self.filter()).await?;
         let mut messages = BTreeMap::new();

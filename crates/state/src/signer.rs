@@ -7,6 +7,93 @@ use std::sync::{Arc, RwLock};
 use nostr_connect::client::AuthUrlHandler;
 use nostr_sdk::prelude::*;
 
+/// Stable retry decisions derived from signer error types, not arbitrary relay text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignerFailure {
+    Rejected,
+    Cancelled,
+    Disconnected,
+    Timeout,
+    Other,
+}
+
+impl fmt::Display for SignerFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Rejected => "signer rejected the operation",
+            Self::Cancelled => "signer operation cancelled",
+            Self::Disconnected => "signer disconnected",
+            Self::Timeout => "signer operation timed out",
+            Self::Other => "signer operation failed",
+        })
+    }
+}
+impl Error for SignerFailure {}
+
+impl SignerFailure {
+    pub fn classify(mut error: &(dyn Error + 'static)) -> Self {
+        loop {
+            if let Some(failure) = error.downcast_ref::<Self>() {
+                return *failure;
+            }
+            if let Some(error) = error.downcast_ref::<nostr_connect::error::Error>() {
+                use nostr_connect::error::ErrorKind;
+                match error.kind() {
+                    ErrorKind::Rejected => return Self::refusal(&error.to_string()),
+                    ErrorKind::Timeout => return Self::Timeout,
+                    _ => {}
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(error) = error.downcast_ref::<browser_signer_proxy::Error>() {
+                use browser_signer_proxy::ErrorKind;
+                match error.kind() {
+                    ErrorKind::Rejected => return Self::refusal(&error.to_string()),
+                    ErrorKind::Timeout => return Self::Timeout,
+                    ErrorKind::State => return Self::Disconnected,
+                    _ => {}
+                }
+            }
+            if let Some(error) = error.downcast_ref::<nostr_sdk::error::Error>() {
+                use nostr_sdk::error::ErrorKind;
+                match error.kind() {
+                    ErrorKind::Timeout => return Self::Timeout,
+                    ErrorKind::Transport | ErrorKind::State => return Self::Disconnected,
+                    _ => {}
+                }
+            }
+            if let Some(error) = error.downcast_ref::<std::io::Error>() {
+                use std::io::ErrorKind;
+                match error.kind() {
+                    ErrorKind::TimedOut => return Self::Timeout,
+                    ErrorKind::ConnectionAborted
+                    | ErrorKind::ConnectionReset
+                    | ErrorKind::NotConnected
+                    | ErrorKind::BrokenPipe => return Self::Disconnected,
+                    _ => {}
+                }
+            }
+            match error.source() {
+                Some(source) => error = source,
+                None => return Self::Other,
+            }
+        }
+    }
+
+    fn refusal(message: &str) -> Self {
+        // These transports return cancellation as a remote rejection with free text.
+        if message.to_ascii_lowercase().contains("cancel") {
+            Self::Cancelled
+        } else {
+            Self::Rejected
+        }
+    }
+
+    pub fn requires_retry(self) -> bool {
+        matches!(self, Self::Rejected | Self::Cancelled)
+    }
+}
+
 #[derive(Debug)]
 pub struct UniversalSignerError(Box<dyn Error + Send + Sync + 'static>);
 
@@ -212,5 +299,38 @@ impl AuthUrlHandler for GoopAuthUrlHandler {
             webbrowser::open(auth_url.as_str()).unwrap();
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    #[test]
+    fn classifies_wrapped_signer_errors_without_treating_relay_rejection_as_consent() {
+        use nostr_connect::error::{Error as ConnectError, ErrorKind};
+        for (kind, message, expected) in [
+            (ErrorKind::Rejected, "denied", SignerFailure::Rejected),
+            (
+                ErrorKind::Rejected,
+                "user cancelled",
+                SignerFailure::Cancelled,
+            ),
+            (ErrorKind::Timeout, "timed out", SignerFailure::Timeout),
+        ] {
+            let error = UniversalSignerError::new(ConnectError::with_static_message(kind, message));
+            assert_eq!(SignerFailure::classify(&error), expected);
+        }
+        let disconnected =
+            UniversalSignerError::new(std::io::Error::from(std::io::ErrorKind::NotConnected));
+        assert_eq!(
+            SignerFailure::classify(&disconnected),
+            SignerFailure::Disconnected
+        );
+        let relay_error = nostr_sdk::error::Error::with_static_message(
+            nostr_sdk::error::ErrorKind::Rejected,
+            "relay rejected event",
+        );
+        assert_eq!(SignerFailure::classify(&relay_error), SignerFailure::Other);
+        assert!(!SignerFailure::classify(&relay_error).requires_retry());
     }
 }

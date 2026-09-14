@@ -1183,7 +1183,14 @@ impl ChatPanel {
             .as_ref()
             .is_some_and(|reports| !reports.is_empty() && reports.iter().all(|r| r.failed()));
 
-        let label = if success && pending {
+        let paused = reports
+            .as_ref()
+            .is_some_and(|reports| reports.iter().any(|r| r.paused));
+        let label = if paused && success {
+            SharedString::from("• Partially sent · paused")
+        } else if paused {
+            SharedString::from("• Paused · retry when ready")
+        } else if success && pending {
             SharedString::from("• Partially sent · queued")
         } else if success {
             SharedString::from("• Sent")

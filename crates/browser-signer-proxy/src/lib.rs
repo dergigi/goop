@@ -21,7 +21,7 @@ use uuid::Uuid;
 mod error;
 pub mod prelude;
 
-pub use self::error::Error;
+pub use self::error::{Error, ErrorKind};
 
 const DEFAULT_HTML: &str = include_str!("../index.html");
 const JS: &str = include_str!("../proxy.js");

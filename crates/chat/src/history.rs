@@ -398,7 +398,7 @@ mod integration_tests {
         let received: std::collections::BTreeSet<_> = receiver
             .history
             .try_iter()
-            .map(|(event, _)| event.id)
+            .map(|(event, _, _)| event.id)
             .collect();
         assert_eq!(received, expected);
         assert!(

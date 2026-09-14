@@ -16,6 +16,7 @@ use crate::NewMessage;
 pub struct SendReport {
     pub receiver: PublicKey,
     pub queued: bool,
+    pub paused: bool,
     pub accepted: bool,
     pub self_copy: bool,
     pub gift_wrap_id: Option<EventId>,
@@ -28,6 +29,7 @@ impl SendReport {
         Self {
             receiver,
             queued: false,
+            paused: false,
             accepted: false,
             self_copy: false,
             gift_wrap_id: None,
@@ -59,6 +61,9 @@ impl SendReport {
 
     /// Returns true if the send is pending.
     pub fn pending(&self) -> bool {
+        if self.paused {
+            return false;
+        }
         self.queued
             || (self.error.is_none()
                 && self
