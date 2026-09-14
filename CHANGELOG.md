@@ -7,6 +7,12 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- Encrypt chat attachments locally with per-file AES-256-GCM keys before Blossom uploads. Send keys and metadata only inside NIP-17 kind-15 gift-wrapped messages; authenticate and decrypt received files locally.
+- Use fresh upload identities for chat attachments instead of the user's Nostr identity. Public profile-picture uploads remain separate.
+- Previously uploaded unencrypted attachments remain unencrypted; removing an attachment from a draft does not delete its server copy.
+
 ### Added
 
 - Cmd/Ctrl+K searches loaded message contents as well as names, with name matches first and snippets for content matches.

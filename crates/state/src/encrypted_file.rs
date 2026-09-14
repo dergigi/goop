@@ -150,6 +150,21 @@ mod tests {
         assert!(!format!("{:?}", parsed).contains(&hex::encode(parsed.key)));
     }
     #[test]
+    fn invalid_metadata_is_rejected_before_download() {
+        let file = EncryptedFile::encrypt(b"image", "image/png".into()).unwrap().file;
+        let mut tags = file.tags();
+        tags.push(Tag::custom("decryption-key", ["00"]));
+        assert!(EncryptedFile::from_tags("https://example.com/blob", &Tags::from_list(tags)).is_err());
+        let tags = Tags::from_list(file.tags());
+        assert!(EncryptedFile::from_tags("http://example.com/blob", &tags).is_err());
+        assert!(EncryptedFile::from_tags("file:///tmp/image", &tags).is_err());
+        assert!(EncryptedFile::from_tags("https://example.com/blob", &Tags::new()).is_err());
+        let tags = file.tags().into_iter().filter(|tag| tag.kind() != "encryption-algorithm")
+            .chain([Tag::custom("encryption-algorithm", ["unknown"])]).collect();
+        assert!(EncryptedFile::from_tags("https://example.com/blob", &Tags::from_list(tags)).is_err());
+    }
+
+    #[test]
     fn nist_aes256_gcm_vector_matches_dark_wisp_wire_layout() {
         // Ciphertext followed by the 128-bit authentication tag, no AAD.
         let ciphertext = hex::decode("cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919").unwrap();

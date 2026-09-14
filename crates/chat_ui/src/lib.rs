@@ -14,13 +14,12 @@ use gpui::{
     StatefulInteractiveElement, Styled, StyledImage, Subscription, SystemNotification,
     SystemNotificationAction, Task, WeakEntity, Window, div, img, list, px, relative, svg,
 };
-use itertools::Itertools;
 use nostr_sdk::prelude::*;
 use person::{Person, PersonRegistry};
 use regex::Regex;
 use settings::{AppSettings, SignerKind};
 use smallvec::{SmallVec, smallvec};
-use state::{NostrRegistry, upload};
+use state::{NostrRegistry, upload_encrypted};
 use theme::ActiveTheme;
 use ui::avatar::Avatar;
 use ui::button::{Button, ButtonVariants};
@@ -45,6 +44,7 @@ static EMOJI_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\p{Emoji}\u{200D}\u{FE0F}\u{20E3}]+$").unwrap());
 
 mod actions;
+mod encrypted_media;
 mod delivery_status;
 mod find;
 mod text;
@@ -100,7 +100,8 @@ pub struct ChatPanel {
     replies_to: Entity<HashSet<EventId>>,
 
     /// Media Attachment
-    attachments: Entity<Vec<Url>>,
+    attachments: Entity<Vec<encrypted_media::Attachment>>,
+    encrypted_views: HashMap<EventId, Entity<encrypted_media::EncryptedMedia>>,
 
     /// Upload state
     uploading: bool,
@@ -221,6 +222,7 @@ impl ChatPanel {
             history_bar: cx.new(|_| false),
             replies_to,
             attachments,
+            encrypted_views: HashMap::new(),
             render_markdown: AppSettings::get_render_markdown(cx),
             rendered_texts_by_id: BTreeMap::new(),
             reports_by_id,
@@ -303,27 +305,7 @@ impl ChatPanel {
 
     /// Get user input content and merged all attachments if available
     fn get_input_value(&self, cx: &Context<Self>) -> String {
-        // Get input's value
-        let mut content = self.input.read(cx).value().trim().to_string();
-
-        // Get all attaches and merge its with message
-        let attachments = self.attachments.read(cx);
-
-        if !attachments.is_empty() {
-            let urls = attachments
-                .iter()
-                .map(|url| url.to_string())
-                .collect_vec()
-                .join("\n");
-
-            if content.is_empty() {
-                content = urls;
-            } else {
-                content = format!("{content}\n{urls}");
-            }
-        }
-
-        content
+        self.input.read(cx).value().trim().to_string()
     }
 
     fn change_subject(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -341,7 +323,11 @@ impl ChatPanel {
             window.push_notification("Wait for attachments to finish uploading", cx);
             return;
         }
-        // Get the message which includes all attachments
+        if !self.attachments.read(cx).is_empty() {
+            self.send_file_messages(window, cx);
+            return;
+        }
+        // Get the message text
         let content = self.get_input_value(cx);
 
         // Get the replies to this message
@@ -365,6 +351,62 @@ impl ChatPanel {
         }
 
         self.send_message(&content, replies, false, window, cx);
+    }
+
+    fn send_file_messages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving_outgoing { return; }
+        let Some(room) = self.room.upgrade() else { return };
+        let text = self.get_input_value(cx);
+        let replies: Vec<_> = self.replies_to.read(cx).iter().copied().collect();
+        let mut intents = Vec::new();
+        if !text.is_empty() {
+            let Some(rumor) = room.read(cx).rumor(text.clone(), replies.clone(), false, cx) else { return };
+            intents.push((rumor, None));
+        }
+        for attachment in self.attachments.read(cx) {
+            let Some(rumor) = room.read(cx).file_rumor(&attachment.file, replies.clone(), cx) else { return };
+            intents.push((rumor, Some(attachment.file.url.clone())));
+        }
+        self.saving_outgoing = true;
+        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
+            let mut complete = true;
+            for (rumor, file_url) in intents {
+                let task = this.update(cx, |this, cx| {
+                    this.room.upgrade().and_then(|room| room.read(cx).send(rumor.clone(), cx))
+                })?;
+                let result = match task {
+                    Some(task) => task.await,
+                    None => Err(anyhow::anyhow!("Messaging is unavailable")),
+                };
+                let saved = this.update_in(cx, |this, window, cx| {
+                    match result {
+                        Ok(reports) => {
+                            this.insert_message(&rumor, true, cx);
+                            this.insert_reports(rumor.id.expect("rumor has an id"), reports, cx);
+                            if let Some(url) = &file_url {
+                                this.remove_attachment(url, window, cx);
+                            } else if this.get_input_value(cx) == text {
+                                this.input.update(cx, |input, cx| input.set_value("", window, cx));
+                            }
+                            true
+                        }
+                        Err(error) => {
+                            window.push_notification(format!("Could not save message: {error}"), cx);
+                            false
+                        }
+                    }
+                })?;
+                if !saved { complete = false; break; }
+            }
+            this.update(cx, |this, cx| {
+                this.saving_outgoing = false;
+                if complete && this.get_input_value(cx).is_empty() && this.attachments.read(cx).is_empty() {
+                    this.replies_to.update(cx, |replies, cx| { replies.clear(); cx.notify(); });
+                }
+                cx.notify();
+            })?;
+            Ok(())
+        }));
     }
 
     fn send_reaction(
@@ -436,7 +478,11 @@ impl ChatPanel {
                         } else {
                             this.insert_message(&rumor, true, cx);
                             if this.get_input_value(cx) == content {
-                                this.clear(window, cx);
+                                if this.attachments.read(cx).is_empty() {
+                                    this.clear(window, cx);
+                                } else {
+                                    this.input.update(cx, |input, cx| input.set_value("", window, cx));
+                                }
                             }
                         }
                         this.insert_reports(id, reports, cx);
@@ -646,8 +692,8 @@ impl ChatPanel {
                 })?;
                 let Some(path) = path else { break };
                 let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                match upload(server.clone(), path, cx).await {
-                    Ok(url) => this.update(cx, |this, cx| this.add_attachment(url, cx))?,
+                match upload_encrypted(server.clone(), path, cx).await {
+                    Ok((file, bytes)) => this.update(cx, |this, cx| this.add_attachment(encrypted_media::Attachment::new(file, bytes), cx))?,
                     Err(error) => this.update_in(cx, |_, window, cx| {
                         window.push_notification(
                             Notification::error(format!("Could not attach {filename}: {error}"))
@@ -666,16 +712,16 @@ impl ChatPanel {
         cx.notify();
     }
 
-    fn add_attachment(&mut self, url: Url, cx: &mut Context<Self>) {
+    fn add_attachment(&mut self, attachment: encrypted_media::Attachment, cx: &mut Context<Self>) {
         self.attachments.update(cx, |this, cx| {
-            this.push(url);
+            this.push(attachment);
             cx.notify();
         });
     }
 
     fn remove_attachment(&mut self, url: &Url, _window: &mut Window, cx: &mut Context<Self>) {
         self.attachments.update(cx, |this, cx| {
-            if let Some(ix) = this.iter().position(|this| this == url) {
+            if let Some(ix) = this.iter().position(|this| &this.file.url == url) {
                 this.remove(ix);
                 cx.notify();
             }
@@ -960,6 +1006,11 @@ impl ChatPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if let Some(message) = self.messages.get(ix) {
+            if let Some(Ok(file)) = &message.encrypted_file {
+                self.encrypted_views.entry(message.id).or_insert_with(|| {
+                    cx.new(|cx| encrypted_media::EncryptedMedia::new(file.clone(), window, cx))
+                });
+            }
             let persons = PersonRegistry::global(cx);
             let show_author = self.is_group_start(ix);
             let text = self
@@ -1065,6 +1116,9 @@ impl ChatPanel {
                             })
                             .child(rendered_text)
                             .child(self.render_media(&message.media, cx))
+                            .when_some(self.encrypted_views.get(&message.id), |view, media| {
+                                view.child(media.clone())
+                            })
                             .when(has_reactions, |this| {
                                 this.child(self.render_reactions(&id, cx))
                             }),
@@ -1498,65 +1552,25 @@ impl ChatPanel {
             .group_hover("", |this| this.visible())
     }
 
-    fn render_attachment(&self, url: &Url, cx: &Context<Self>) -> impl IntoElement {
-        let preview_url = url.clone();
-        let remove_url = url.clone();
-        div()
-            .id(SharedString::from(url.to_string()))
-            .relative()
-            .size_20()
-            .p_2()
-            .child(
-                div()
-                    .id("attachment-preview")
-                    .cursor_pointer()
-                    .size_16()
-                    .child(
-                        img(url.as_str())
-                            .size_16()
-                            .when(cx.theme().shadow, |this| this.shadow_lg())
-                            .rounded(cx.theme().radius)
-                            .object_fit(ObjectFit::ScaleDown),
-                    )
-                    .on_click(move |_, window, cx| {
-                        let url = preview_url.clone();
-                        window.open_modal(cx, move |modal, window, _| {
-                            let size = window.viewport_size();
-                            let original_url = url.clone();
-                            modal.title("Image preview")
-                                .show_close(true)
-                                .width((size.width - px(64.)).min(px(1000.)))
-                                .child(
-                                    img(url.as_str())
-                                        .w_full()
-                                        .h(size.height * 0.7)
-                                        .object_fit(ObjectFit::Contain),
-                                )
-                                .footer(move |_, _, _, _| {
-                                    let url = original_url.clone();
-                                    vec![Button::new("open-original")
-                                        .label("Open original")
-                                        .on_click(move |_, _, cx| cx.open_url(url.as_str()))]
-                                })
-                        });
-                        cx.stop_propagation();
-                    }),
-            )
-            .child(
-                Button::new("remove-attachment")
-                    .icon(IconName::Close)
-                    .xsmall()
-                    .danger()
-                    .rounded_full()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .tooltip("Remove attachment")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.remove_attachment(&remove_url, window, cx);
-                        cx.stop_propagation();
-                    })),
-            )
+    fn render_attachment(&self, attachment: &encrypted_media::Attachment, cx: &Context<Self>) -> impl IntoElement {
+        let preview_attachment = attachment.clone();
+        let remove_url = attachment.file.url.clone();
+        div().id(SharedString::from(remove_url.to_string())).relative().size_20().p_2()
+            .child(div().id("attachment-preview").cursor_pointer().size_16()
+                .when_some(attachment.image.clone(), |view, image| {
+                    view.child(img(image).size_16().rounded(cx.theme().radius).object_fit(ObjectFit::ScaleDown))
+                })
+                .when(attachment.image.is_none(), |view| view.child(Icon::new(IconName::Upload)))
+                .on_click(move |_, window, cx| {
+                    encrypted_media::preview(preview_attachment.clone(), window, cx);
+                    cx.stop_propagation();
+                }))
+            .child(Button::new("remove-attachment").icon(IconName::Close).xsmall().danger()
+                .rounded_full().absolute().top_0().right_0().tooltip("Remove attachment")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.remove_attachment(&remove_url, window, cx);
+                    cx.stop_propagation();
+                })))
     }
 
     fn render_attachment_list(

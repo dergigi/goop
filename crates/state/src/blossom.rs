@@ -12,7 +12,7 @@ use nostr_blossom::prelude::*;
 use nostr_sdk::prelude::*;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn upload(fallback: Url, path: PathBuf, cx: &AsyncApp) -> Result<Url, Error> {
+pub async fn upload_public(fallback: Url, path: PathBuf, cx: &AsyncApp) -> Result<Url, Error> {
     let content_type = from_path(&path).first_or_octet_stream().to_string();
     let data = smol::fs::read(path).await?;
     let (client, user, signer) = cx.update(|cx| {
@@ -50,12 +50,12 @@ pub async fn upload(fallback: Url, path: PathBuf, cx: &AsyncApp) -> Result<Url, 
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn upload(_server: Url, _path: PathBuf, _cx: &AsyncApp) -> Result<Url, Error> {
+pub async fn upload_public(_server: Url, _path: PathBuf, _cx: &AsyncApp) -> Result<Url, Error> {
     Err(anyhow!("File upload not supported on web"))
 }
 
 /// Encrypt chat attachments before any network operation. Public profile uploads
-/// deliberately use the separate `upload` function above.
+/// deliberately use the separate `upload_public` function above.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn upload_encrypted(fallback: Url, path: PathBuf, cx: &AsyncApp)
     -> Result<(crate::encrypted_file::EncryptedFile, Vec<u8>), Error>

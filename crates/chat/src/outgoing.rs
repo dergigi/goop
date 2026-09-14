@@ -413,7 +413,7 @@ async fn prepare(
     } else {
         signer
     };
-    let mut tags = vec![Tag::custom("k", ["14"])];
+    let mut tags = Vec::new();
     if target != destination.receiver {
         tags.push(Tag::public_key(destination.receiver));
     }
@@ -546,6 +546,41 @@ mod tests {
             .chain([Destination::new(owner.public_key(), None, true)])
             .collect();
         OutgoingMessage::new(owner.public_key(), rumor, SignerKind::User, destinations).unwrap()
+    }
+
+    #[tokio::test]
+    async fn encrypted_file_keys_survive_restart_and_stay_inside_gift_wraps() {
+        let owner = Keys::generate();
+        let receiver = Keys::generate();
+        let plaintext = b"private image fixture";
+        let mut encrypted = state::encrypted_file::EncryptedFile::encrypt(plaintext, "image/png".into()).unwrap();
+        encrypted.file.url = Url::parse("https://example.com/ciphertext").unwrap();
+        let rumor = EventBuilder::new(Kind::Custom(15), encrypted.file.url.to_string())
+            .tags(encrypted.file.tags()).tag(Tag::public_key(receiver.public_key()))
+            .finalize_unsigned(owner.public_key());
+        let original = OutgoingMessage::new(owner.public_key(), rumor, SignerKind::User,
+            vec![Destination::new(receiver.public_key(), None, false),
+                 Destination::new(owner.public_key(), None, true)]).unwrap();
+        let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
+        let dir = tempfile::tempdir().unwrap();
+        let queue = queue(client.clone(), owner.public_key(), dir.path());
+        queue.enqueue(original).await.unwrap();
+        let stored = load(dir.path(), owner.public_key()).await.unwrap().remove(0);
+        for (index, recipient) in [&receiver, &owner].into_iter().enumerate() {
+            let wrap = prepare(&client, &UniversalSigner::new(owner.clone()), None, &stored, index).await.unwrap();
+            assert_eq!(wrap.kind, Kind::GiftWrap);
+            assert!(!wrap.as_json().contains("decryption-key"));
+            assert!(!wrap.as_json().contains(encrypted.file.url.as_str()));
+            assert!(wrap.tags.iter().all(|tag| tag.kind() != "k"));
+            let unwrapped = nip59::extract_rumor(recipient, &wrap).unwrap();
+            assert_eq!(unwrapped.rumor.kind, Kind::Custom(15));
+            let file = state::encrypted_file::EncryptedFile::from_tags(&unwrapped.rumor.content, &unwrapped.rumor.tags).unwrap();
+            assert_eq!(file.decrypt(&encrypted.ciphertext).unwrap(), plaintext);
+            let rendered = crate::Message::from(&unwrapped.rumor);
+            assert!(rendered.media.is_empty());
+            assert!(rendered.encrypted_file.unwrap().is_ok());
+        }
+        client.shutdown().await;
     }
 
     #[tokio::test]

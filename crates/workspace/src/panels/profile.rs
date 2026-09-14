@@ -10,7 +10,7 @@ use instant::Duration;
 use nostr_sdk::prelude::*;
 use person::{Person, PersonRegistry, shorten_pubkey};
 use settings::AppSettings;
-use state::{NostrRegistry, upload};
+use state::{NostrRegistry, upload_public};
 use theme::ActiveTheme;
 use ui::avatar::Avatar;
 use ui::button::{Button, ButtonVariants};
@@ -175,7 +175,7 @@ impl ProfilePanel {
             let path = paths.pop().context("No path")?;
 
             // Upload via blossom client
-            match upload(server, path, cx).await {
+            match upload_public(server, path, cx).await {
                 Ok(url) => {
                     this.update_in(cx, |this, window, cx| {
                         this.avatar_input.update(cx, |this, cx| {

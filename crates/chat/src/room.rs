@@ -478,6 +478,17 @@ impl Room {
         Some(event)
     }
 
+    pub fn file_rumor(&self, file: &state::encrypted_file::EncryptedFile, replies: Vec<EventId>, cx: &App)
+        -> Option<UnsignedEvent>
+    {
+        let base = self.rumor("", replies, false, cx)?;
+        let mut event = EventBuilder::new(Kind::Custom(15), file.url.to_string())
+            .tags(base.tags.into_iter().chain(file.tags()))
+            .finalize_unsigned(base.pubkey);
+        event.ensure_id();
+        Some(event)
+    }
+
     /// Persist an outgoing intent; the account worker owns signing and delivery.
     pub fn send(
         &self,

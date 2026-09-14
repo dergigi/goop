@@ -15,6 +15,7 @@ pub struct Message {
     pub content: String,
     /// List of media URLs in the message
     pub media: Vec<SharedUri>,
+    pub encrypted_file: Option<Result<state::encrypted_file::EncryptedFile, String>>,
     /// Message created time as unix timestamp
     pub created_at: Timestamp,
     /// List of mentioned public keys in the message
@@ -23,10 +24,25 @@ pub struct Message {
     pub replies_to: Vec<EventId>,
 }
 
+fn media_content(kind: Kind, content: &str, tags: &Tags) -> (
+    Vec<SharedUri>, String, Option<Result<state::encrypted_file::EncryptedFile, String>>,
+) {
+    if kind == Kind::Custom(15) {
+        // Never send encrypted blob URLs to the ordinary image loader.
+        let file = state::encrypted_file::EncryptedFile::from_tags(content, tags)
+            .map_err(|_| "Invalid encrypted attachment metadata".to_owned());
+        let text = if file.is_ok() { "" } else { "Invalid encrypted attachment metadata" };
+        (Vec::new(), text.into(), Some(file))
+    } else {
+        let (media, text) = extract_and_remove_media_urls(content);
+        (media, text, None)
+    }
+}
+
 impl From<&Event> for Message {
     fn from(val: &Event) -> Self {
         let replies_to = extract_reply_ids(&val.tags);
-        let (media, string) = extract_and_remove_media_urls(&val.content);
+        let (media, string, encrypted_file) = media_content(val.kind, &val.content, &val.tags);
         let mentions = extract_mentions(&string);
 
         Self {
@@ -34,6 +50,7 @@ impl From<&Event> for Message {
             author: val.pubkey,
             content: string,
             media,
+            encrypted_file,
             created_at: val.created_at,
             mentions,
             replies_to,
@@ -44,7 +61,7 @@ impl From<&Event> for Message {
 impl From<&UnsignedEvent> for Message {
     fn from(val: &UnsignedEvent) -> Self {
         let replies_to = extract_reply_ids(&val.tags);
-        let (media, string) = extract_and_remove_media_urls(&val.content);
+        let (media, string, encrypted_file) = media_content(val.kind, &val.content, &val.tags);
         let mentions = extract_mentions(&string);
 
         Self {
@@ -53,6 +70,7 @@ impl From<&UnsignedEvent> for Message {
             author: val.pubkey,
             content: string,
             media,
+            encrypted_file,
             created_at: val.created_at,
             mentions,
             replies_to,
@@ -63,7 +81,7 @@ impl From<&UnsignedEvent> for Message {
 impl From<&NewMessage> for Message {
     fn from(val: &NewMessage) -> Self {
         let replies_to = extract_reply_ids(&val.rumor.tags);
-        let (media, string) = extract_and_remove_media_urls(&val.rumor.content);
+        let (media, string, encrypted_file) = media_content(val.rumor.kind, &val.rumor.content, &val.rumor.tags);
         let mentions = extract_mentions(&string);
 
         Self {
@@ -72,6 +90,7 @@ impl From<&NewMessage> for Message {
             author: val.rumor.pubkey,
             content: string,
             media,
+            encrypted_file,
             created_at: val.rumor.created_at,
             mentions,
             replies_to,
@@ -198,6 +217,17 @@ fn extract_reply_ids(inner: &Tags) -> Vec<EventId> {
 #[cfg(test)]
 mod ordering_tests {
     use super::*;
+    #[test]
+    fn invalid_file_message_never_becomes_a_plain_image_url() {
+        let keys = Keys::generate();
+        let event = EventBuilder::new(Kind::Custom(15), "https://example.com/private.png")
+            .finalize(&keys).unwrap();
+        let message = Message::from(&event);
+        assert!(message.media.is_empty());
+        assert!(message.encrypted_file.unwrap().is_err());
+        assert!(!message.content.contains("https://"));
+    }
+
     #[test]
     fn messages_in_the_same_second_are_not_deduplicated() {
         let keys = Keys::generate();
