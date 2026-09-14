@@ -25,9 +25,9 @@ pub struct Message {
 
 impl From<&Event> for Message {
     fn from(val: &Event) -> Self {
-        let mentions = extract_mentions(&val.content);
         let replies_to = extract_reply_ids(&val.tags);
         let (media, string) = extract_and_remove_media_urls(&val.content);
+        let mentions = extract_mentions(&string);
 
         Self {
             id: val.id,
@@ -43,9 +43,9 @@ impl From<&Event> for Message {
 
 impl From<&UnsignedEvent> for Message {
     fn from(val: &UnsignedEvent) -> Self {
-        let mentions = extract_mentions(&val.content);
         let replies_to = extract_reply_ids(&val.tags);
         let (media, string) = extract_and_remove_media_urls(&val.content);
+        let mentions = extract_mentions(&string);
 
         Self {
             // Event ID must be known
@@ -62,9 +62,9 @@ impl From<&UnsignedEvent> for Message {
 
 impl From<&NewMessage> for Message {
     fn from(val: &NewMessage) -> Self {
-        let mentions = extract_mentions(&val.rumor.content);
         let replies_to = extract_reply_ids(&val.rumor.tags);
         let (media, string) = extract_and_remove_media_urls(&val.rumor.content);
+        let mentions = extract_mentions(&string);
 
         Self {
             // Event ID must be known

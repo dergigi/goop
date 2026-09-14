@@ -282,6 +282,9 @@ fn render_text_mut(
                     link_url = is_web_url(&dest_url).then(|| dest_url.to_string());
                 }
                 Tag::List(number) => {
+                    if list_stack.is_empty() {
+                        new_paragraph(text, &mut list_stack);
+                    }
                     list_stack.push((number, false));
                 }
                 Tag::Item => {
@@ -461,7 +464,7 @@ fn is_web_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::prelude::PublicKey;
+    use nostr_sdk::prelude::{FinalizeEvent, PublicKey};
 
     fn render(content: &str, markdown: bool) -> RenderedText {
         RenderedText::render(content, &[], markdown, |_| unreachable!())
@@ -480,6 +483,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn message_processing_preserves_paragraphs_lists_and_code() {
+        let source = "Three PRs are ready:\n\n- [first](https://example.com/1)\n- second\n  - nested\n\nChecks passed.  \nNext line.\n\n```rust\n  let x = 1;\n```";
+        let event =
+            nostr_sdk::prelude::EventBuilder::new(nostr_sdk::prelude::Kind::TextNote, source)
+                .finalize(&nostr_sdk::prelude::Keys::generate())
+                .unwrap();
+        let message = chat::Message::from(&event);
+        assert_eq!(message.content, source);
+        let rendered = render(&message.content, true);
+        assert_eq!(
+            rendered.text.as_ref(),
+            "Three PRs are ready:\n\n- first\n- second\n  - nested\n\nChecks passed.\nNext line.\n\n  let x = 1;\n"
+        );
+        assert_valid_ranges(&rendered);
+    }
+
+    #[test]
+    fn mention_offsets_follow_media_removal() {
+        use nostr_sdk::prelude::*;
+        let keys = Keys::generate();
+        let token = format!("nostr:{}", keys.public_key().to_bech32().unwrap());
+        let source = format!("https://example.com/image.png\n\n**{token}** hi");
+        let event = EventBuilder::new(Kind::TextNote, source)
+            .finalize(&keys)
+            .unwrap();
+        let message = chat::Message::from(&event);
+        assert_eq!(message.mentions.len(), 1);
+        assert_eq!(&message.content[message.mentions[0].range.clone()], token);
+        let rendered =
+            RenderedText::render(&message.content, &message.mentions, true, |_| "@Zoë".into());
+        assert_eq!(rendered.text.as_ref(), "@Zoë hi");
+        assert_valid_ranges(&rendered);
+    }
     #[test]
     fn renders_nested_inline_styles_and_links() {
         let rendered = render(
@@ -541,7 +578,7 @@ mod tests {
         );
         assert_eq!(
             rendered.text.as_ref(),
-            "Heading\n\nfirst\nline\n3. three\n4. four\n  - nested\n\nafter"
+            "Heading\n\nfirst\nline\n\n3. three\n4. four\n  - nested\n\nafter"
         );
         assert_valid_ranges(&rendered);
     }
