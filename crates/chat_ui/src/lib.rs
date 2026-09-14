@@ -1241,14 +1241,14 @@ impl ChatPanel {
                         window.open_modal(cx, move |this, _window, cx| {
                             this.title(SharedString::from("Delivery status"))
                                 .show_close(true)
-                                .when(pending, |this| {
-                                    this.child(
-                                        Button::new("retry-outgoing")
+                                .when(pending || paused, |this| {
+                                    this.footer(|_, _, _, _| {
+                                        vec![Button::new("retry-outgoing")
                                             .label("Retry queued messages")
                                             .on_click(|_, _, cx| {
                                                 ChatRegistry::global(cx).read(cx).retry_outgoing()
-                                            }),
-                                    )
+                                            })]
+                                    })
                                 })
                                 .child(v_flex().gap_4().children({
                                     let mut items = Vec::with_capacity(reports.len());
@@ -1272,38 +1272,39 @@ impl ChatPanel {
         let avatar = profile.avatar();
 
         v_flex()
-            .gap_2()
+            .gap_3()
+            .p_3()
             .w_full()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
             .child(
                 h_flex()
-                    .gap_2()
-                    .text_sm()
-                    .child(SharedString::from(if report.self_copy {
-                        "Your copy:"
-                    } else {
-                        "Sent to:"
-                    }))
+                    .gap_3()
+                    .child(Avatar::new(avatar).small())
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .font_semibold()
-                            .child(Avatar::new(avatar).small())
-                            .child(name.clone()),
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(div().text_sm().font_semibold().child(name.clone()))
+                            .child(
+                                div().text_xs().text_color(cx.theme().text_muted)
+                                    .child(if report.self_copy { "Your copy" } else { "Recipient" }),
+                            ),
                     ),
             )
             .when_some(report.error.clone(), |this, error| {
                 this.child(
                     h_flex()
                         .flex_wrap()
-                        .justify_center()
-                        .p_1()
-                        .h_16()
+                        .p_3()
                         .w_full()
                         .text_sm()
                         .rounded(cx.theme().radius)
                         .bg(cx.theme().warning_background)
                         .text_color(cx.theme().warning_foreground)
-                        .child(div().flex_1().w_full().text_center().child(error)),
+                        .child(div().flex_1().min_w_0().child(error)),
                 )
             })
             .when_some(report.output.clone(), |this, output| {
@@ -1318,7 +1319,7 @@ impl ChatPanel {
                                 items.push(
                                     v_flex()
                                         .gap_0p5()
-                                        .p_1()
+                                        .p_2()
                                         .w_full()
                                         .rounded(cx.theme().radius)
                                         .bg(cx.theme().danger_background)
@@ -1348,7 +1349,7 @@ impl ChatPanel {
                                 items.push(
                                     v_flex()
                                         .gap_0p5()
-                                        .p_1()
+                                        .p_2()
                                         .w_full()
                                         .rounded(cx.theme().radius)
                                         .bg(cx.theme().elevated_surface_background)

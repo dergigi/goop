@@ -14,6 +14,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Align delivery-status recipients in padded rows and move retry into the dialog footer; allow error details to size to their content.
 - Open the online usage guide from Help → Usage Guide.
 
 ## [2.1.0] - 2026-09-14
