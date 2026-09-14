@@ -864,6 +864,10 @@ impl ChatPanel {
         cx.open_url(&content);
     }
 
+    pub fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
     fn render_history_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let chat = ChatRegistry::global(cx);
         let chat = chat.read(cx);

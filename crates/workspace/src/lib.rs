@@ -47,6 +47,14 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
     cx.bind_keys([
         KeyBinding::new(&format!("{modifier}-,"), Command::ShowSettings, None),
         KeyBinding::new(&format!("{modifier}-f"), Command::Search, None),
+        KeyBinding::new(
+            &format!("{modifier}-r"),
+            Command::RefreshMessagingRelays,
+            None,
+        ),
+        KeyBinding::new(&format!("{modifier}-1"), Command::ShowInbox, None),
+        KeyBinding::new(&format!("{modifier}-2"), Command::ShowRequests, None),
+        KeyBinding::new(&format!("{modifier}-3"), Command::FocusComposer, None),
         KeyBinding::new(&format!("{modifier}-t"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-w"), ClosePanel, None),
         KeyBinding::new(&format!("{modifier}-shift-w"), CloseAllPanels, None),
@@ -65,6 +73,9 @@ struct MsgRelayNotification;
 #[action(namespace = workspace, no_json)]
 enum Command {
     Search,
+    ShowInbox,
+    ShowRequests,
+    FocusComposer,
     NewConversation,
     ToggleTheme,
     Update,
@@ -291,6 +302,31 @@ impl Workspace {
 
     fn on_command(&mut self, command: &Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
+            Command::ShowInbox | Command::ShowRequests => {
+                let kind = if matches!(command, Command::ShowInbox) {
+                    chat::RoomKind::Ongoing
+                } else {
+                    chat::RoomKind::Request
+                };
+                self.sidebar
+                    .update(cx, |sidebar, cx| sidebar.set_filter(kind, window, cx));
+            }
+            Command::FocusComposer => {
+                let mut panels = self.dock.read(cx).active_panels(cx);
+                if let Some(tab) = self.dock.read(cx).active_tab_group(window, cx)
+                    && let Some(panel) = tab.read(cx).active_panel(cx)
+                {
+                    panels.insert(0, panel);
+                }
+                if let Some(chat) = panels
+                    .into_iter()
+                    .find_map(|panel| panel.view().downcast::<chat_ui::ChatPanel>().ok())
+                {
+                    self.sidebar
+                        .update(cx, |sidebar, cx| sidebar.dismiss_search(window, cx));
+                    chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+                }
+            }
             Command::Search | Command::NewConversation => {
                 self.sidebar.update(cx, |sidebar, cx| {
                     sidebar.focus_search(matches!(command, Command::NewConversation), window, cx)

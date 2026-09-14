@@ -429,6 +429,13 @@ impl DockArea {
         cx.notify();
     }
 
+    pub fn active_panels(&self, cx: &App) -> Vec<Arc<dyn PanelView>> {
+        self.tab_groups(cx)
+            .into_iter()
+            .filter_map(|tab| tab.read(cx).active_panel(cx))
+            .collect()
+    }
+
     pub fn active_tab_group(&self, window: &Window, cx: &App) -> Option<Entity<TabPanel>> {
         let tabs = self.tab_groups(cx);
         tabs.iter()

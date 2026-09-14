@@ -7,9 +7,9 @@ use common::{DebouncedDelay, TimestampExt, goop_cache};
 use entry::RoomEntry;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, Task, UniformListScrollHandle,
-    Window, div, uniform_list,
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
+    UniformListScrollHandle, Window, div, uniform_list,
 };
 use instant::Duration;
 use nostr_sdk::prelude::*;
@@ -32,6 +32,7 @@ const INPUT_PLACEHOLDER: &str = "Find or start a conversation";
 /// Sidebar.
 pub struct Sidebar {
     focus_handle: FocusHandle,
+    search_return_focus: Option<FocusHandle>,
     scroll_handle: UniformListScrollHandle,
 
     /// Find input state
@@ -84,11 +85,7 @@ impl Sidebar {
         let contact_list = cx.new(|_| None);
         let selected_pkeys = cx.new(|_| HashSet::new());
         let find_results = cx.new(|_| None);
-        let find_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(INPUT_PLACEHOLDER)
-                .clean_on_escape()
-        });
+        let find_input = cx.new(|cx| InputState::new(window, cx).placeholder(INPUT_PLACEHOLDER));
 
         let mut subscriptions = smallvec![];
         subscriptions.push(cx.observe(&NostrRegistry::global(cx), |_, _, cx| cx.notify()));
@@ -137,6 +134,7 @@ impl Sidebar {
 
         Self {
             focus_handle: cx.focus_handle(),
+            search_return_focus: None,
             scroll_handle: UniformListScrollHandle::new(),
             find_input,
             find_debouncer: DebouncedDelay::new(),
@@ -282,11 +280,18 @@ impl Sidebar {
 
         // Focus to the input element
         if !status {
-            window.focus_prev(cx);
+            window.focus(&self.focus_handle, cx);
         }
     }
 
     pub fn focus_search(&mut self, clear: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self
+            .find_input
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            self.search_return_focus = window.focused(cx);
+        }
         if clear {
             self.reset(window, cx);
         }
@@ -298,6 +303,36 @@ impl Sidebar {
             input.select_all(&ui::input::SelectAll, window, cx);
         });
         self.set_input_focus(true, window, cx);
+    }
+
+    pub fn dismiss_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.find_focused && !self.has_search {
+            return;
+        }
+        self.reset(window, cx);
+        self.find_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.set_input_focus(false, window, cx);
+        if let Some(previous) = self.search_return_focus.take() {
+            window.focus(&previous, cx);
+        }
+    }
+
+    fn escape_search(
+        &mut self,
+        _: &ui::input::Escape,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .find_input
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            self.dismiss_search(window, cx);
+        } else {
+            cx.propagate();
+        }
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -384,7 +419,8 @@ impl Sidebar {
     }
 
     /// Set the active filter for the sidebar.
-    fn set_filter(&mut self, kind: RoomKind, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_filter(&mut self, kind: RoomKind, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_return_focus = None;
         self.set_input_focus(false, window, cx);
         self.filter.update(cx, |this, cx| {
             *this = kind;
@@ -546,6 +582,8 @@ impl Render for Sidebar {
         };
 
         v_flex()
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::escape_search))
             .image_cache(goop_cache("sidebar", IMAGE_CACHE_SIZE))
             .size_full()
             .gap_2()
