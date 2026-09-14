@@ -13,6 +13,7 @@ use theme::{ActiveTheme};
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::scroll::Scrollbar;
+use ui::menu::DropdownMenu;
 use ui::{IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
 pub(crate) mod entry;
 
@@ -52,6 +53,56 @@ impl Sidebar {
     }
     fn current_filter(&self, kind: &RoomKind, cx: &Context<Self>) -> bool {
         self.filter.read(cx) == kind
+    }
+
+    fn render_footer(&self, cx: &Context<Self>) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .p_2()
+            .gap_1()
+            .justify_between()
+            .child(
+                Button::new("new-group")
+                    .icon(IconName::Group)
+                    .label("New Group")
+                    .small()
+                    .ghost()
+                    .tooltip("New Group")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(crate::Command::NewGroup), cx)
+                    }),
+            )
+            .child(
+                h_flex().gap_1().flex_shrink_0()
+                    .child(
+                        Button::new("sidebar-relays")
+                            .icon(IconName::Relay).small().ghost().tooltip("Relays")
+                            .dropdown_menu_with_anchor(gpui::Anchor::BottomRight, |menu, _, _| {
+                                menu.menu("Messaging Relays", Box::new(crate::Command::ShowMessaging))
+                                    .menu("Gossip Relays", Box::new(crate::Command::ShowRelayList))
+                            }),
+                    )
+                    .child(
+                        Button::new("sidebar-help")
+                            .icon(IconName::Help).small().ghost().tooltip("Help")
+                            .dropdown_menu_with_anchor(gpui::Anchor::BottomRight, |menu, _, _| {
+                                menu.menu("Usage Guide", Box::new(crate::Command::UsageGuide))
+                                    .menu("Agent Guide", Box::new(crate::Command::SetUpAgents))
+                                    .separator()
+                                    .menu("Keyboard Shortcuts", Box::new(crate::Command::KeyboardShortcuts))
+                            }),
+                    )
+                    .child(
+                        Button::new("sidebar-settings")
+                            .icon(IconName::Settings).small().ghost().tooltip("Settings")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(crate::Command::ShowSettings), cx)
+                            }),
+                    ),
+            )
     }
 
     fn render_list_items(
@@ -239,7 +290,7 @@ impl Render for Sidebar {
                     ),
                 )
             })
-            .child(v_flex().size_full().flex_1().gap_1().map(|this| {
+            .child(v_flex().w_full().flex_1().min_h_0().gap_1().map(|this| {
                 this.child(
                     uniform_list(
                         "rooms",
@@ -253,5 +304,6 @@ impl Render for Sidebar {
                 )
                 .child(Scrollbar::vertical(&self.scroll_handle))
             }))
+            .child(self.render_footer(cx))
     }
 }

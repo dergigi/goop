@@ -363,13 +363,25 @@ impl NewChat {
 }
 
 pub fn open(window: &mut Window, cx: &mut App) {
-    let view = cx.new(|cx| NewChat::new(window, cx));
+    open_with_mode(false, window, cx);
+}
+
+pub fn open_group(window: &mut Window, cx: &mut App) {
+    open_with_mode(true, window, cx);
+}
+
+fn open_with_mode(group_mode: bool, window: &mut Window, cx: &mut App) {
+    let view = cx.new(|cx| {
+        let mut view = NewChat::new(window, cx);
+        view.group_mode = group_mode;
+        view
+    });
     let input = view.read(cx).input.clone();
     window.open_modal(cx, move |modal, _, _| {
         modal
             .width(gpui::px(560.))
             .show_close(true)
-            .title("New Chat")
+            .title(if group_mode { "New Group" } else { "New Chat" })
             .child(view.clone())
     });
     window.defer(cx, move |window, cx| {

@@ -15,6 +15,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
         let groups: Vec<(&str, Vec<(&str, Box<dyn Action>)>)> = vec![
             ("Navigation", vec![
                 ("New Chat", Box::new(Command::NewConversation)),
+                ("New Group", Box::new(Command::NewGroup)),
                 ("Search conversations", Box::new(Command::SearchConversations)),
                 ("Search profiles", Box::new(Command::SearchProfiles)),
                 ("Find in current chat", Box::new(Command::Search)),

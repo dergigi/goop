@@ -70,6 +70,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         KeyBinding::new(&format!("{modifier}-3"), Command::FocusComposer, None),
         KeyBinding::new(&format!("{modifier}-t"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-n"), Command::NewConversation, None),
+        KeyBinding::new(&format!("{modifier}-shift-n"), Command::NewGroup, None),
         KeyBinding::new(&format!("{modifier}-w"), ClosePanel, None),
         KeyBinding::new(&format!("{modifier}-shift-w"), CloseAllPanels, None),
         KeyBinding::new(&format!("{modifier}-shift-t"), ReopenClosedPanel, None),
@@ -96,6 +97,8 @@ pub enum Command {
     ShowRequests,
     FocusComposer,
     NewConversation,
+    NewGroup,
+    UsageGuide,
     KeyboardShortcuts,
     SetUpAgents,
     ToggleSidebar,
@@ -408,6 +411,8 @@ impl Workspace {
             Command::NewConversation => {
                 dialogs::new_chat::open(window, cx);
             }
+            Command::NewGroup => dialogs::new_chat::open_group(window, cx),
+            Command::UsageGuide => cx.open_url("https://dergigi.com/goop/"),
             Command::KeyboardShortcuts => dialogs::shortcuts::open(window, cx),
             Command::SetUpAgents => {
                 cx.open_url("https://dergigi.com/goop/#agent-guide");

@@ -3,16 +3,13 @@ use ui::dock::{CloseAllPanels, ClosePanel, NextPanel, PreviousPanel, ReopenClose
 use ui::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use workspace::Command;
 
-actions!(goop, [Hide, HideOthers, ShowAll, BringToFront, OpenHelp]);
+actions!(goop, [Hide, HideOthers, ShowAll, BringToFront]);
 
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|_: &BringToFront, cx| cx.activate(true));
-    cx.on_action(|_: &OpenHelp, cx| {
-        cx.open_url("https://dergigi.com/goop/")
-    });
     #[cfg(target_os = "macos")]
     cx.bind_keys([
         KeyBinding::new("cmd-h", Hide, None),
@@ -41,6 +38,7 @@ fn application_menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat…", Command::NewConversation),
+            MenuItem::action("New Group…", Command::NewGroup),
             MenuItem::separator(),
             MenuItem::action("Close Tab", ClosePanel),
             MenuItem::action("Close All Tabs", CloseAllPanels),
@@ -83,7 +81,7 @@ fn application_menus() -> Vec<Menu> {
         ]),
         Menu::new("Help").items([
             MenuItem::action("Keyboard Shortcuts", Command::KeyboardShortcuts),
-            MenuItem::action("Usage Guide", OpenHelp),
+            MenuItem::action("Usage Guide", Command::UsageGuide),
         ]),
     ]
 }
