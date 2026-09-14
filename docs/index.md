@@ -42,7 +42,7 @@ messaging integration and its own identity.
 
 ### OpenClaw
 
-Use the [OpenClaw NIP-17 plugin](https://github.com/dergigi/openclaw-nostr-nip17/).
+Use the [OpenClaw NIP-17 plugin](https://github.com/fabianfabian/openclaw-nostr-nip17).
 Follow its setup instructions to connect an agent identity and configure pairing
 or allowed senders. It also supports separate identities for multiple agents.
 
