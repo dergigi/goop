@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Open keyboard shortcut help with ? outside inputs or through Help. Get Started now offers New Chat, Search Conversations, and Keyboard Shortcuts with their bindings.
+
 - Navigate New Chat with Up/Down and Enter, matching conversation search. Enter selects recipients in group mode.
 
 ### Fixed

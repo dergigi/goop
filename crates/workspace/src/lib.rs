@@ -46,6 +46,11 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         "ctrl"
     };
     cx.bind_keys([
+        KeyBinding::new(
+            "?",
+            Command::KeyboardShortcuts,
+            Some(dialogs::shortcuts::HELP_CONTEXT),
+        ),
         KeyBinding::new(&format!("{modifier}-,"), Command::ShowSettings, None),
         KeyBinding::new(&format!("{modifier}-f"), Command::Search, None),
         KeyBinding::new(&format!("{modifier}-b"), Command::ToggleSidebar, None),
@@ -87,7 +92,7 @@ pub enum Command {
     ShowRequests,
     FocusComposer,
     NewConversation,
-    ToggleTheme,
+    KeyboardShortcuts,
     ToggleSidebar,
     Update,
     RefreshMessagingRelays,
@@ -398,7 +403,8 @@ impl Workspace {
             Command::NewConversation => {
                 dialogs::new_chat::open(window, cx);
             }
-            Command::ShowSettings | Command::ToggleTheme => {
+            Command::KeyboardShortcuts => dialogs::shortcuts::open(window, cx),
+            Command::ShowSettings => {
                 let view = settings::init(window, cx);
 
                 window.open_modal(cx, move |this, _window, _cx| {
@@ -883,6 +889,7 @@ impl Render for Workspace {
 
         div()
             .id("workspace")
+            .key_context("Workspace")
             .on_action(cx.listener(Self::on_command))
             .on_action(cx.listener(|this, _: &CloseAllPanels, window, cx| {
                 DockArea::close_all(&this.dock, window, cx)

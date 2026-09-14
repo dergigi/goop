@@ -81,6 +81,9 @@ fn application_menus() -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Bring All to Front", BringToFront),
         ]),
-        Menu::new("Help").items([MenuItem::action("Goop Help", OpenHelp)]),
+        Menu::new("Help").items([
+            MenuItem::action("Keyboard Shortcuts", Command::KeyboardShortcuts),
+            MenuItem::action("Goop Help", OpenHelp),
+        ]),
     ]
 }
