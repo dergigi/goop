@@ -17,6 +17,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 - Align delivery-status recipients in padded rows and move retry into the dialog footer; allow error details to size to their content.
 - Open the online usage guide from Help → Usage Guide.
 
+### Fixed
+
+- Include newly added icons in incremental builds so the Agent Guide robot icon appears.
+
 ## [2.1.0] - 2026-09-14
 
 Goop 2.1 makes the desktop interface calmer and easier to use with a keyboard.
