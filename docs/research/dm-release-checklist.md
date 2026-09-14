@@ -14,7 +14,7 @@ The agreed scope remains NIP-17, external identity signers, and history from the
 - [x] Attempt the sender copy independently of recipient delivery; display partial delivery and retry controls.
 - [x] Keep outgoing jobs and queued plaintext account-scoped and separate from the relay database. Stop work on account changes and freeze in-flight signing identity (`988b4a3`).
 
-The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 29 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. It has not yet been rebuilt and installed with these changes.
+The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 29 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. A development candidate containing these changes has been rebuilt and installed on the development Mac; see the validation record below.
 
 ## Remaining implementation and regression coverage
 
@@ -42,3 +42,15 @@ Incoming cache migration preserves raw encrypted events and rebuilds verified ac
 Signer refusal recovery is covered for incoming worker restarts and outgoing queue restarts/reconnection, with one request before refusal and no additional signing until explicit retry. The state suite has 6 passing tests, including typed signer-error classification. No real external-signer or cross-client interactive test has been claimed.
 
 History checkpoints now require the persistent local provenance key as well as their account/relay identifier. Old or unrelated signed database records cannot mark history complete or replace trusted progress. Untrusted legacy checkpoints are ignored, causing a fresh scan of the existing inbox relays; retained ciphertext and the verified rumor cache prevent message loss/duplication during this rescan. Tests cover checkpoint injection and persistence/private permissions of the local cache key.
+
+## Development candidate validation
+
+- Installed Goop 1.1.0 build `d47b65d` in `/Applications/Goop.app` with the new incoming cache, persistent signer pauses, and trusted history checkpoints.
+- `cargo test --locked -p chat --lib`: 29 passed.
+- `cargo test --locked -p state --lib`: 6 passed.
+- Full desktop check and optimized build passed with `--features gpui_macos/runtime_shaders`.
+- Ad hoc bundle signature verified; installed binary matches the built binary. Previous bundle preserved under `dist/previous-install-iia4rh3c/Goop.app`.
+- The running app was left open; interactive verification requires quitting and reopening it.
+- CI now explicitly runs chat/state recovery tests on macOS, Windows, and Linux; default workspace tests previously covered only the desktop package.
+- [Six-platform installer validation](https://github.com/dergigi/goop/actions/runs/34866724438) started at `62284dc` with draft-release creation disabled. Build and platform smoke-test results are not yet claimed.
+- Diagnostics, additional history boundary/disconnection cases, avatar/performance measurements, encrypted-file interoperability, real external-signer/cross-client exercises, and release publication remain open. This development install is not the final release candidate.
