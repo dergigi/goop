@@ -1715,6 +1715,7 @@ impl Focusable for ChatPanel {
 
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let show_hints = window.is_window_active() && window.modifiers().secondary();
         if self.find.open && self.find.dirty {
             self.refresh_find(false, cx);
         }
@@ -1805,6 +1806,8 @@ impl Render for ChatPanel {
                                 h_flex()
                                     .pl_1()
                                     .gap_1()
+                                    .child(div().w_4().text_xs().text_color(cx.theme().text_muted)
+                                        .when(show_hints, |hint| hint.child("[3]")))
                                     .child(self.render_emoji_menu(window, cx))
                                     .child(self.render_config_menu(window, cx))
                                     .child(

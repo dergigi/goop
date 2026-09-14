@@ -898,6 +898,7 @@ impl Render for Workspace {
         div()
             .id("workspace")
             .key_context("Workspace")
+            .on_modifiers_changed(|_, window, _| window.refresh())
             .on_action(cx.listener(Self::on_command))
             .on_action(cx.listener(|this, _: &CloseAllPanels, window, cx| {
                 DockArea::close_all(&this.dock, window, cx)

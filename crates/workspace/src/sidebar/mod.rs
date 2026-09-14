@@ -113,6 +113,7 @@ impl Render for Sidebar {
         let loading = restoring || (chat.read(cx).loading() && logged_in);
 
         let total_rooms = chat.read(cx).count(self.filter.read(cx), cx);
+        let show_hints = window.is_window_active() && window.modifiers().secondary();
 
         v_flex()
             .track_focus(&self.focus_handle)
@@ -176,6 +177,8 @@ impl Render for Sidebar {
                                 }
                             })
                             .label("Inbox")
+                            .child(div().w_4().text_xs().text_color(cx.theme().text_muted)
+                                .when(show_hints, |hint| hint.child("[1]")))
                             .small()
                             .tooltip("All ongoing conversations")
                             .ghost_alt()
@@ -196,6 +199,8 @@ impl Render for Sidebar {
                                 }
                             })
                             .label("Requests")
+                            .child(div().w_4().text_xs().text_color(cx.theme().text_muted)
+                                .when(show_hints, |hint| hint.child("[2]")))
                             .small()
                             .tooltip("Incoming new conversations")
                             .ghost_alt()
