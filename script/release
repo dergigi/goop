@@ -70,7 +70,8 @@ update_version "$CRATE_CARGO"
 python3 script/check-release.py
 
 # Check git status before committing
-cargo metadata --no-deps --format-version=1 > /dev/null
+cargo update --workspace --offline
+cargo metadata --locked --no-deps --format-version=1 > /dev/null
 echo "Checking git status..."
 if git status --porcelain | grep -q .; then
     echo "Current uncommitted changes:"
