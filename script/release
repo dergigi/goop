@@ -26,6 +26,14 @@ if [ ! -f "$CRATE_CARGO" ]; then
     exit 1
 fi
 
+# Reject malformed versions, missing release notes, and reused tags before editing.
+python3 script/check-release.py --version "$NEW_VERSION"
+REMOTE_RELEASE_TAG=$(git ls-remote --tags origin "refs/tags/v$NEW_VERSION")
+if git show-ref --verify --quiet "refs/tags/v$NEW_VERSION" || [ -n "$REMOTE_RELEASE_TAG" ]; then
+    echo "Error: version v$NEW_VERSION already exists; published versions are immutable"
+    exit 1
+fi
+
 # Function to update version in a Cargo.toml file
 update_version() {
     local file="$1"
@@ -57,7 +65,10 @@ update_version() {
 # Update both Cargo.toml files
 echo "Updating versions..."
 update_version "$WORKSPACE_CARGO"
-update_version "$CRATE_CARGO"
+# The desktop package inherits the workspace version.
+if ! grep -q '^version.workspace = true' "$CRATE_CARGO"; then
+    update_version "$CRATE_CARGO"
+fi
 
 # Check git status before committing
 cargo metadata --no-deps --format-version=1 > /dev/null
@@ -81,7 +92,7 @@ if git status --porcelain | grep -q .; then
             ;;
         2)
             echo "Committing only version file changes..."
-            git add "$WORKSPACE_CARGO" "$CRATE_CARGO" Cargo.lock
+            git add "$WORKSPACE_CARGO" "$CRATE_CARGO" Cargo.lock CHANGELOG.md
             ;;
         3)
             echo "Release aborted by user"
@@ -95,7 +106,7 @@ if git status --porcelain | grep -q .; then
 else
     # Only version files were modified, add them specifically
     echo "Only version files were modified, adding them for commit..."
-    git add "$WORKSPACE_CARGO" "$CRATE_CARGO" Cargo.lock
+    git add "$WORKSPACE_CARGO" "$CRATE_CARGO" Cargo.lock CHANGELOG.md
 fi
 
 # Commit the changes

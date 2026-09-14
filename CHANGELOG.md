@@ -9,6 +9,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Semantic Versioning policy, a Keep a Changelog history, and release validation that uses changelog entries for release notes.
 - Instant local conversation and profile search with Cmd/Ctrl+K and Cmd/Ctrl+P, keyboard navigation, and discoverable shortcuts.
 - Search, tab management, inbox/request navigation, composer focus, and reload keyboard shortcuts.
 - Application version and build revision in Settings.
