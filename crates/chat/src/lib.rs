@@ -472,7 +472,7 @@ impl ChatRegistry {
                 .query(Filter::new().kind(Kind::GiftWrap).pubkey(user))
                 .await?;
             for event in cached {
-                queue.enqueue(event, false).await?;
+                queue.schedule(event.id);
             }
             let event = client
                 .database()

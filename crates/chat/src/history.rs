@@ -293,8 +293,12 @@ async fn ingest(
 ) -> Result<()> {
     for event in page {
         // Raw ciphertext survives signer failure and application restarts.
-        client.database().save_event(event).await?;
-        queue.enqueue(event.clone(), false).await?;
+        if let SaveEventStatus::Rejected(reason) = client.database().save_event(event).await?
+            && reason != RejectedReason::Duplicate
+        {
+            bail!("Could not persist downloaded ciphertext: {reason:?}");
+        }
+        queue.schedule(event.id);
     }
     progress.pages += 1;
     progress.received += page.len();
@@ -402,6 +406,56 @@ mod integration_tests {
     use nostr_sdk::local_relay::LocalRelay;
 
     #[tokio::test]
+    async fn download_finishes_with_more_than_a_full_queue_and_no_decryption_worker() {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let relay = LocalRelay::builder()
+                .max_filter_limit(50)
+                .max_query_results(50)
+                .build();
+            relay.run().await.unwrap();
+            let url = relay.url().await;
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .build();
+            let user = Keys::generate().public_key();
+            for time in 1..=600 {
+                let event = EventBuilder::new(Kind::GiftWrap, "ciphertext")
+                    .tag(Tag::public_key(user))
+                    .custom_created_at(Timestamp::from(time))
+                    .finalize(&Keys::generate())
+                    .unwrap();
+                relay.add_event(event).await.unwrap();
+            }
+            let (queue, _receivers) = super::super::DecryptQueue::new();
+            let (signals, _rx) = flume::unbounded();
+            scan_relay(&client, user, url.clone(), &queue, &signals, false)
+                .await
+                .unwrap();
+            assert_eq!(queue.pending(), 600);
+            assert_eq!(
+                client
+                    .database()
+                    .query(Filter::new().kind(Kind::GiftWrap).pubkey(user))
+                    .await
+                    .unwrap()
+                    .len(),
+                600
+            );
+            assert!(
+                read_checkpoint(&client, &checkpoint_key(user, &url))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .complete
+            );
+            client.shutdown().await;
+            relay.shutdown();
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn backfills_past_relay_cap_and_resumes_from_persisted_cursor() {
         let relay = LocalRelay::builder()
             .max_filter_limit(3)
@@ -443,11 +497,7 @@ mod integration_tests {
         .await
         .unwrap()
         .unwrap();
-        let received: std::collections::BTreeSet<_> = receiver
-            .history
-            .try_iter()
-            .map(|(event, _, _)| event.id)
-            .collect();
+        let received: std::collections::BTreeSet<_> = queue.scheduled_ids().into_iter().collect();
         assert_eq!(received, expected);
         assert!(
             read_checkpoint(&client, &key)
@@ -572,7 +622,7 @@ mod authentication_tests {
                 scan_after_auth_challenge(&client, user, &url, &queue, &signals, &release, true)
                     .await
                     .unwrap();
-                assert_eq!(receivers.history.try_recv().unwrap().0.id, event.id);
+                assert!(queue.scheduled_ids().contains(&event.id));
                 assert!(receivers.history.is_empty());
                 assert!(
                     read_checkpoint(&client, &checkpoint_key(user, &url))

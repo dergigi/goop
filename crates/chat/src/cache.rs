@@ -55,6 +55,10 @@ impl RumorCache {
         Ok(Self::with_keys(client, owner, keys))
     }
 
+    pub fn client(&self) -> Client {
+        self.client.clone()
+    }
+
     pub fn with_keys(client: Client, owner: PublicKey, keys: Keys) -> Self {
         Self {
             client,

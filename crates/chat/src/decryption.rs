@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,6 +14,7 @@ use super::{FailedMessage, NewMessage, Signal, extract_rumor};
 struct QueueState {
     pending: HashSet<EventId>,
     attempted: HashSet<EventId>,
+    backlog: VecDeque<EventId>,
 }
 
 struct EnqueuePermit {
@@ -46,10 +47,13 @@ pub(super) struct DecryptQueue {
     interactive_sender: flume::Sender<(Event, bool, bool)>,
     state: Arc<Mutex<QueueState>>,
     loaded: Arc<AtomicUsize>,
+    wake: flume::Sender<()>,
+    wake_rx: flume::Receiver<()>,
 }
 
 impl DecryptQueue {
     pub fn new() -> (Self, DecryptReceivers) {
+        let (wake, wake_rx) = flume::bounded(1);
         let (history_sender, history) = flume::bounded(HISTORY_CAPACITY);
         let (interactive_sender, interactive) = flume::bounded(INTERACTIVE_CAPACITY);
         (
@@ -58,12 +62,48 @@ impl DecryptQueue {
                 interactive_sender,
                 state: Arc::default(),
                 loaded: Arc::default(),
+                wake,
+                wake_rx,
             },
             DecryptReceivers {
                 history,
                 interactive,
             },
         )
+    }
+
+    /// Ciphertext is already durable. Queue only its ID without blocking the downloader.
+    pub fn schedule(&self, id: EventId) {
+        let mut state = self.state.lock().unwrap();
+        if state.attempted.contains(&id) || !state.pending.insert(id) {
+            return;
+        }
+        state.backlog.push_back(id);
+        let _ = self.wake.try_send(());
+    }
+
+    #[cfg(test)]
+    pub fn scheduled_ids(&self) -> HashSet<EventId> {
+        self.state.lock().unwrap().pending.clone()
+    }
+
+    async fn feed_history(&self, client: &Client) -> Result<()> {
+        loop {
+            let id = self.state.lock().unwrap().backlog.pop_front();
+            if let Some(id) = id {
+                let events = client
+                    .database()
+                    .query(Filter::new().id(id).limit(1))
+                    .await?;
+                let event = events
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow!("Queued ciphertext is missing from the database"))?;
+                self.history_sender.send_async((event, true, false)).await?;
+            } else {
+                self.wake_rx.recv_async().await?;
+            }
+        }
     }
 
     pub async fn enqueue(&self, event: Event, retry: bool) -> Result<()> {
@@ -170,26 +210,31 @@ impl DecryptQueue {
             .into_stream()
             .map(decrypt_job)
             .buffer_unordered(1);
-        let mut jobs = futures::stream::select(interactive, history);
-        while let Some((event, historical, result)) = jobs.next().await {
-            {
-                let mut state = self.state.lock().unwrap();
-                state.pending.remove(&event.id);
-                state.attempted.insert(event.id);
-            }
-            let result = match result {
-                Ok((rumor, duplicate)) => {
-                    self.loaded.fetch_add(1, Ordering::Relaxed);
-                    let mut message = NewMessage::new(event.id, rumor);
-                    message.historical = historical || duplicate;
-                    Ok(message)
+        let consume = async {
+            let mut jobs = futures::stream::select(interactive, history);
+            while let Some((event, historical, result)) = jobs.next().await {
+                {
+                    let mut state = self.state.lock().unwrap();
+                    state.pending.remove(&event.id);
+                    state.attempted.insert(event.id);
                 }
-                Err(error) => Err(FailedMessage::new(&event, error.to_string())),
-            };
-            signals
-                .send_async(Signal::Decrypted(event.id, result))
-                .await?;
-        }
+                let result = match result {
+                    Ok((rumor, duplicate)) => {
+                        self.loaded.fetch_add(1, Ordering::Relaxed);
+                        let mut message = NewMessage::new(event.id, rumor);
+                        message.historical = historical || duplicate;
+                        Ok(message)
+                    }
+                    Err(error) => Err(FailedMessage::new(&event, error.to_string())),
+                };
+                signals
+                    .send_async(Signal::Decrypted(event.id, result))
+                    .await?;
+            }
+            Ok(())
+        };
+        let client = cache.client();
+        futures::try_join!(self.feed_history(&client), consume)?;
         Ok(())
     }
 }
@@ -335,6 +380,31 @@ mod tests {
             .finalize_async(sender)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn persisted_backlog_is_decrypted_after_worker_restart() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
+            let owner = Keys::generate();
+            let event = gift_wrap(&Keys::generate(), &owner, "durable backlog").await;
+            client.database().save_event(&event).await.unwrap();
+            let (old, _) = DecryptQueue::new();
+            old.schedule(event.id);
+            drop(old);
+            let (queue, receivers) = DecryptQueue::new();
+            for raw in client.database().query(Filter::new().kind(Kind::GiftWrap).pubkey(owner.public_key())).await.unwrap() {
+                queue.schedule(raw.id);
+            }
+            let cache = crate::RumorCache::with_keys(client.clone(), owner.public_key(), Keys::generate());
+            let (tx, rx) = flume::unbounded();
+            let worker_queue = queue.clone();
+            let worker = tokio::spawn(async move { worker_queue.run(receivers, cache, UniversalSigner::new(owner), tx).await });
+            assert!(matches!(rx.recv_async().await.unwrap(), Signal::Decrypted(id, Ok(_)) if id == event.id));
+            assert_eq!(queue.pending(), 0);
+            worker.abort();
+            client.shutdown().await;
+        }).await.unwrap();
     }
 
     #[tokio::test]
