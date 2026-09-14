@@ -65,10 +65,9 @@ update_version() {
 # Update both Cargo.toml files
 echo "Updating versions..."
 update_version "$WORKSPACE_CARGO"
-# The desktop package inherits the workspace version.
-if ! grep -q '^version.workspace = true' "$CRATE_CARGO"; then
-    update_version "$CRATE_CARGO"
-fi
+# The crate inherits the workspace version, but its packager has an explicit version.
+update_version "$CRATE_CARGO"
+python3 script/check-release.py
 
 # Check git status before committing
 cargo metadata --no-deps --format-version=1 > /dev/null

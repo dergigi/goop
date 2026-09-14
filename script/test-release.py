@@ -56,12 +56,18 @@ class ReleaseTests(unittest.TestCase):
             root = Path(directory)
             (root / "Cargo.toml").write_text('[workspace.package]\nversion = "2.0.0-rc.1"\n')
             (root / "CHANGELOG.md").write_text(changelog("2.0.0-rc.1"))
+            (root / "desktop").mkdir()
+            (root / "desktop/Cargo.toml").write_text('[package.metadata.packager]\nversion = "2.0.0-rc.1"\n')
             output = root / "output"
             result = subprocess.run([sys.executable, str(script), "--tag", "v2.0.0-rc.1", "--github-output", str(output)], cwd=root, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("prerelease=true", output.read_text())
             result = subprocess.run([sys.executable, str(script), "--tag", "v2.0.0"], cwd=root, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
+            (root / "desktop/Cargo.toml").write_text('[package.metadata.packager]\nversion = "1.1.0"\n')
+            result = subprocess.run([sys.executable, str(script)], cwd=root, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"Installer version", result.stderr)
 
 
 if __name__ == "__main__":

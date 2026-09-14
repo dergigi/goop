@@ -73,6 +73,11 @@ def main():
     try:
         if args.version and precedence(version) < precedence(manifest["workspace"]["package"]["version"]):
             raise ValueError("Release version cannot precede the current workspace version")
+        if not args.version:
+            desktop = tomllib.loads(Path("desktop/Cargo.toml").read_text())
+            packaged = desktop["package"]["metadata"]["packager"]["version"]
+            if packaged != version:
+                raise ValueError(f"Installer version {packaged} does not match workspace version {version}")
         notes = release_notes(Path("CHANGELOG.md").read_text(), version)
     except ValueError as error:
         parser.error(str(error))
