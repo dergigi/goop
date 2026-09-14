@@ -23,7 +23,7 @@ use ui::indicator::Indicator;
 use ui::input::{Input, InputEvent, InputState};
 use ui::notification::Notification;
 use ui::scroll::Scrollbar;
-use ui::{Icon, IconName, Selectable, Sizable, StyledExt, WindowExtension, h_flex, v_flex};
+use ui::{IconName, Selectable, Sizable, StyledExt, WindowExtension, h_flex, v_flex};
 
 mod entry;
 
@@ -63,6 +63,9 @@ pub struct Sidebar {
 
     /// Chatroom filter
     filter: Entity<RoomKind>,
+
+    contacts_expanded: bool,
+    results_expanded: bool,
 
     /// User's contacts
     contact_list: Entity<Option<Vec<PublicKey>>>,
@@ -140,6 +143,8 @@ impl Sidebar {
             finding: false,
             has_search: false,
             new_requests: false,
+            contacts_expanded: true,
+            results_expanded: true,
             contact_list,
             selected_pkeys,
             filter,
@@ -638,56 +643,83 @@ impl Render for Sidebar {
                                 this.child(
                                     v_flex()
                                         .gap_1()
-                                        .flex_1()
+                                        .when(self.results_expanded, |this| this.flex_1())
                                         .border_b_1()
                                         .border_color(cx.theme().border_variant)
                                         .child(
-                                            h_flex()
-                                                .gap_0p5()
-                                                .text_xs()
+                                            Button::new("toggle-results")
+                                                .label("Results")
+                                                .icon(if self.results_expanded {
+                                                    IconName::CaretDown
+                                                } else {
+                                                    IconName::CaretRight
+                                                })
+                                                .transparent()
+                                                .small()
+                                                .w_full()
+                                                .justify_start()
                                                 .font_semibold()
                                                 .text_color(cx.theme().text_muted)
-                                                .child(Icon::new(IconName::ChevronDown))
-                                                .child("Results"),
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.results_expanded = !this.results_expanded;
+                                                    cx.notify();
+                                                })),
                                         )
-                                        .child(
-                                            uniform_list(
-                                                "rooms",
-                                                results.len(),
-                                                cx.processor(move |this, range, _window, cx| {
-                                                    this.render_results(range, cx)
-                                                }),
+                                        .when(self.results_expanded, |this| {
+                                            this.child(
+                                                uniform_list(
+                                                    "rooms",
+                                                    results.len(),
+                                                    cx.processor(
+                                                        move |this, range, _window, cx| {
+                                                            this.render_results(range, cx)
+                                                        },
+                                                    ),
+                                                )
+                                                .flex_1()
+                                                .h_full(),
                                             )
-                                            .flex_1()
-                                            .h_full(),
-                                        ),
+                                        }),
                                 )
                             })
                             .when_some(self.contact_list.read(cx).as_ref(), |this, contacts| {
                                 this.child(
                                     v_flex()
                                         .gap_1()
-                                        .flex_1()
+                                        .when(self.contacts_expanded, |this| this.flex_1())
                                         .child(
-                                            h_flex()
-                                                .gap_0p5()
-                                                .text_xs()
+                                            Button::new("toggle-contacts")
+                                                .label("Contacts")
+                                                .icon(if self.contacts_expanded {
+                                                    IconName::CaretDown
+                                                } else {
+                                                    IconName::CaretRight
+                                                })
+                                                .transparent()
+                                                .small()
+                                                .w_full()
+                                                .justify_start()
                                                 .font_semibold()
                                                 .text_color(cx.theme().text_muted)
-                                                .child(Icon::new(IconName::ChevronDown).small())
-                                                .child("Contacts"),
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.contacts_expanded =
+                                                        !this.contacts_expanded;
+                                                    cx.notify();
+                                                })),
                                         )
-                                        .child(
-                                            uniform_list(
-                                                "contacts",
-                                                contacts.len(),
-                                                cx.processor(|this, range, _window, cx| {
-                                                    this.render_contacts(range, cx)
-                                                }),
+                                        .when(self.contacts_expanded, |this| {
+                                            this.child(
+                                                uniform_list(
+                                                    "contacts",
+                                                    contacts.len(),
+                                                    cx.processor(|this, range, _window, cx| {
+                                                        this.render_contacts(range, cx)
+                                                    }),
+                                                )
+                                                .flex_1()
+                                                .h_full(),
                                             )
-                                            .flex_1()
-                                            .h_full(),
-                                        ),
+                                        }),
                                 )
                             })
                     })
