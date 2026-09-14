@@ -93,6 +93,7 @@ pub struct ChatRegistry {
 
     history: BTreeMap<RelayUrl, RelayHistory>,
     history_running: bool,
+    pending_history: Option<bool>,
     history_error: Option<String>,
     last_history: Option<Instant>,
     queue: Option<DecryptQueue>,
@@ -200,6 +201,7 @@ impl ChatRegistry {
             event_map: Arc::new(RwLock::new(HashMap::default())),
             history: BTreeMap::new(),
             history_running: false,
+            pending_history: None,
             history_error: None,
             last_history: None,
             queue: None,
@@ -452,6 +454,12 @@ impl ChatRegistry {
 
     fn start_history(&mut self, force: bool, include_general: bool, cx: &mut Context<Self>) {
         if self.history_running {
+            if force {
+                // Preserve an explicit recovery request while a scan is active.
+                self.pending_history =
+                    Some(self.pending_history.unwrap_or(false) || include_general);
+                cx.notify();
+            }
             return;
         }
         let Some(queue) = self.queue.clone() else {
@@ -533,6 +541,9 @@ impl ChatRegistry {
                     this.history_error = Some(error.to_string());
                     cx.emit(ChatEvent::Error(error.to_string()));
                 }
+                if let Some(include_general) = this.pending_history.take() {
+                    this.start_history(true, include_general, cx);
+                }
                 cx.notify();
             })?;
             result
@@ -588,7 +599,11 @@ impl ChatRegistry {
         if let Some(error) = &self.history_error {
             return format!("History incomplete · {error} · {pending} pending · {failed} failed");
         }
-        let status = if self.history_running {
+        let status = if self.pending_history == Some(true) {
+            "Loading history · broader relay search queued"
+        } else if self.pending_history.is_some() {
+            "Loading history · full rescan queued"
+        } else if self.history_running {
             "Loading history"
         } else if pending > 0 {
             "Decrypting messages"
@@ -812,6 +827,7 @@ impl ChatRegistry {
         self.signal_consumer = None;
         self.queue = None;
         self.history_running = false;
+        self.pending_history = None;
         self.last_history = None;
         self.history.clear();
         self.seen = Arc::default();
