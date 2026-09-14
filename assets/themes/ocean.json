@@ -1,8 +1,8 @@
 {
   "id": "ocean",
   "name": "Ocean",
-  "author": "Goop",
-  "url": "https://github.com/dergigi/goop",
+  "author": "Coop",
+  "url": "https://github.com/lumehq/coop",
   "light": {
     "background": "#fafefeff",
     "surface_background": "#f2fbfaff",

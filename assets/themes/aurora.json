@@ -1,8 +1,8 @@
 {
   "id": "aurora",
   "name": "Aurora",
-  "author": "Goop",
-  "url": "https://github.com/dergigi/goop",
+  "author": "Coop",
+  "url": "https://github.com/lumehq/coop",
   "light": {
     "background": "#fdfcfeff",
     "surface_background": "#f8f8ffff",

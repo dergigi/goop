@@ -7,6 +7,9 @@
     <name>$APP_NAME</name>
     <summary>Chat Freely, Stay Private on Nostr</summary>
 
+    <developer id="su.reya">
+        <name translate="no">Ren Amamiya</name>
+    </developer>
     <developer id="com.dergigi">
         <name translate="no">Gigi</name>
     </developer>
