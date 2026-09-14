@@ -13,6 +13,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Hide chat history status and recovery controls behind a Message history toolbar toggle.
+
 - New Chat filters existing contacts immediately without relay text search. Explicit NIP-05 addresses, npubs, and nprofiles resolve directly; recipient selections survive filtering.
 
 - Replace sidebar search with New Chat and Search actions with visible keyboard shortcuts. Search opens the local conversation search modal; Inbox and Requests keep their labels and positions.

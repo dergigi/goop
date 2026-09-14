@@ -30,8 +30,8 @@ use ui::menu::DropdownMenu;
 use ui::notification::Notification;
 use ui::scroll::Scrollbar;
 use ui::{
-    Disableable, Icon, IconName, InteractiveElementExt, Sizable, StyledExt, WindowExtension,
-    h_flex, v_flex,
+    Disableable, Icon, IconName, InteractiveElementExt, Selectable, Sizable, StyledExt,
+    WindowExtension, h_flex, v_flex,
 };
 
 use crate::text::RenderedText;
@@ -91,6 +91,9 @@ pub struct ChatPanel {
 
     /// Subject bar visibility
     subject_bar: Entity<bool>,
+
+    /// Visibility of optional message-history controls.
+    history_bar: Entity<bool>,
 
     /// Replies to
     replies_to: Entity<HashSet<EventId>>,
@@ -212,6 +215,7 @@ impl ChatPanel {
             input,
             subject_input,
             subject_bar,
+            history_bar: cx.new(|_| false),
             replies_to,
             attachments,
             render_markdown: AppSettings::get_render_markdown(cx),
@@ -1649,9 +1653,10 @@ impl Panel for ChatPanel {
             .unwrap_or(div().child("Unknown").into_any_element())
     }
 
-    fn toolbar_buttons(&self, _window: &Window, _cx: &App) -> Vec<Button> {
+    fn toolbar_buttons(&self, _window: &Window, cx: &App) -> Vec<Button> {
         let subject_bar = self.subject_bar.clone();
         let owner = self.find.owner.clone();
+        let history_bar = self.history_bar.clone();
 
         vec![
             Button::new("find-chat")
@@ -1661,6 +1666,18 @@ impl Panel for ChatPanel {
                 .ghost()
                 .on_click(move |_, window, cx| {
                     _ = owner.update(cx, |chat, cx| chat.focus_find(window, cx));
+                }),
+            Button::new("message-history")
+                .icon(IconName::History)
+                .tooltip("Message history")
+                .small()
+                .ghost()
+                .selected(*history_bar.read(cx))
+                .on_click(move |_, _, cx| {
+                    history_bar.update(cx, |visible, cx| {
+                        *visible = !*visible;
+                        cx.notify();
+                    })
                 }),
             Button::new("subject")
                 .icon(IconName::Input)
@@ -1696,7 +1713,9 @@ impl Render for ChatPanel {
             .on_action(cx.listener(Self::escape_find))
             .size_full()
             .when(self.find.open, |view| view.child(self.render_find(cx)))
-            .child(self.render_history_controls(cx))
+            .when(*self.history_bar.read(cx), |view| {
+                view.child(self.render_history_controls(cx))
+            })
             .when(*self.subject_bar.read(cx), |this| {
                 this.child(
                     h_flex()
