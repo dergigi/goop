@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Selecting a person in New Chat immediately opens the existing conversation or starts a new chat, without a message-request dialog. Group recipient selection is available through New group chat.
+
 ## [2.1.0] - 2026-09-14
 
 Goop 2.1 makes the desktop interface calmer and easier to use with a keyboard.

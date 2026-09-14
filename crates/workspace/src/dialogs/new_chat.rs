@@ -78,6 +78,7 @@ struct NewChat {
     contacts: Vec<PublicKey>,
     visible: Vec<PublicKey>,
     selected: HashSet<PublicKey>,
+    group_mode: bool,
     resolved: Option<PublicKey>,
     error: Option<String>,
     contacts_loaded: bool,
@@ -148,6 +149,7 @@ impl NewChat {
             contacts: Vec::new(),
             visible: Vec::new(),
             selected: HashSet::new(),
+            group_mode: false,
             resolved: None,
             error: None,
             contacts_loaded: false,
@@ -268,8 +270,14 @@ impl NewChat {
                 .organize(&user)
                 .kind(RoomKind::Ongoing)
         });
+        let chat = ChatRegistry::global(cx);
+        let existing = chat
+            .read(cx)
+            .room(&room.read(cx).id, cx)
+            .and_then(|room| room.upgrade());
+        let room = existing.unwrap_or(room);
         window.close_modal(cx);
-        ChatRegistry::global(cx).update(cx, |chat, cx| chat.emit_room(&room, window, cx));
+        chat.update(cx, |chat, cx| chat.emit_room(&room, window, cx));
     }
 
     fn render_contacts(
@@ -291,11 +299,17 @@ impl NewChat {
                     .name(person.name())
                     .avatar(person.avatar())
                     .selected(self.selected.contains(&key))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.selected.insert(key) {
-                            this.selected.remove(&key);
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.group_mode {
+                            if !this.selected.insert(key) {
+                                this.selected.remove(&key);
+                            }
+                            cx.notify();
+                        } else {
+                            this.selected.clear();
+                            this.selected.insert(key);
+                            this.create_room(window, cx);
                         }
-                        cx.notify();
                     }))
                     .into_any_element()
             })
@@ -361,16 +375,28 @@ impl Render for NewChat {
                         .child(format!("{} selected", self.selected.len())),
                 )
             })
+            .when(self.group_mode, |view| {
+                view.child(
+                    Button::new("create-chat")
+                        .label("Create Group DM")
+                        .primary()
+                        .disabled(self.selected.len() < 2)
+                        .on_click(cx.listener(|this, _, window, cx| this.create_room(window, cx))),
+                )
+            })
             .child(
-                Button::new("create-chat")
-                    .label(if self.selected.len() > 1 {
-                        "Create Group DM"
+                Button::new("group-mode")
+                    .label(if self.group_mode {
+                        "Cancel group"
                     } else {
-                        "Start Chat"
+                        "New group chat"
                     })
-                    .primary()
-                    .disabled(self.selected.is_empty())
-                    .on_click(cx.listener(|this, _, window, cx| this.create_room(window, cx))),
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.group_mode = !this.group_mode;
+                        this.selected.clear();
+                        cx.notify();
+                    })),
             )
     }
 }

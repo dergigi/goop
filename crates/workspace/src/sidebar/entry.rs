@@ -75,6 +75,10 @@ impl RoomEntry {
         self
     }
 
+    fn is_message_request(&self) -> bool {
+        self.kind == Some(RoomKind::Request) && self.room_id.is_some() && self.public_key.is_some()
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -98,7 +102,7 @@ impl Selectable for RoomEntry {
 impl RenderOnce for RoomEntry {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let hide_avatar = AppSettings::get_hide_avatar(cx);
-        let screening = AppSettings::get_screening(cx);
+        let screening = AppSettings::get_screening(cx) && self.is_message_request();
 
         let public_key = self.public_key;
         let is_selected = self.is_selected();
@@ -156,7 +160,6 @@ impl RenderOnce for RoomEntry {
                     handler(event, window, cx);
 
                     if let Some(public_key) = public_key
-                        && self.kind != Some(RoomKind::Ongoing)
                         && screening
                     {
                         let room_id = self.room_id;
@@ -172,8 +175,10 @@ impl RenderOnce for RoomEntry {
                                         .ok_text("Accept"),
                                 )
                                 .on_ok(move |_, _, cx| {
-                                    room_id.is_some_and(|id| chat::ChatRegistry::global(cx)
-                                        .update(cx, |chat, cx| chat.accept_room(id, cx)))
+                                    room_id.is_some_and(|id| {
+                                        chat::ChatRegistry::global(cx)
+                                            .update(cx, |chat, cx| chat.accept_room(id, cx))
+                                    })
                                 })
                                 .on_cancel(move |_event, window, cx| {
                                     window.dispatch_action(Box::new(ClosePanel), cx);
@@ -183,5 +188,36 @@ impl RenderOnce for RoomEntry {
                     }
                 })
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_explicit_message_requests_are_screened() {
+        let key = Keys::generate().public_key();
+        assert!(!RoomEntry::new(0).public_key(key).is_message_request());
+        assert!(
+            !RoomEntry::new(0)
+                .public_key(key)
+                .room_id(1)
+                .kind(RoomKind::Ongoing)
+                .is_message_request()
+        );
+        assert!(
+            !RoomEntry::new(0)
+                .public_key(key)
+                .kind(RoomKind::Request)
+                .is_message_request()
+        );
+        assert!(
+            RoomEntry::new(0)
+                .public_key(key)
+                .room_id(1)
+                .kind(RoomKind::Request)
+                .is_message_request()
+        );
     }
 }
