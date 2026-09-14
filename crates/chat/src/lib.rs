@@ -850,7 +850,8 @@ async fn extract_rumor(
         return Err(anyhow!("Rumor author does not match seal sender"));
     }
 
-    // Generate event id for the rumor if it doesn't have one
+    // A supplied ID must match the payload; only synthesize an absent ID.
+    rumor.verify_id()?;
     rumor.ensure_id();
 
     // Cache the rumor
@@ -874,6 +875,11 @@ async fn try_unwrap_with(
     // Verify the sealed event
     let seal: Event = Event::from_json(seal)?;
     seal.verify()?;
+    if seal.kind != Kind::Seal || !seal.tags.is_empty() {
+        return Err(anyhow!(
+            "Invalid NIP-17 seal: expected kind 13 with no tags"
+        ));
+    }
 
     // Get the rumor event
     let rumor = signer
@@ -914,8 +920,132 @@ async fn get_rumor(client: &Client, gift_wrap: EventId) -> Result<UnsignedEvent,
     let filter = Filter::new().identifier(gift_wrap).limit(1);
 
     if let Some(event) = client.database().query(filter).await?.into_iter().next() {
-        UnsignedEvent::from_json(event.content).map_err(|e| anyhow!(e))
+        let rumor = UnsignedEvent::from_json(event.content)?;
+        rumor.verify_id()?;
+        Ok(rumor)
     } else {
         Err(anyhow!("Event is not cached yet."))
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    // Build every layer explicitly so malformed inner events still have valid
+    // outer encryption and signatures, as they could on a real relay.
+    async fn wrap_seal(recipient: &Keys, seal: &Event) -> Event {
+        let ephemeral = Keys::generate();
+        let content = ephemeral
+            .nip44_encrypt_async(&recipient.public_key(), &seal.as_json())
+            .await
+            .unwrap();
+        EventBuilder::new(Kind::GiftWrap, content)
+            .tag(Tag::public_key(recipient.public_key()))
+            .finalize(&ephemeral)
+            .unwrap()
+    }
+
+    async fn seal_rumor(
+        sender: &Keys,
+        recipient: &Keys,
+        rumor: &UnsignedEvent,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Event {
+        let content = sender
+            .nip44_encrypt_async(&recipient.public_key(), &rumor.as_json())
+            .await
+            .unwrap();
+        EventBuilder::new(kind, content)
+            .tags(tags)
+            .finalize(sender)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_inner_events_before_caching() {
+        let sender = Keys::generate();
+        let recipient = Keys::generate();
+        let signer = UniversalSigner::new(recipient.clone());
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let rumor = EventBuilder::new(Kind::PrivateDirectMessage, "hello")
+            .tag(Tag::public_key(recipient.public_key()))
+            .finalize_unsigned(sender.public_key());
+        let mut wrong_id = rumor.clone();
+        wrong_id.id = Some(EventId::from_byte_array([0; 32]));
+        let mut wrong_author = rumor.clone();
+        wrong_author.pubkey = Keys::generate().public_key();
+        wrong_author.id = None;
+        let mut invalid_signature =
+            seal_rumor(&sender, &recipient, &rumor, Kind::Seal, vec![]).await;
+        invalid_signature.sig = EventBuilder::new(Kind::Seal, "different content")
+            .finalize(&sender)
+            .unwrap()
+            .sig;
+        let cases = [
+            (
+                "wrong seal kind",
+                seal_rumor(&sender, &recipient, &rumor, Kind::TextNote, vec![]).await,
+            ),
+            (
+                "tagged seal",
+                seal_rumor(
+                    &sender,
+                    &recipient,
+                    &rumor,
+                    Kind::Seal,
+                    vec![Tag::public_key(recipient.public_key())],
+                )
+                .await,
+            ),
+            (
+                "wrong rumor ID",
+                seal_rumor(&sender, &recipient, &wrong_id, Kind::Seal, vec![]).await,
+            ),
+            (
+                "wrong rumor author",
+                seal_rumor(&sender, &recipient, &wrong_author, Kind::Seal, vec![]).await,
+            ),
+            ("invalid seal signature", invalid_signature),
+        ];
+        for (name, seal) in cases {
+            let wrap = wrap_seal(&recipient, &seal).await;
+            assert!(
+                extract_rumor(&client, &signer, &wrap).await.is_err(),
+                "{name}"
+            );
+            assert!(get_rumor(&client, wrap.id).await.is_err(), "cached {name}");
+        }
+        client.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn valid_rumors_with_or_without_ids_are_cached_with_canonical_ids() {
+        let sender = Keys::generate();
+        let recipient = Keys::generate();
+        let signer = UniversalSigner::new(recipient.clone());
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        for include_id in [false, true] {
+            let mut rumor = EventBuilder::new(Kind::PrivateDirectMessage, "valid message")
+                .tag(Tag::public_key(recipient.public_key()))
+                .finalize_unsigned(sender.public_key());
+            if include_id {
+                rumor.ensure_id();
+            } else {
+                rumor.id = None;
+            }
+            let expected_id = rumor.compute_id();
+            let seal = seal_rumor(&sender, &recipient, &rumor, Kind::Seal, vec![]).await;
+            let wrap = wrap_seal(&recipient, &seal).await;
+            let result = extract_rumor(&client, &signer, &wrap).await.unwrap();
+            assert_eq!(result.id, Some(expected_id));
+            assert_eq!(get_rumor(&client, wrap.id).await.unwrap(), result);
+        }
+        client.shutdown().await;
     }
 }
