@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
-use anyhow::{Error, anyhow};
+use anyhow::Error;
 use common::EventExt;
 use gpui::{App, AppContext, Context, Entity, Global, Task, Window};
 use instant::{Duration, Instant};
 use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
-use state::{Announcement, BOOTSTRAP_RELAYS, NostrRegistry, TIMEOUT};
+use state::{Announcement, NostrRegistry, TIMEOUT, subscribe_profiles};
 
 mod person;
 
@@ -136,7 +136,7 @@ impl PersonRegistry {
                     }
                     Kind::ContactList => {
                         let public_keys = event.extract_public_keys();
-                        if let Err(e) = get_metadata(client, public_keys).await {
+                        if let Err(e) = subscribe_profiles(client, public_keys).await {
                             log::warn!("Failed to get metadata for contact list: {e}");
                         }
                     }
@@ -169,14 +169,14 @@ impl PersonRegistry {
                     batch.insert(public_key);
                     // Process the batch if it's full
                     if batch.len() >= 20
-                        && let Err(e) = get_metadata(client, std::mem::take(&mut batch)).await
+                        && let Err(e) = subscribe_profiles(client, std::mem::take(&mut batch)).await
                     {
                         log::warn!("Failed to get metadata batch: {e}");
                     }
                 }
                 _ => {
                     if !batch.is_empty()
-                        && let Err(e) = get_metadata(client, std::mem::take(&mut batch)).await
+                        && let Err(e) = subscribe_profiles(client, std::mem::take(&mut batch)).await
                     {
                         log::warn!("Failed to get metadata batch: {e}");
                     }
@@ -308,38 +308,4 @@ impl PersonRegistry {
             .map(|person| person.read(cx).clone())
             .unwrap_or_else(|| Person::new(public_key, Metadata::default()))
     }
-}
-
-/// Get metadata for all public keys in a event
-async fn get_metadata<I>(client: &Client, public_keys: I) -> Result<(), Error>
-where
-    I: IntoIterator<Item = PublicKey>,
-{
-    let authors: Vec<PublicKey> = public_keys.into_iter().collect();
-    let limit = authors.len();
-
-    if authors.is_empty() {
-        return Err(anyhow!("You need at least one public key"));
-    }
-
-    // Construct the subscription option
-    let opts = SubscribeAutoCloseOptions::default()
-        .exit_policy(ReqExitPolicy::ExitOnEOSE)
-        .timeout(Some(Duration::from_secs(TIMEOUT)));
-
-    // Construct the filter for metadata
-    let filter = Filter::new()
-        .kind(Kind::Metadata)
-        .authors(authors)
-        .limit(limit);
-
-    // Construct target for subscription
-    let target: HashMap<&str, Vec<Filter>> = BOOTSTRAP_RELAYS
-        .into_iter()
-        .map(|relay| (relay, vec![filter.clone()]))
-        .collect();
-
-    client.subscribe(target).close_on(opts).await?;
-
-    Ok(())
 }

@@ -19,12 +19,14 @@ mod blossom;
 mod constants;
 mod nip05;
 mod nip4e;
+mod profiles;
 mod signer;
 
 pub use blossom::*;
 pub use constants::*;
 pub use nip4e::*;
 pub use nip05::*;
+pub use profiles::subscribe_profiles;
 pub use signer::{GoopAuthUrlHandler, UniversalSigner};
 
 pub fn init(window: &mut Window, cx: &mut App) {
@@ -447,23 +449,7 @@ impl NostrRegistry {
             let profile = addr.profile(&http_client).await?;
             let public_key = profile.public_key;
 
-            let opts = SubscribeAutoCloseOptions::default()
-                .exit_policy(ReqExitPolicy::ExitOnEOSE)
-                .timeout(Some(Duration::from_secs(3)));
-
-            // Construct the filter for the metadata event
-            let filter = Filter::new()
-                .kind(Kind::Metadata)
-                .author(public_key)
-                .limit(1);
-
-            // Construct target for subscription
-            let target: HashMap<&str, Vec<Filter>> = BOOTSTRAP_RELAYS
-                .into_iter()
-                .map(|relay| (relay, vec![filter.clone()]))
-                .collect();
-
-            client.subscribe(target).close_on(opts).await?;
+            subscribe_profiles(&client, [public_key]).await?;
 
             Ok(public_key)
         })

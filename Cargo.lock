@@ -4366,6 +4366,7 @@ dependencies = [
  "nostr",
  "nostr-database",
  "nostr-gossip",
+ "nostr-memory",
  "opaquerr 0.2.0",
  "rand 0.10.2",
  "tokio",
@@ -6651,6 +6652,7 @@ dependencies = [
  "rustls",
  "serde_json",
  "smol",
+ "tokio",
  "webbrowser",
 ]
 

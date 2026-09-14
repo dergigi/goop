@@ -33,3 +33,8 @@ nostr-lmdb.workspace = true
 smol.workspace = true
 gpui_tokio.workspace = true
 rustls = "0.23"
+
+[dev-dependencies]
+nostr-memory.workspace = true
+nostr-sdk = { workspace = true, features = ["local-relay"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
