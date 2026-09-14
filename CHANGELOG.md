@@ -9,6 +9,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Cmd/Ctrl+K searches loaded message contents as well as names, with name matches first and snippets for content matches.
 - Drop files onto a chat to attach them to the draft, using the same upload flow as the + picker; multiple files upload in order.
 - A pinned sidebar footer with New Group, Relays, Help, and Settings; Cmd/Ctrl+Shift+N opens group creation directly.
 - Hold Cmd on macOS or Ctrl on Windows/Linux to show numbered hints on Inbox, Requests, and the message box.

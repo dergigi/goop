@@ -83,7 +83,7 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 
 - **?** — open Keyboard Shortcuts when you aren’t typing (also available in Help).
 - **Cmd/Ctrl+B** — show or hide the conversation sidebar.
-- **Cmd/Ctrl+K** — instantly search loaded conversations, including message requests.
+- **Cmd/Ctrl+K** — search loaded conversations and message contents, including message requests; names match first.
 - **Cmd/Ctrl+P** — instantly search loaded profiles by name, Nostr address, or public key.
 - **↑ / ↓**, **Enter**, **Esc** — choose a quick-search result, open it, or return to your previous focus.
 - **Cmd/Ctrl+F** — find text in the current chat; **Enter / Shift+Enter** move between matching messages, and **Esc** closes the find bar and restores focus.

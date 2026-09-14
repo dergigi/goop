@@ -1,7 +1,8 @@
 //! Local quick navigation. Build searchable text once when opening; typing does no I/O.
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use chat::{ChatRegistry, Room, RoomKind};
+use chat::{ChatRegistry, Room, RoomKind, SearchMessage};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
@@ -25,6 +26,7 @@ struct Entry {
     name: SharedString,
     detail: SharedString,
     text: String,
+    messages: Vec<Arc<SearchMessage>>,
     target: Target,
 }
 
@@ -45,6 +47,48 @@ fn matches(text: &str, query: &str) -> bool {
     query.split_whitespace().all(|word| text.contains(word))
 }
 
+
+#[derive(Debug, PartialEq, Eq)]
+struct SearchResult {
+    entry: usize,
+    message: Option<usize>,
+}
+
+fn search(entries: &[Entry], query: &str) -> Vec<SearchResult> {
+    let query = query.to_lowercase();
+    let terms: Vec<_> = query.split_whitespace().collect();
+    let mut names = Vec::new();
+    let mut contents = Vec::new();
+    for (entry, item) in entries.iter().enumerate() {
+        if matches(&item.text, &query) {
+            names.push(SearchResult { entry, message: None });
+        } else if let Some(message) = item.messages.iter().position(|message| {
+            terms.iter().all(|term| item.text.contains(term) || message.normalized.contains(term))
+        }) {
+            contents.push(SearchResult { entry, message: Some(message) });
+        }
+    }
+    names.extend(contents);
+    names
+}
+
+fn snippet(content: &str, query: &str) -> String {
+    let query = query.to_lowercase();
+    let terms: Vec<_> = query.split_whitespace().collect();
+    let words: Vec<_> = content.split_whitespace().collect();
+    let hit = words.iter().position(|word| {
+        let word = word.to_lowercase();
+        terms.iter().any(|term| word.contains(term))
+    }).unwrap_or(0);
+    let start = hit.saturating_sub(5);
+    let end = (start + 24).min(words.len());
+    let text = words[start..end].join(" ");
+    let truncated = text.chars().count() > 180;
+    format!("{}{}{}", if start > 0 { "…" } else { "" },
+        text.chars().take(180).collect::<String>(),
+        if truncated || end < words.len() { "…" } else { "" })
+}
+
 pub fn open(profiles: bool, window: &mut Window, cx: &mut App) {
     let people: HashMap<_, _> = PersonRegistry::global(cx)
         .read(cx)
@@ -59,6 +103,7 @@ pub fn open(profiles: bool, window: &mut Window, cx: &mut App) {
                 name: person.name(),
                 detail: person.public_key().to_bech32().unwrap_or_default().into(),
                 text: profile_text(person),
+                messages: Vec::new(),
                 target: Target::Profile(person.public_key()),
             });
         }
@@ -107,6 +152,7 @@ pub fn open(profiles: bool, window: &mut Window, cx: &mut App) {
             entries.push(Entry {
                 name,
                 text,
+                messages: chat.read(cx).search_messages(data.id),
                 detail: if data.kind == RoomKind::Request {
                     "Message request"
                 } else {
@@ -128,7 +174,8 @@ pub fn open(profiles: bool, window: &mut Window, cx: &mut App) {
 
 struct QuickSearch {
     entries: Vec<Entry>,
-    results: Vec<usize>,
+    results: Vec<SearchResult>,
+    query: String,
     selected: usize,
     input: Entity<InputState>,
     scroll: UniformListScrollHandle,
@@ -138,7 +185,7 @@ struct QuickSearch {
 impl QuickSearch {
     fn new(entries: Vec<Entry>, profiles: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx
-            .new(|cx| InputState::new(window, cx).placeholder(if profiles { "Search profiles…" } else { "Search conversations…" }));
+            .new(|cx| InputState::new(window, cx).placeholder(if profiles { "Search profiles…" } else { "Search conversations and messages…" }));
         let subscription =
             cx.subscribe_in(
                 &input,
@@ -146,12 +193,8 @@ impl QuickSearch {
                 |this, input, event, window, cx| match event {
                     InputEvent::Change => {
                         let query = input.read(cx).value().to_lowercase();
-                        this.results = this
-                            .entries
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(ix, entry)| matches(&entry.text, &query).then_some(ix))
-                            .collect();
+                        this.results = search(&this.entries, &query);
+                        this.query = query;
                         this.selected = 0;
                         this.scroll.scroll_to_item(0, ScrollStrategy::Top);
                         cx.notify();
@@ -164,7 +207,8 @@ impl QuickSearch {
             this.input.update(cx, |input, cx| input.focus(window, cx))
         });
         Self {
-            results: (0..entries.len()).collect(),
+            results: search(&entries, ""),
+            query: String::new(),
             entries,
             selected: 0,
             input,
@@ -191,7 +235,7 @@ impl QuickSearch {
         let Some(ix) = self.results.get(self.selected) else {
             return;
         };
-        let target = self.entries[*ix].target.clone();
+        let target = self.entries[ix.entry].target.clone();
         window.close_modal(cx);
         match target {
             Target::Profile(key) => {
@@ -265,7 +309,12 @@ impl Render for QuickSearch {
                     cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
                         range
                             .map(|ix| {
-                                let entry = &this.entries[this.results[ix]];
+                                let result = &this.results[ix];
+                                let entry = &this.entries[result.entry];
+                                let detail = result.message.map(|message| {
+                                    SharedString::from(format!("{} · {}", entry.detail,
+                                        snippet(&entry.messages[message].content, &this.query)))
+                                }).unwrap_or_else(|| entry.detail.clone());
                                 h_flex()
                                     .id(ix)
                                     .w_full()
@@ -284,7 +333,7 @@ impl Render for QuickSearch {
                                                     .truncate()
                                                     .text_xs()
                                                     .text_color(cx.theme().text_muted)
-                                                    .child(entry.detail.clone()),
+                                                    .child(detail),
                                             ),
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -322,4 +371,37 @@ mod tests {
         assert!(matches(&text, ""));
         assert!(!matches(&text, "alice missing"));
     }
+    fn entry(name: &str, messages: &[&str]) -> Entry {
+        Entry {
+            name: name.to_owned().into(), detail: "Inbox".into(), text: name.to_lowercase(),
+            messages: messages.iter().map(|content| Arc::new(SearchMessage {
+                content: (*content).into(), normalized: content.to_lowercase().into(),
+                created_at: Timestamp::from(0),
+            })).collect(),
+            target: Target::Profile(Keys::generate().public_key()),
+        }
+    }
+
+    #[test]
+    fn names_rank_before_contents_and_each_conversation_appears_once() {
+        let entries = vec![entry("Bob", &["Alice sent the invoice", "Alice replied"]),
+            entry("Alice", &["Hello"]), entry("Alice group", &[]), entry("Carol", &["Invoice due"])];
+        assert_eq!(search(&entries, "ALICE"), vec![
+            SearchResult { entry: 1, message: None }, SearchResult { entry: 2, message: None },
+            SearchResult { entry: 0, message: Some(0) },
+        ]);
+        assert_eq!(search(&entries, "bob invoice"), vec![SearchResult { entry: 0, message: Some(0) }]);
+        assert_eq!(search(&entries, "   ").len(), entries.len());
+        assert!(search(&entries, "missing").is_empty());
+    }
+
+    #[test]
+    fn content_terms_must_match_one_message_and_snippets_preserve_unicode() {
+        assert!(search(&[entry("Alice", &["invoice", "tomorrow"])], "invoice tomorrow").is_empty());
+        let text = "intro one two three four five six seven eight Café 東京 invoice details";
+        let preview = snippet(text, "CAFÉ");
+        assert!(preview.contains("Café 東京"));
+        assert!(preview.starts_with('…'));
+    }
+
 }
