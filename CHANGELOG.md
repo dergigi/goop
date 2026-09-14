@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Open the agent messaging guide from “Set up your agents to message you” in Get Started.
+
 ### Changed
 
 - Open the online usage guide from Help → Usage Guide.

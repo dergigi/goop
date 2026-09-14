@@ -83,6 +83,12 @@ impl Render for GreeterPanel {
                             .children(
                                 [
                                     (
+                                        "set-up-agents",
+                                        "Set up your agents to message you",
+                                        IconName::Link,
+                                        Command::SetUpAgents,
+                                    ),
+                                    (
                                         "new-chat",
                                         "New Chat",
                                         IconName::Plus,

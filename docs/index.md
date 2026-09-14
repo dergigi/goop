@@ -8,6 +8,8 @@ title: Usage guide
 Goop is a NIP-17 messaging client for private, encrypted conversations on Nostr, designed for people who love the keyboard.
 This guide covers Goop 2.1.
 
+[Keyboard shortcuts](#keyboard-shortcuts) · [How to use Goop with agents](#how-to-use-goop-with-agents)
+
 ## Keyboard shortcuts
 
 Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
@@ -27,3 +29,28 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 - **Enter / Shift+Enter** — send a message / insert a newline.
 
 Quick search filters an in-memory snapshot of loaded items without querying relays as you type. Opening a profile can refresh its details. The sidebar buttons and account menu also expose the quick-search shortcuts.
+
+## How to use Goop with agents
+
+Your agents can send you updates and receive your replies as private NIP-17 messages.
+Goop is where you read and reply; the agent runs in its own harness, with a Nostr
+messaging integration and its own identity.
+
+1. Set up a NIP-17 integration for your agent’s harness.
+2. Configure it to message your Nostr public key (`npub`).
+3. Open the agent’s message in Goop. If it appears in Requests, choose **Accept** to move the conversation to your inbox.
+
+### OpenClaw
+
+Use the [OpenClaw NIP-17 plugin](https://github.com/dergigi/openclaw-nostr-nip17/).
+Follow its setup instructions to connect an agent identity and configure pairing
+or allowed senders. It also supports separate identities for multiple agents.
+
+Publish the agent identity’s DM relay list so Goop can discover where to send
+replies. The plugin’s setup guide covers this requirement; it does not publish
+that list automatically.
+
+### Other harnesses
+
+Use a NIP-17 messaging integration for your harness. Setup depends on the harness;
+Goop receives the resulting messages as ordinary conversations.

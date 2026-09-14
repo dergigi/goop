@@ -93,6 +93,7 @@ pub enum Command {
     FocusComposer,
     NewConversation,
     KeyboardShortcuts,
+    SetUpAgents,
     ToggleSidebar,
     Update,
     RefreshMessagingRelays,
@@ -404,6 +405,9 @@ impl Workspace {
                 dialogs::new_chat::open(window, cx);
             }
             Command::KeyboardShortcuts => dialogs::shortcuts::open(window, cx),
+            Command::SetUpAgents => {
+                cx.open_url("https://dergigi.com/goop/#how-to-use-goop-with-agents");
+            }
             Command::ShowSettings => {
                 let view = settings::init(window, cx);
 
