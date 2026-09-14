@@ -19,7 +19,10 @@ use state::{IMAGE_CACHE_SIZE, NostrRegistry, StateEvent};
 use theme::{ActiveTheme, SIDEBAR_WIDTH, Theme, ThemeRegistry};
 use ui::avatar::Avatar;
 use ui::button::{Button, ButtonVariants};
-use ui::dock::{ClosePanel, DockArea, DockItem, DockPlacement, PanelView};
+use ui::dock::{
+    CloseAllPanels, ClosePanel, DockArea, DockItem, DockPlacement, NextPanel, PanelView,
+    PreviousPanel, ReopenClosedPanel,
+};
 use ui::indicator::Indicator;
 use ui::menu::{DropdownMenu, PopupMenuItem};
 use ui::notification::{Notification, NotificationKind};
@@ -36,16 +39,21 @@ mod panels;
 mod sidebar;
 
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
-    let settings_shortcut = if cx.theme().platform.is_mac() {
-        "cmd-,"
+    let modifier = if cx.theme().platform.is_mac() {
+        "cmd"
     } else {
-        "ctrl-,"
+        "ctrl"
     };
-    cx.bind_keys([KeyBinding::new(
-        settings_shortcut,
-        Command::ShowSettings,
-        None,
-    )]);
+    cx.bind_keys([
+        KeyBinding::new(&format!("{modifier}-,"), Command::ShowSettings, None),
+        KeyBinding::new(&format!("{modifier}-f"), Command::Search, None),
+        KeyBinding::new(&format!("{modifier}-t"), Command::NewConversation, None),
+        KeyBinding::new(&format!("{modifier}-w"), ClosePanel, None),
+        KeyBinding::new(&format!("{modifier}-shift-w"), CloseAllPanels, None),
+        KeyBinding::new(&format!("{modifier}-shift-t"), ReopenClosedPanel, None),
+        KeyBinding::new("ctrl-tab", NextPanel, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousPanel, None),
+    ]);
 
     cx.new(|cx| Workspace::new(window, cx))
 }
@@ -56,6 +64,8 @@ struct MsgRelayNotification;
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = workspace, no_json)]
 enum Command {
+    Search,
+    NewConversation,
     ToggleTheme,
     Update,
     RefreshMessagingRelays,
@@ -269,8 +279,19 @@ impl Workspace {
     }
 
     /// Handle command events
+    fn cycle_tabs(&self, backwards: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.dock.read(cx).active_tab_group(window, cx) {
+            tab.update(cx, |tab, cx| tab.cycle(backwards, window, cx));
+        }
+    }
+
     fn on_command(&mut self, command: &Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
+            Command::Search | Command::NewConversation => {
+                self.sidebar.update(cx, |sidebar, cx| {
+                    sidebar.focus_search(matches!(command, Command::NewConversation), window, cx)
+                });
+            }
             Command::ShowSettings => {
                 let view = settings::init(window, cx);
 
@@ -789,6 +810,30 @@ impl Render for Workspace {
         div()
             .id("workspace")
             .on_action(cx.listener(Self::on_command))
+            .on_action(cx.listener(|this, _: &CloseAllPanels, window, cx| {
+                DockArea::close_all(&this.dock, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ReopenClosedPanel, window, cx| {
+                this.dock
+                    .update(cx, |dock, cx| dock.reopen_closed(window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &ClosePanel, window, cx| {
+                if let Some(tab) = this.dock.read(cx).active_tab_group(window, cx) {
+                    tab.update(cx, |tab, cx| {
+                        if let Some(panel) = tab.active_panel(cx) {
+                            tab.remove_panel(&panel, window, cx);
+                        }
+                    });
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &NextPanel, window, cx| this.cycle_tabs(false, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PreviousPanel, window, cx| {
+                    this.cycle_tabs(true, window, cx)
+                }),
+            )
             .relative()
             .size_full()
             .child(

@@ -20,7 +20,17 @@ pub use panel::*;
 pub use stack_panel::*;
 pub use tab_panel::*;
 
-actions!(dock, [ToggleZoom, ClosePanel]);
+actions!(
+    dock,
+    [
+        ToggleZoom,
+        ClosePanel,
+        CloseAllPanels,
+        ReopenClosedPanel,
+        NextPanel,
+        PreviousPanel
+    ]
+);
 
 pub enum DockEvent {
     /// The layout of the dock has changed, subscribers this to save the layout.
@@ -60,6 +70,7 @@ pub struct DockArea {
 
     /// The panel style, default is [`PanelStyle::Default`](PanelStyle::Default).
     pub(crate) panel_style: PanelStyle,
+    closed_panels: Vec<(WeakEntity<TabPanel>, Arc<dyn PanelView>)>,
     subscriptions: Vec<Subscription>,
 }
 
@@ -246,14 +257,11 @@ impl DockItem {
                 });
             }
             Self::Split { view, items, .. } => {
-                // Iter items to add panel to the first tabs
-                for item in items.iter_mut() {
-                    if let DockItem::Tabs { view, .. } = item {
-                        view.update(cx, |tab_panel, cx| {
-                            tab_panel.add_panel(panel.clone(), window, cx);
-                        });
-                        return;
-                    }
+                let mut tabs = Vec::new();
+                DockArea::collect_tabs(Arc::new(view.clone()), cx, &mut tabs);
+                if let Some(tab) = tabs.first() {
+                    tab.update(cx, |tab, cx| tab.add_panel(panel, window, cx));
+                    return;
                 }
 
                 // Unable to find tabs, create new tabs
@@ -332,12 +340,97 @@ impl DockArea {
             bottom_dock: None,
             is_locked: false,
             panel_style: PanelStyle::Default,
+            closed_panels: vec![],
             subscriptions: vec![],
         };
 
         this.subscribe_panel(&stack_panel, window, cx);
 
         this
+    }
+
+    // Read the live panel tree: DockItem's construction-time children can be stale
+    // after dragging, splitting, or closing a tab group.
+    fn collect_tabs(panel: Arc<dyn PanelView>, cx: &App, tabs: &mut Vec<Entity<TabPanel>>) {
+        if let Ok(tab) = panel.view().downcast::<TabPanel>() {
+            tabs.push(tab);
+        } else if let Ok(stack) = panel.view().downcast::<StackPanel>() {
+            for child in &stack.read(cx).panels {
+                Self::collect_tabs(child.clone(), cx, tabs);
+            }
+        }
+    }
+
+    fn tab_groups(&self, cx: &App) -> Vec<Entity<TabPanel>> {
+        let mut tabs = Vec::new();
+        Self::collect_tabs(self.items.view(), cx, &mut tabs);
+        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock]
+            .into_iter()
+            .flatten()
+        {
+            Self::collect_tabs(dock.read(cx).panel.view(), cx, &mut tabs);
+        }
+        tabs
+    }
+
+    pub(crate) fn remember_closed(&mut self, tab: WeakEntity<TabPanel>, panel: Arc<dyn PanelView>) {
+        self.closed_panels
+            .retain(|(_, previous)| previous.view() != panel.view());
+        self.closed_panels.push((tab, panel));
+        if self.closed_panels.len() > 20 {
+            self.closed_panels.remove(0);
+        }
+    }
+
+    /// Close outside a DockArea update so individual tab groups can record history.
+    pub fn close_all(dock: &Entity<Self>, window: &mut Window, cx: &mut App) {
+        let tabs = dock.read(cx).tab_groups(cx);
+        for tab in tabs {
+            tab.update(cx, |tab, cx| {
+                let active = tab.active_panel(cx);
+                let mut panels = tab.panels.clone();
+                // Reopen the previously active tab first.
+                panels.sort_by_key(|panel| Some(panel) == active.as_ref());
+                for panel in panels {
+                    if tab.closable && panel.closable(cx) {
+                        tab.remove_panel(&panel, window, cx);
+                    }
+                }
+            });
+        }
+    }
+
+    pub fn reopen_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((original, panel)) = self.closed_panels.pop() else {
+            return;
+        };
+        let tabs = self.tab_groups(cx);
+        // A tab may already have been opened again through the sidebar.
+        let target = tabs
+            .iter()
+            .find(|tab| {
+                tab.read(cx)
+                    .panels
+                    .iter()
+                    .any(|p| p.panel_id(cx) == panel.panel_id(cx))
+            })
+            .cloned()
+            .or_else(|| original.upgrade().filter(|tab| tabs.contains(tab)))
+            .or_else(|| tabs.first().cloned());
+        if let Some(target) = target {
+            target.update(cx, |tab, cx| tab.add_panel(panel, window, cx));
+        } else {
+            self.add_panel(panel, DockPlacement::Center, window, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn active_tab_group(&self, window: &Window, cx: &App) -> Option<Entity<TabPanel>> {
+        let tabs = self.tab_groups(cx);
+        tabs.iter()
+            .find(|tab| Focusable::focus_handle(*tab, cx).contains_focused(window, cx))
+            .cloned()
+            .or_else(|| tabs.first().cloned())
     }
 
     /// Set the panel style of the dock area.
@@ -424,6 +517,7 @@ impl DockArea {
 
     /// Reset all docks
     pub fn reset(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.closed_panels.clear();
         self.left_dock = None;
         self.right_dock = None;
         self.bottom_dock = None;

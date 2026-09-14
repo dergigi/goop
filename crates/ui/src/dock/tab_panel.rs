@@ -13,7 +13,10 @@ use crate::button::{Button, ButtonVariants as _};
 use crate::dock::dock::DockPlacement;
 use crate::dock::panel::{Panel, PanelView};
 use crate::dock::stack_panel::StackPanel;
-use crate::dock::{ClosePanel, DockArea, PanelEvent, PanelStyle};
+use crate::dock::{
+    CloseAllPanels, ClosePanel, DockArea, NextPanel, PanelEvent, PanelStyle, PreviousPanel,
+    ReopenClosedPanel,
+};
 use crate::menu::{DropdownMenu, PopupMenu};
 use crate::tab::Tab;
 use crate::tab::tab_bar::TabBar;
@@ -306,8 +309,26 @@ impl TabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.closable || !panel.closable(cx) || !self.panels.contains(panel) {
+            return;
+        }
+        let tab = cx.entity().downgrade();
+        _ = self
+            .dock_area
+            .update(cx, |dock, _| dock.remember_closed(tab, panel.clone()));
         self.detach_panel(panel, window, cx);
         self.remove_self_if_empty(window, cx);
+        if self.panels.is_empty() {
+            window.focus(&self.focus_handle, cx);
+            let dock = self.dock_area.clone();
+            window.defer(cx, move |window, cx| {
+                if let Some(dock) = dock.upgrade()
+                    && let Some(tab) = dock.read(cx).active_tab_group(window, cx)
+                {
+                    window.focus(&Focusable::focus_handle(&tab, cx), cx);
+                }
+            });
+        }
 
         cx.emit(PanelEvent::ZoomOut);
         cx.emit(PanelEvent::LayoutChanged);
@@ -342,7 +363,7 @@ impl TabPanel {
 
     /// Check to remove self from the parent StackPanel, if there is no panel left
     fn remove_self_if_empty(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.panels.is_empty() {
+        if !self.panels.is_empty() || self.is_last_panel(cx) {
             return;
         }
 
@@ -450,8 +471,10 @@ impl TabPanel {
                         move |this, _window, cx| {
                             build_popup_menu(this, cx)
                                 .when(closable, |this| {
-                                    this.separator().menu("Close", Box::new(ClosePanel))
+                                    this.separator().menu("Close Tab", Box::new(ClosePanel))
                                 })
+                                .menu("Close All Tabs", Box::new(CloseAllPanels))
+                                .menu("Reopen Closed Tab", Box::new(ReopenClosedPanel))
                         }
                     })
                     .anchor(Anchor::TopRight),
@@ -1053,15 +1076,36 @@ impl TabPanel {
         }
     }
 
+    pub fn cycle(&mut self, backwards: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let visible: Vec<_> = self
+            .panels
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.visible(cx))
+            .map(|(i, _)| i)
+            .collect();
+        if visible.is_empty() {
+            return;
+        }
+        let current = visible
+            .iter()
+            .position(|i| *i == self.active_ix)
+            .unwrap_or(0);
+        let next = if backwards {
+            (current + visible.len() - 1) % visible.len()
+        } else {
+            (current + 1) % visible.len()
+        };
+        self.set_active_ix(visible[next], window, cx);
+    }
+
     fn on_action_close_panel(
         &mut self,
         _ev: &ClosePanel,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.panels.len() > 1
-            && let Some(panel) = self.active_panel(cx)
-        {
+        if let Some(panel) = self.active_panel(cx) {
             self.remove_panel(&panel, window, cx);
         }
     }
@@ -1086,20 +1130,24 @@ impl Render for TabPanel {
         let focus_handle = self.focus_handle(cx);
         let active_panel = self.active_panel(cx);
 
-        let mut state = TabState {
+        let state = TabState {
             closable: self.closable(cx),
             draggable: self.draggable(cx),
             droppable: self.droppable(cx),
             active_panel,
         };
 
-        if !state.draggable {
-            state.closable = false;
-        }
-
         div()
             .when(!self.collapsed, |this| {
                 this.on_action(cx.listener(Self::on_action_close_panel))
+                    .on_action(
+                        cx.listener(|this, _: &NextPanel, window, cx| {
+                            this.cycle(false, window, cx)
+                        }),
+                    )
+                    .on_action(cx.listener(|this, _: &PreviousPanel, window, cx| {
+                        this.cycle(true, window, cx)
+                    }))
             })
             .id("tab-panel")
             .track_focus(&focus_handle)

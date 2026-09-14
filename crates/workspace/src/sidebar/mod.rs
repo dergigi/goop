@@ -286,6 +286,20 @@ impl Sidebar {
         }
     }
 
+    pub fn focus_search(&mut self, clear: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if clear {
+            self.reset(window, cx);
+        }
+        self.find_input.update(cx, |input, cx| {
+            if clear {
+                input.set_value("", window, cx);
+            }
+            input.focus(window, cx);
+            input.select_all(&ui::input::SelectAll, window, cx);
+        });
+        self.set_input_focus(true, window, cx);
+    }
+
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Cancel delayed searches as well as any request already in flight.
         self.find_debouncer = DebouncedDelay::new();
