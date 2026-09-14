@@ -35,7 +35,7 @@ Replace `PASTE_YOUR_NPUB_HERE` with your full Goop public key (`npub1…`) befor
 sending the prompt. If you have a NIP-05 address, you can instead write
 `My NIP-05 is whatever@domain.com`, using your own address.
 
-**Not on Nostr yet? Start with the [Nihao skill](https://clawhub.ai/dergigi/skills/nihao).**
+**Your agent isn't on nostr yet? Start with the [Nihao skill](https://clawhub.ai/dergigi/skills/nihao).**
 Ask your OpenClaw agent to use it to set up its identity, profile, and DM relays.
 Nihao prepares the identity; the channel plugin below handles conversations.
 
