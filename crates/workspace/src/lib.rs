@@ -8,8 +8,9 @@ use common::{GoopImageCache, download_dir};
 use device::{DeviceEvent, DeviceRegistry};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
-    ParentElement, Render, SharedString, Styled, Subscription, Task, Window, div, image_cache, px,
+    Action, App, AppContext, Axis, Context, Entity, Focusable, InteractiveElement, IntoElement,
+    KeyBinding, ParentElement, Render, SharedString, Styled, Subscription, Task, Window, div,
+    image_cache, px,
 };
 use nostr_sdk::prelude::*;
 use person::{PersonRegistry, shorten_pubkey};
@@ -47,6 +48,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
     cx.bind_keys([
         KeyBinding::new(&format!("{modifier}-,"), Command::ShowSettings, None),
         KeyBinding::new(&format!("{modifier}-f"), Command::Search, None),
+        KeyBinding::new(&format!("{modifier}-b"), Command::ToggleSidebar, None),
         KeyBinding::new(&format!("{modifier}-k"), Command::SearchConversations, None),
         KeyBinding::new(&format!("{modifier}-p"), Command::SearchProfiles, None),
         KeyBinding::new(
@@ -83,6 +85,7 @@ enum Command {
     FocusComposer,
     NewConversation,
     ToggleTheme,
+    ToggleSidebar,
     Update,
     RefreshMessagingRelays,
     LoadOlderHistory,
@@ -269,8 +272,10 @@ impl Workspace {
             let tabs = DockItem::tabs(vec![greeter], None, &dock, window, cx);
             let center = DockItem::split(Axis::Vertical, vec![tabs], &dock, window, cx);
 
+            let sidebar = DockItem::panel(Arc::new(this.sidebar.clone()));
             this.dock.update(cx, |this, cx| {
                 this.set_center(center, window, cx);
+                this.set_left_dock(sidebar, Some(SIDEBAR_WIDTH), true, window, cx);
             });
         });
 
@@ -308,7 +313,21 @@ impl Workspace {
 
     fn on_command(&mut self, command: &Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
+            Command::ToggleSidebar => {
+                if Focusable::focus_handle(&self.sidebar, cx).contains_focused(window, cx) {
+                    self.dock
+                        .update(cx, |dock, cx| dock.focus_tab_panel(window, cx));
+                }
+                self.dock.update(cx, |dock, cx| {
+                    dock.toggle_dock(DockPlacement::Left, window, cx)
+                });
+            }
             Command::ShowInbox | Command::ShowRequests => {
+                if !self.dock.read(cx).is_dock_open(DockPlacement::Left, cx) {
+                    self.dock.update(cx, |dock, cx| {
+                        dock.toggle_dock(DockPlacement::Left, window, cx)
+                    });
+                }
                 let kind = if matches!(command, Command::ShowInbox) {
                     chat::RoomKind::Ongoing
                 } else {
@@ -370,7 +389,7 @@ impl Workspace {
                     self.dock.update(cx, |this, cx| {
                         this.add_panel(
                             Arc::new(profile::init(public_key, window, cx)),
-                            DockPlacement::Left,
+                            DockPlacement::Right,
                             window,
                             cx,
                         );
@@ -381,7 +400,7 @@ impl Workspace {
                 self.dock.update(cx, |this, cx| {
                     this.add_panel(
                         Arc::new(contact_list::init(window, cx)),
-                        DockPlacement::Left,
+                        DockPlacement::Right,
                         window,
                         cx,
                     );
@@ -391,7 +410,7 @@ impl Workspace {
                 self.dock.update(cx, |this, cx| {
                     this.add_panel(
                         Arc::new(messaging_relays::init(window, cx)),
-                        DockPlacement::Left,
+                        DockPlacement::Right,
                         window,
                         cx,
                     );
@@ -711,6 +730,7 @@ impl Workspace {
                                     Box::new(Command::SearchConversations),
                                 )
                                 .menu("Search profiles", Box::new(Command::SearchProfiles))
+                                .menu("Toggle sidebar", Box::new(Command::ToggleSidebar))
                                 .separator()
                                 .menu_with_icon(
                                     "Profile",
@@ -965,18 +985,7 @@ impl Render for Workspace {
                                     .child(self.titlebar_right(cx)),
                             )
                             // Main
-                            .child(
-                                h_flex()
-                                    .size_full()
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .h_full()
-                                            .w(SIDEBAR_WIDTH)
-                                            .child(self.sidebar.clone()),
-                                    )
-                                    .child(self.dock.clone()),
-                            ),
+                            .child(div().flex_1().min_h_0().w_full().child(self.dock.clone())),
                     ),
             )
             // Notifications

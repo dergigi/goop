@@ -687,13 +687,20 @@ impl DockArea {
                 }
             }
             DockPlacement::Right => {
-                self.set_right_dock(
-                    DockItem::tabs(vec![panel], None, &weak_self, window, cx),
-                    Some(px(320.)),
-                    true,
-                    window,
-                    cx,
-                );
+                if let Some(dock) = self.right_dock.as_ref() {
+                    dock.update(cx, |dock, cx| {
+                        dock.add_panel(panel, window, cx);
+                        dock.set_open(true, window, cx);
+                    });
+                } else {
+                    self.set_right_dock(
+                        DockItem::tabs(vec![panel], None, &weak_self, window, cx),
+                        Some(px(320.)),
+                        true,
+                        window,
+                        cx,
+                    );
+                }
             }
             DockPlacement::Center => {
                 self.items

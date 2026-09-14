@@ -10,6 +10,7 @@ Goop is designed for people who love the keyboard and would rather reach for a s
 
 Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 
+- **Cmd/Ctrl+B** — show or hide the conversation sidebar.
 - **Cmd/Ctrl+K** — instantly search loaded conversations, including message requests.
 - **Cmd/Ctrl+P** — instantly search loaded profiles by name, Nostr address, or public key.
 - **↑ / ↓**, **Enter**, **Esc** — choose a quick-search result, open it, or return to your previous focus.

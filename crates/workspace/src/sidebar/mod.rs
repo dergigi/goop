@@ -9,7 +9,7 @@ use gpui::{
 };
 use state::{IMAGE_CACHE_SIZE, NostrRegistry};
 use std::ops::Range;
-use theme::{ActiveTheme, SIDEBAR_WIDTH};
+use theme::{ActiveTheme};
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::scroll::Scrollbar;
@@ -212,7 +212,7 @@ impl Render for Sidebar {
             )
             .when(!loading && total_rooms == 0, |this| {
                 this.child(
-                    div().w(SIDEBAR_WIDTH).px_2().child(
+                    div().w_full().px_2().child(
                         v_flex()
                             .p_3()
                             .h_24()

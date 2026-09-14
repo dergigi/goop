@@ -13,6 +13,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Use a resizable left dock for Inbox/Requests, toggled with Cmd/Ctrl+B. Profile, contact, and relay settings open in the right dock without replacing other configuration tabs.
+
 - Hide chat history status and recovery controls behind a Message history toolbar toggle.
 
 - New Chat filters existing contacts immediately without relay text search. Explicit NIP-05 addresses, npubs, and nprofiles resolve directly; recipient selections survive filtering.
