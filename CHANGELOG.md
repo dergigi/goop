@@ -9,6 +9,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Drop files onto a chat to attach them to the draft, using the same upload flow as the + picker; multiple files upload in order.
 - A pinned sidebar footer with New Group, Relays, Help, and Settings; Cmd/Ctrl+Shift+N opens group creation directly.
 - Hold Cmd on macOS or Ctrl on Windows/Linux to show numbered hints on Inbox, Requests, and the message box.
 - Shortcuts for Contacts (Cmd/Ctrl+Shift+C), Profile (Cmd/Ctrl+Shift+P), Messaging Relays (Cmd/Ctrl+Shift+M), and Gossip Relays (Cmd/Ctrl+Shift+G), shown in menus and shortcut help.

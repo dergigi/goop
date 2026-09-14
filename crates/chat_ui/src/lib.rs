@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, RwLock};
 
 pub use actions::*;
-use anyhow::{Context as AnyhowContext, Error};
+use anyhow::Error;
 use chat::{ChatRegistry, Message, Room, RoomEvent, SendReport};
 use common::{TimestampExt, goop_cache};
 use gpui::prelude::FluentBuilder;
@@ -104,6 +105,7 @@ pub struct ChatPanel {
 
     /// Upload state
     uploading: bool,
+    pending_uploads: VecDeque<PathBuf>,
 
     /// Async operations
     tasks: Vec<Task<Result<(), Error>>>,
@@ -224,6 +226,7 @@ impl ChatPanel {
             reports_by_id,
             saving_outgoing: false,
             uploading: false,
+            pending_uploads: VecDeque::new(),
             subscriptions,
             tasks: vec![],
         }
@@ -333,6 +336,10 @@ impl ChatPanel {
     }
 
     fn send_text_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.uploading {
+            window.push_notification("Wait for attachments to finish uploading", cx);
+            return;
+        }
         // Get the message which includes all attachments
         let content = self.get_input_value(cx);
 
@@ -591,44 +598,55 @@ impl ChatPanel {
     }
 
     fn upload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Get the user's configured blossom server
-        let server = AppSettings::get_file_server(cx);
-
-        // Ask user for file upload
-        let path = cx.prompt_for_paths(PathPromptOptions {
+        let selection = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
-            multiple: false,
+            multiple: true,
             prompt: None,
         });
-
         self.tasks.push(cx.spawn_in(window, async move |this, cx| {
-            this.update(cx, |this, cx| {
-                this.set_uploading(true, cx);
-            })?;
+            match selection.await? {
+                Ok(Some(paths)) => this.update_in(cx, |this, window, cx| {
+                    this.upload_paths(paths, window, cx);
+                })?,
+                Ok(None) => {},
+                Err(error) => this.update_in(cx, |_, window, cx| {
+                    window.push_notification(Notification::error(error.to_string()), cx);
+                })?,
+            }
+            Ok(())
+        }));
+    }
 
-            let mut paths = path.await??.context("Not found")?;
-            let path = paths.pop().context("No path")?;
-
-            // Upload via blossom client
-            match upload(server, path, cx).await {
-                Ok(url) => {
-                    this.update_in(cx, |this, _window, cx| {
-                        this.add_attachment(url, cx);
+    fn upload_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_uploads.extend(paths);
+        if self.uploading || self.pending_uploads.is_empty() {
+            return;
+        }
+        let server = AppSettings::get_file_server(cx);
+        self.set_uploading(true, cx);
+        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let path = this.update(cx, |this, cx| {
+                    let path = this.pending_uploads.pop_front();
+                    if path.is_none() {
                         this.set_uploading(false, cx);
-                    })?;
-                }
-                Err(e) => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_uploading(false, cx);
+                    }
+                    path
+                })?;
+                let Some(path) = path else { break };
+                let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                match upload(server.clone(), path, cx).await {
+                    Ok(url) => this.update(cx, |this, cx| this.add_attachment(url, cx))?,
+                    Err(error) => this.update_in(cx, |_, window, cx| {
                         window.push_notification(
-                            Notification::error(e.to_string()).autohide(false),
+                            Notification::error(format!("Could not attach {filename}: {error}"))
+                                .autohide(false),
                             cx,
                         );
-                    })?;
+                    })?,
                 }
             }
-
             Ok(())
         }));
     }
@@ -1721,6 +1739,13 @@ impl Render for ChatPanel {
         }
         v_flex()
             .image_cache(goop_cache(self.id.clone(), 100))
+            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                this.upload_paths(paths.paths().to_vec(), window, cx);
+                this.focus_composer(window, cx);
+            }))
+            .drag_over::<gpui::ExternalPaths>(|style, _, _, cx| {
+                style.bg(cx.theme().ghost_element_hover)
+            })
             .on_action(cx.listener(Self::on_command))
             .on_action(cx.listener(Self::escape_find))
             .size_full()
