@@ -110,7 +110,7 @@ impl Panel for TabPanel {
 
         self.active_panel(cx)
             .map(|panel| panel.closable(cx))
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     fn zoomable(&self, cx: &App) -> bool {
@@ -120,7 +120,7 @@ impl Panel for TabPanel {
     }
 
     fn visible(&self, cx: &App) -> bool {
-        self.visible_panels(cx).next().is_some()
+        self.panels.is_empty() || self.visible_panels(cx).next().is_some()
     }
 
     fn popup_menu(&self, menu: PopupMenu, cx: &App) -> PopupMenu {
