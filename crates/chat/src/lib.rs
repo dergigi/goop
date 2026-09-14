@@ -305,7 +305,7 @@ impl ChatRegistry {
             return;
         };
         let client = nostr.read(cx).client();
-        let signer = nostr.read(cx).signer();
+        let signer = nostr.read(cx).signer().snapshot();
         let encryption = device::DeviceRegistry::global(cx).read(cx).signer(cx);
         let (queue, wake) = OutgoingQueue::new(client, owner, encryption);
         self.outgoing = Some(queue.clone());
@@ -706,6 +706,9 @@ impl ChatRegistry {
         self.history_task = None;
         self.decrypt_task = None;
         self.retry_task = None;
+        if let Some(queue) = &self.outgoing {
+            queue.stop();
+        }
         self.outgoing_task = None;
         self.outgoing = None;
         self.outgoing_reports.clear();

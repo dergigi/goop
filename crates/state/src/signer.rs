@@ -49,6 +49,16 @@ impl UniversalSigner {
         }
     }
 
+    /// Freeze the current signer for account-bound work. Later account switches
+    /// update the shared signer without changing this snapshot's identity.
+    pub fn snapshot(&self) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(
+                self.inner.read().expect("RwLock poisoned").clone(),
+            )),
+        }
+    }
+
     /// Swap the inner signer in-place. All clones see the new signer.
     pub fn swap_inner<T>(&self, new_signer: T)
     where

@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -12,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use settings::SignerKind;
 use state::{Announcement, UniversalSigner};
 
-use super::{SendReport, Signal, set_rumor};
+use super::{SendReport, Signal};
+use common::EventExt;
 
 const STORE_TAG: &str = "goop-outgoing-v1";
 
@@ -151,7 +153,13 @@ async fn save(root: &Path, record: &mut OutgoingMessage) -> Result<()> {
     temp.persist(dir.join(format!("{}.json", record.id())))
         .map_err(|e| e.error)?;
     #[cfg(unix)]
-    std::fs::File::open(&dir)?.sync_all()?;
+    {
+        std::fs::File::open(&dir)?.sync_all()?;
+        std::fs::File::open(root)?.sync_all()?;
+        if let Some(parent) = root.parent() {
+            std::fs::File::open(parent)?.sync_all()?;
+        }
+    }
     Ok(())
 }
 
@@ -163,6 +171,7 @@ pub(super) struct OutgoingQueue {
     wake: flume::Sender<()>,
     enqueue_lock: Arc<Mutex<()>>,
     encryption: Arc<RwLock<Option<UniversalSigner>>>,
+    active: Arc<AtomicBool>,
 }
 
 impl OutgoingQueue {
@@ -179,15 +188,38 @@ impl OutgoingQueue {
                 owner,
                 wake,
                 enqueue_lock: Arc::default(),
-                encryption: Arc::new(RwLock::new(encryption)),
+                encryption: Arc::new(RwLock::new(encryption.map(|signer| signer.snapshot()))),
+                active: Arc::new(AtomicBool::new(true)),
             },
             receiver,
         )
     }
 
     pub fn set_encryption_signer(&self, signer: Option<UniversalSigner>) {
-        *self.encryption.write().unwrap() = signer;
+        *self.encryption.write().unwrap() = signer.map(|signer| signer.snapshot());
         self.retry();
+    }
+
+    pub fn stop(&self) {
+        self.active.store(false, Ordering::SeqCst);
+        self.retry();
+    }
+
+    fn ensure_active(&self) -> Result<()> {
+        if !self.active.load(Ordering::SeqCst) {
+            bail!("Outgoing account is inactive");
+        }
+        Ok(())
+    }
+
+    pub async fn messages(&self, room: u64) -> Result<Vec<UnsignedEvent>> {
+        self.ensure_active()?;
+        Ok(load(&self.root, self.owner)
+            .await?
+            .into_iter()
+            .filter(|job| job.rumor.uniq_id() == room)
+            .map(|job| job.rumor)
+            .collect())
     }
 
     pub fn retry(&self) {
@@ -199,6 +231,7 @@ impl OutgoingQueue {
             bail!("Outgoing account changed");
         }
         let _guard = self.enqueue_lock.lock().await;
+        self.ensure_active()?;
         if let Some(existing) = load(&self.root, self.owner)
             .await?
             .into_iter()
@@ -220,15 +253,19 @@ impl OutgoingQueue {
         signals: flume::Sender<Signal>,
     ) -> Result<()> {
         let mut announced = BTreeMap::new();
-        loop {
-            // This task is cancelled on account changes. Also check before each pass
-            // because UniversalSigner can be swapped while a request is in flight.
+        let mut last_error = None;
+        while self.active.load(Ordering::SeqCst) {
             match self.process(&signer, &signals, &mut announced).await {
-                Ok(()) => {}
+                Ok(()) => last_error = None,
                 Err(error) => {
-                    signals
-                        .send_async(Signal::OutgoingError(error.to_string()))
-                        .await?;
+                    self.ensure_active()?;
+                    let error = error.to_string();
+                    if last_error.as_ref() != Some(&error) {
+                        signals
+                            .send_async(Signal::OutgoingError(error.clone()))
+                            .await?;
+                        last_error = Some(error);
+                    }
                 }
             }
             let next = wake.recv_async().fuse();
@@ -236,6 +273,7 @@ impl OutgoingQueue {
             futures::pin_mut!(next, timer);
             futures::select! { result = next => { result?; }, _ = timer => {} }
         }
+        Ok(())
     }
 
     async fn process(
@@ -244,10 +282,11 @@ impl OutgoingQueue {
         signals: &flume::Sender<Signal>,
         announced: &mut BTreeMap<EventId, u64>,
     ) -> Result<()> {
+        self.ensure_active()?;
         for mut message in load(&self.root, self.owner).await? {
-            // Cached plaintext also restores conversations before any relay accepts a copy.
+            self.ensure_active()?;
+            // Restore only this account's conversation state from its local queue.
             if announced.get(&message.id()) != Some(&message.revision) {
-                set_rumor(&self.client, message.id(), &message.rumor).await?;
                 signals
                     .send_async(Signal::Outgoing(message.clone()))
                     .await?;
@@ -260,7 +299,14 @@ impl OutgoingQueue {
                 if message.destinations[index].complete() {
                     continue;
                 }
-                if signer.get_public_key_async().await? != self.owner {
+                self.ensure_active()?;
+                let signing_owner = async_utility::time::timeout(
+                    Some(Duration::from_secs(30)),
+                    signer.get_public_key_async(),
+                )
+                .await
+                .ok_or_else(|| anyhow!("Signer identity request timed out"))??;
+                if signing_owner != self.owner {
                     bail!("Outgoing account changed");
                 }
                 if message.destinations[index].wrap.is_none() {
@@ -271,6 +317,7 @@ impl OutgoingQueue {
                     )
                     .await
                     .unwrap_or_else(|| Err(anyhow!("Signer preparation timed out")));
+                    self.ensure_active()?;
                     match result {
                         Ok(wrap) => {
                             message.destinations[index].wrap = Some(wrap);
@@ -284,6 +331,7 @@ impl OutgoingQueue {
                     save(&self.root, &mut message).await?;
                 }
                 if message.destinations[index].wrap.is_some() {
+                    self.ensure_active()?;
                     publish(&self.client, &mut message.destinations[index]).await;
                     save(&self.root, &mut message).await?;
                 }
@@ -665,6 +713,20 @@ mod tests {
                 .iter()
                 .all(|d| d.wrap.is_none() && d.error.is_some())
         );
+        let room = saved.rumor.uniq_id();
+        assert_eq!(first.messages(room).await.unwrap().len(), 1);
+        let other_account = queue(first_client.clone(), recipient.public_key(), dir.path());
+        assert!(other_account.messages(room).await.unwrap().is_empty());
+        assert!(
+            first_client
+                .database()
+                .query(Filter::new().kind(Kind::ApplicationSpecificData))
+                .await
+                .unwrap()
+                .is_empty(),
+            "queued plaintext must not enter the shared relay cache"
+        );
+
         first_client.shutdown().await;
         let second_client = client(&discovery.url().await).await;
         let second = queue(second_client.clone(), owner.public_key(), dir.path());
@@ -715,5 +777,122 @@ mod tests {
         let queue = queue(client.clone(), owner.public_key(), &bad_path);
         assert!(queue.enqueue(message).await.is_err());
         client.shutdown().await;
+    }
+    #[derive(Debug)]
+    struct PausingSigner {
+        signer: UniversalSigner,
+        started: flume::Sender<()>,
+        resume: flume::Receiver<()>,
+    }
+    impl AsyncGetPublicKey for PausingSigner {
+        type Error = <UniversalSigner as AsyncGetPublicKey>::Error;
+        fn get_public_key_async(
+            &self,
+        ) -> futures::future::BoxFuture<'_, std::result::Result<PublicKey, Self::Error>> {
+            self.signer.get_public_key_async()
+        }
+    }
+    impl AsyncSignEvent for PausingSigner {
+        type Error = <UniversalSigner as AsyncSignEvent>::Error;
+        fn sign_event_async(
+            &self,
+            event: UnsignedEvent,
+        ) -> futures::future::BoxFuture<'_, std::result::Result<Event, Self::Error>> {
+            Box::pin(async move {
+                self.started.send_async(()).await.unwrap();
+                self.resume.recv_async().await.unwrap();
+                self.signer.sign_event_async(event).await
+            })
+        }
+    }
+    impl AsyncNip44 for PausingSigner {
+        type Error = <UniversalSigner as AsyncNip44>::Error;
+        fn nip44_encrypt_async<'a>(
+            &'a self,
+            key: &'a PublicKey,
+            content: &'a str,
+        ) -> futures::future::BoxFuture<'a, std::result::Result<String, Self::Error>> {
+            self.signer.nip44_encrypt_async(key, content)
+        }
+        fn nip44_decrypt_async<'a>(
+            &'a self,
+            key: &'a PublicKey,
+            content: &'a str,
+        ) -> futures::future::BoxFuture<'a, std::result::Result<String, Self::Error>> {
+            self.signer.nip44_decrypt_async(key, content)
+        }
+    }
+
+    #[tokio::test]
+    async fn account_stop_during_preparation_leaves_intent_without_publishing() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let dir = tempfile::tempdir().unwrap();
+            let owner = Keys::generate();
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .build();
+            let queue = queue(client.clone(), owner.public_key(), dir.path());
+            let original = message(&owner, &[Keys::generate().public_key()]);
+            queue.enqueue(original.clone()).await.unwrap();
+            let (started_tx, started_rx) = flume::bounded(1);
+            let (resume_tx, resume_rx) = flume::bounded(1);
+            let signer = UniversalSigner::new(PausingSigner {
+                signer: UniversalSigner::new(owner.clone()),
+                started: started_tx,
+                resume: resume_rx,
+            });
+            let worker_queue = queue.clone();
+            let (signals, _rx) = flume::unbounded();
+            let worker = tokio::spawn(async move {
+                worker_queue
+                    .process(&signer, &signals, &mut BTreeMap::new())
+                    .await
+            });
+            started_rx.recv_async().await.unwrap();
+            queue.stop();
+            resume_tx.send_async(()).await.unwrap();
+            assert!(
+                worker
+                    .await
+                    .unwrap()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("inactive")
+            );
+            assert!(queue.enqueue(original).await.is_err());
+            let retained = load(dir.path(), owner.public_key()).await.unwrap();
+            assert_eq!(retained.len(), 1);
+            assert!(
+                retained[0]
+                    .destinations
+                    .iter()
+                    .all(|d| d.wrap.is_none() && d.accepted.is_empty())
+            );
+            client.shutdown().await;
+        })
+        .await
+        .expect("stopped preparation must not continue delivering");
+    }
+
+    #[tokio::test]
+    async fn outgoing_signer_snapshot_does_not_follow_account_switches() {
+        let original = Keys::generate();
+        let replacement = Keys::generate();
+        let signer = UniversalSigner::new(original.clone());
+        let snapshot = signer.snapshot();
+        signer.swap_inner(replacement.clone());
+        assert_eq!(
+            signer.get_public_key_async().await.unwrap(),
+            replacement.public_key()
+        );
+        assert_eq!(
+            snapshot.get_public_key_async().await.unwrap(),
+            original.public_key()
+        );
+        let unsigned =
+            EventBuilder::new(Kind::Seal, "test").finalize_unsigned(original.public_key());
+        let event = snapshot.sign_event_async(unsigned).await.unwrap();
+        assert_eq!(event.pubkey, original.public_key());
+        event.verify().unwrap();
     }
 }
