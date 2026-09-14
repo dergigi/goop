@@ -85,7 +85,7 @@ impl Render for GreeterPanel {
                                     (
                                         "set-up-agents",
                                         "Set up your agents to message you",
-                                        IconName::Link,
+                                        IconName::Robot,
                                         Command::SetUpAgents,
                                     ),
                                     (
