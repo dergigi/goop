@@ -69,6 +69,8 @@ enum Command {
     ToggleTheme,
     Update,
     RefreshMessagingRelays,
+    LoadOlderHistory,
+    RetryDecryption,
     BackupEncryption,
     ImportEncryption,
     RefreshEncryption,
@@ -338,6 +340,12 @@ impl Workspace {
                         cx,
                     );
                 });
+            }
+            Command::LoadOlderHistory => {
+                ChatRegistry::global(cx).update(cx, |chat, cx| chat.load_older_history(cx))
+            }
+            Command::RetryDecryption => {
+                ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_failed_messages(cx))
             }
             Command::RefreshMessagingRelays => {
                 let chat = ChatRegistry::global(cx);
@@ -749,40 +757,45 @@ impl Workspace {
                     .small()
                     .ghost()
                     .dropdown_menu(move |this, _window, cx| {
-                        let urls: Vec<(SharedString, SharedString)> = profile
-                            .messaging_relays()
-                            .iter()
-                            .map(|url| {
-                                (
-                                    SharedString::from(url.to_string()),
-                                    chat.read(cx).count_messages(url).to_string().into(),
+                        let registry = chat.read(cx);
+                        let mut menu = this
+                            .min_w(px(320.))
+                            .label("Message History")
+                            .label(registry.history_summary(cx));
+                        for (url, progress) in registry.history_relays() {
+                            let url = SharedString::from(url.to_string());
+                            let status = if let Some(error) = &progress.error {
+                                format!("{} received · {error}", progress.received)
+                            } else {
+                                format!(
+                                    "{} received · {}",
+                                    progress.received,
+                                    if progress.done {
+                                        "History checked"
+                                    } else {
+                                        "Loading…"
+                                    }
                                 )
-                            })
-                            .collect();
-
-                        // Header
-                        let menu = this.min_w(px(260.)).label("Messaging Relays");
-
-                        // Content
-                        let menu = urls.into_iter().fold(menu, |this, (url, count)| {
-                            this.item(PopupMenuItem::element(move |_window, cx| {
-                                h_flex()
+                            };
+                            menu = menu.item(PopupMenuItem::element(move |_, cx| {
+                                v_flex()
+                                    .gap_1()
                                     .px_1()
-                                    .w_full()
-                                    .text_sm()
-                                    .justify_between()
+                                    .text_xs()
+                                    .text_color(cx.theme().text_muted)
                                     .child(url.clone())
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().text_muted)
-                                            .child(count.clone()),
-                                    )
-                            }))
-                        });
+                                    .child(status.clone())
+                            }));
+                        }
 
                         // Footer
                         menu.separator()
+                            .menu("Load older history", Box::new(Command::LoadOlderHistory))
+                            .menu(
+                                "Retry failed decryptions",
+                                Box::new(Command::RetryDecryption),
+                            )
+                            .separator()
                             .menu_with_icon(
                                 "Manage gossip relays",
                                 IconName::Relay,

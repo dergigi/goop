@@ -554,7 +554,7 @@ impl Render for Sidebar {
                     Input::new(&self.find_input)
                         .small()
                         .text_xs()
-                        .disabled(loading)
+                        .disabled(restoring)
                         .when(!self.find_input.read(cx).value().is_empty(), |this| {
                             this.suffix(
                                 Button::new("clear-search")

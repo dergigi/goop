@@ -118,6 +118,13 @@ impl ChatPanel {
         // Define list of messages
         let messages = Vec::new();
         let list_state = ListState::new(messages.len(), ListAlignment::Bottom, px(1024.));
+        list_state.set_scroll_handler(|event, window, cx| {
+            if event.is_scrolled && event.visible_range.start == 0 {
+                window.defer(cx, |_, cx| {
+                    ChatRegistry::global(cx).update(cx, |chat, cx| chat.ensure_history(cx))
+                });
+            }
+        });
 
         // Get room id and name
         let (id, name) = room
@@ -144,6 +151,7 @@ impl ChatPanel {
 
         // Define subscriptions
         let mut subscriptions = smallvec![];
+        subscriptions.push(cx.observe(&ChatRegistry::global(cx), |_, _, cx| cx.notify()));
 
         subscriptions.push(
             // Subscribe the chat input event
@@ -186,6 +194,7 @@ impl ChatPanel {
             this.handle_notifications(cx);
             this.subscribe_room_events(window, cx);
             this.get_messages(window, cx);
+            ChatRegistry::global(cx).update(cx, |chat, cx| chat.ensure_history(cx));
         });
 
         Self {
@@ -308,7 +317,7 @@ impl ChatPanel {
                         } else {
                             this.insert_message(message, false, cx);
 
-                            if !window.is_window_active() {
+                            if !message.historical && !window.is_window_active() {
                                 cx.show_system_notification(SystemNotification {
                                     tag: "message".into(),
                                     title: "New Message".into(),
@@ -526,7 +535,6 @@ impl ChatPanel {
     where
         E: Into<Message>,
     {
-        let old_len = self.messages.len();
         let msg: Message = m.into();
 
         if let Err(pos) = self.messages.binary_search(&msg) {
@@ -535,7 +543,7 @@ impl ChatPanel {
             for (i, message) in self.messages.iter().enumerate().skip(pos) {
                 self.message_index.insert(message.id, i);
             }
-            self.list_state.splice(old_len..old_len, 1);
+            self.list_state.splice(pos..pos, 1);
 
             if scroll {
                 self.list_state.scroll_to(ListOffset {
@@ -854,6 +862,39 @@ impl ChatPanel {
     fn open_njump(&mut self, public_key: &PublicKey, cx: &mut Context<Self>) {
         let content = format!("https://njump.me/{}", public_key.to_bech32().unwrap());
         cx.open_url(&content);
+    }
+
+    fn render_history_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chat = ChatRegistry::global(cx);
+        let chat = chat.read(cx);
+        h_flex()
+            .px_3()
+            .py_1()
+            .gap_2()
+            .text_xs()
+            .text_color(cx.theme().text_muted)
+            .child(div().flex_1().child(chat.history_summary(cx)))
+            .child(
+                Button::new("older-history")
+                    .label("Load older history")
+                    .small()
+                    .ghost()
+                    .disabled(chat.history_running())
+                    .on_click(|_, _, cx| {
+                        ChatRegistry::global(cx).update(cx, |chat, cx| chat.load_older_history(cx))
+                    }),
+            )
+            .child(
+                Button::new("retry-decryption")
+                    .label("Retry failed")
+                    .small()
+                    .ghost()
+                    .disabled(chat.count_trash_messages(cx) == 0)
+                    .on_click(|_, _, cx| {
+                        ChatRegistry::global(cx)
+                            .update(cx, |chat, cx| chat.retry_failed_messages(cx))
+                    }),
+            )
     }
 
     fn render_announcement(&self, cx: &Context<Self>) -> AnyElement {
@@ -1667,6 +1708,7 @@ impl Render for ChatPanel {
             .image_cache(goop_cache(self.id.clone(), 100))
             .on_action(cx.listener(Self::on_command))
             .size_full()
+            .child(self.render_history_controls(cx))
             .when(*self.subject_bar.read(cx), |this| {
                 this.child(
                     h_flex()
