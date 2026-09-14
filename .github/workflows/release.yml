@@ -91,6 +91,13 @@ jobs:
           cargo install cargo-packager --locked
           cargo packager --release
 
+      - name: Seal macOS bundles and rebuild disk images
+        if: runner.os == 'macOS'
+        run: |
+          for installer in dist/*.dmg; do
+            bash script/sign-macos-dmg "$installer"
+          done
+
       - name: Name Windows/macOS installers
         if: runner.os != 'Linux'
         shell: bash

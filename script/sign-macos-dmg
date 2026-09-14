@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Seal an unsigned Goop bundle and rebuild its installer without a developer certificate.
+set -euo pipefail
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <installer.dmg>" >&2
+  exit 1
+fi
+installer=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
+staging=$(mktemp -d)
+mounted=false
+cleanup() {
+  if [[ "$mounted" == true ]]; then
+    hdiutil detach "$staging/mount" >/dev/null || true
+  fi
+  rm -rf "$staging"
+}
+trap cleanup EXIT
+mkdir "$staging/mount" "$staging/image"
+hdiutil attach "$installer" -readonly -nobrowse -mountpoint "$staging/mount" >/dev/null
+mounted=true
+ditto "$staging/mount/Goop.app" "$staging/image/Goop.app"
+hdiutil detach "$staging/mount" >/dev/null
+mounted=false
+codesign --force --sign - "$staging/image/Goop.app"
+codesign --verify --deep --strict "$staging/image/Goop.app"
+ln -s /Applications "$staging/image/Applications"
+hdiutil create -volname Goop -srcfolder "$staging/image" -format UDZO "$staging/verified.dmg" >/dev/null
+mv "$staging/verified.dmg" "$installer"
+echo "Sealed and verified $installer"
