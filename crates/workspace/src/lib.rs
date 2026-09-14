@@ -8,8 +8,8 @@ use common::{GoopImageCache, download_dir};
 use device::{DeviceEvent, DeviceRegistry};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Subscription, Task, Window, div, image_cache, px,
+    Action, App, AppContext, Axis, Context, Entity, InteractiveElement, IntoElement, KeyBinding,
+    ParentElement, Render, SharedString, Styled, Subscription, Task, Window, div, image_cache, px,
 };
 use nostr_sdk::prelude::*;
 use person::{PersonRegistry, shorten_pubkey};
@@ -35,6 +35,17 @@ mod panels;
 mod sidebar;
 
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
+    let settings_shortcut = if cx.theme().platform.is_mac() {
+        "cmd-,"
+    } else {
+        "ctrl-,"
+    };
+    cx.bind_keys([KeyBinding::new(
+        settings_shortcut,
+        Command::ShowSettings,
+        None,
+    )]);
+
     cx.new(|cx| Workspace::new(window, cx))
 }
 
