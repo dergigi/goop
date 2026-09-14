@@ -6,8 +6,8 @@ use chat::{ChatRegistry, Room, RoomKind};
 use common::{DebouncedDelay, goop_cache};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
-    Task, UniformListScrollHandle, Window, div, uniform_list,
+    App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    Styled, Subscription, Task, UniformListScrollHandle, Window, div, uniform_list,
 };
 use instant::Duration;
 use nostr_sdk::prelude::*;
@@ -72,11 +72,32 @@ fn matches_contact(person: &Person, query: &str) -> bool {
         .all(|word| text.contains(word))
 }
 
+/// Keep navigation on the same person when results reorder; clamp like Cmd+K.
+fn contact_selection(
+    visible: &[PublicKey],
+    current: Option<PublicKey>,
+    down: Option<bool>,
+) -> Option<PublicKey> {
+    if visible.is_empty() {
+        return None;
+    }
+    let index = current
+        .and_then(|key| visible.iter().position(|item| *item == key))
+        .unwrap_or(0);
+    let index = match down {
+        Some(true) => (index + 1).min(visible.len() - 1),
+        Some(false) => index.saturating_sub(1),
+        None => index,
+    };
+    Some(visible[index])
+}
+
 /// Local contact filtering, with direct resolution for explicit identifiers.
 struct NewChat {
     input: Entity<InputState>,
     contacts: Vec<PublicKey>,
     visible: Vec<PublicKey>,
+    highlighted: Option<PublicKey>,
     selected: HashSet<PublicKey>,
     group_mode: bool,
     resolved: Option<PublicKey>,
@@ -101,7 +122,11 @@ impl NewChat {
                 InputEvent::Change => this.query_changed(window, cx),
                 InputEvent::PressEnter { .. } => {
                     this.debounce = DebouncedDelay::new();
-                    this.resolve(window, cx);
+                    if let Some(key) = this.highlighted {
+                        this.activate_contact(key, window, cx);
+                    } else {
+                        this.resolve(window, cx);
+                    }
                 }
                 _ => {}
             }),
@@ -148,6 +173,7 @@ impl NewChat {
             input,
             contacts: Vec::new(),
             visible: Vec::new(),
+            highlighted: None,
             selected: HashSet::new(),
             group_mode: false,
             resolved: None,
@@ -189,6 +215,7 @@ impl NewChat {
             self.visible.retain(|other| *other != key);
             self.visible.insert(0, key);
         }
+        self.highlighted = contact_selection(&self.visible, self.highlighted, None);
         cx.notify();
     }
 
@@ -196,6 +223,7 @@ impl NewChat {
         self.debounce = DebouncedDelay::new();
         self.resolution = None;
         self.resolved = None;
+        self.highlighted = None;
         self.error = None;
         self.input
             .update(cx, |input, cx| input.set_loading(false, cx));
@@ -258,6 +286,31 @@ impl NewChat {
         }
     }
 
+    fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
+        self.highlighted = contact_selection(&self.visible, self.highlighted, Some(down));
+        if let Some(index) = self
+            .highlighted
+            .and_then(|key| self.visible.iter().position(|item| *item == key))
+        {
+            self.scroll.scroll_to_item(index, gpui::ScrollStrategy::Top);
+        }
+        cx.notify();
+    }
+
+    fn activate_contact(&mut self, key: PublicKey, window: &mut Window, cx: &mut Context<Self>) {
+        self.highlighted = Some(key);
+        if self.group_mode {
+            if !self.selected.insert(key) {
+                self.selected.remove(&key);
+            }
+            cx.notify();
+        } else {
+            self.selected.clear();
+            self.selected.insert(key);
+            self.create_room(window, cx);
+        }
+    }
+
     fn create_room(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(user) = NostrRegistry::global(cx).read(cx).current_user() else {
             return;
@@ -299,17 +352,9 @@ impl NewChat {
                     .name(person.name())
                     .avatar(person.avatar())
                     .selected(self.selected.contains(&key))
+                    .highlighted(self.highlighted == Some(key))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if this.group_mode {
-                            if !this.selected.insert(key) {
-                                this.selected.remove(&key);
-                            }
-                            cx.notify();
-                        } else {
-                            this.selected.clear();
-                            this.selected.insert(key);
-                            this.create_room(window, cx);
-                        }
+                        this.activate_contact(key, window, cx);
                     }))
                     .into_any_element()
             })
@@ -335,10 +380,26 @@ pub fn open(window: &mut Window, cx: &mut App) {
 impl Render for NewChat {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .capture_action(
+                cx.listener(|this, _: &ui::input::MoveUp, _, cx| this.move_selection(false, cx)),
+            )
+            .capture_action(
+                cx.listener(|this, _: &ui::input::MoveDown, _, cx| this.move_selection(true, cx)),
+            )
             .h(gpui::px(440.))
             .gap_3()
             .image_cache(goop_cache("new-chat", IMAGE_CACHE_SIZE))
             .child(Input::new(&self.input))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().text_muted)
+                    .child(if self.group_mode {
+                        "↑ ↓ to choose · Enter to select · Esc to close"
+                    } else {
+                        "↑ ↓ to choose · Enter to open · Esc to return"
+                    }),
+            )
             .when_some(self.error.clone(), |view, error| {
                 view.child(div().text_sm().child(error))
             })
@@ -404,6 +465,31 @@ impl Render for NewChat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_selection_survives_reordering_and_clamps_to_results() {
+        let alice = Keys::generate().public_key();
+        let bob = Keys::generate().public_key();
+        assert_eq!(contact_selection(&[alice, bob], None, None), Some(alice));
+        assert_eq!(
+            contact_selection(&[alice, bob], Some(alice), Some(true)),
+            Some(bob)
+        );
+        assert_eq!(
+            contact_selection(&[alice, bob], Some(bob), Some(true)),
+            Some(bob)
+        );
+        assert_eq!(
+            contact_selection(&[alice, bob], Some(alice), Some(false)),
+            Some(alice)
+        );
+        assert_eq!(
+            contact_selection(&[bob, alice], Some(alice), None),
+            Some(alice)
+        );
+        assert_eq!(contact_selection(&[bob], Some(alice), None), Some(bob));
+        assert_eq!(contact_selection(&[], Some(alice), Some(true)), None);
+    }
 
     #[test]
     fn ordinary_names_never_trigger_resolution() {

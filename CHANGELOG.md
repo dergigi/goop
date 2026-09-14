@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Navigate New Chat with Up/Down and Enter, matching conversation search. Enter selects recipients in group mode.
+
 ### Fixed
 
 - Hide a sidebar when its final tab closes, including its resize handle and empty toggle. Reopening a tab restores its sidebar.

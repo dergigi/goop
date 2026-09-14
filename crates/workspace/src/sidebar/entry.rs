@@ -26,6 +26,7 @@ pub struct RoomEntry {
     created_at: Option<SharedString>,
     kind: Option<RoomKind>,
     selected: bool,
+    highlighted: bool,
     #[allow(clippy::type_complexity)]
     handler: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
 }
@@ -42,6 +43,7 @@ impl RoomEntry {
             kind: None,
             handler: None,
             selected: false,
+            highlighted: false,
         }
     }
 
@@ -72,6 +74,11 @@ impl RoomEntry {
 
     pub fn kind(mut self, kind: RoomKind) -> Self {
         self.kind = Some(kind);
+        self
+    }
+
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
         self
     }
 
@@ -115,6 +122,7 @@ impl RenderOnce for RoomEntry {
             .gap_2()
             .text_sm()
             .rounded(cx.theme().radius)
+            .when(self.highlighted, |row| row.bg(cx.theme().element_active))
             .when(!hide_avatar, |this| {
                 this.when_some(self.avatar, |this, avatar| {
                     this.child(Avatar::new(avatar).small().flex_shrink_0())
