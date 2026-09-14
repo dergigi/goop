@@ -8,6 +8,37 @@ use common::EventExt;
 use futures::lock::Mutex;
 use nostr_sdk::prelude::*;
 
+pub(super) fn local_keys() -> Result<Keys> {
+    #[cfg(test)]
+    {
+        Ok(crate::LOCAL_KEYS.clone())
+    }
+    #[cfg(not(test))]
+    {
+        load_local_keys(common::config_dir())
+    }
+}
+
+fn load_local_keys(dir: &std::path::Path) -> Result<Keys> {
+    // This is an internal cache-signing key, never an identity signer or relay credential.
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("rumor-cache-key-v1");
+    if !path.exists() {
+        let keys = Keys::generate();
+        let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+        temp.write_all(&keys.secret_key().to_secret_bytes())?;
+        temp.as_file().sync_all()?;
+        if let Err(error) = temp.persist_noclobber(&path)
+            && error.error.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(error.error.into());
+        }
+        #[cfg(unix)]
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    Ok(Keys::new(SecretKey::from_slice(&std::fs::read(path)?)?))
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct RumorCache {
     client: Client,
@@ -20,24 +51,7 @@ pub(super) struct RumorCache {
 
 impl RumorCache {
     pub fn open(client: Client, owner: PublicKey) -> Result<Self> {
-        // This is an internal cache-signing key, never an identity signer or relay credential.
-        let dir = common::config_dir();
-        std::fs::create_dir_all(dir)?;
-        let path = dir.join("rumor-cache-key-v1");
-        if !path.exists() {
-            let keys = Keys::generate();
-            let mut temp = tempfile::NamedTempFile::new_in(dir)?;
-            temp.write_all(&keys.secret_key().to_secret_bytes())?;
-            temp.as_file().sync_all()?;
-            if let Err(error) = temp.persist_noclobber(&path)
-                && error.error.kind() != std::io::ErrorKind::AlreadyExists
-            {
-                return Err(error.error.into());
-            }
-            #[cfg(unix)]
-            std::fs::File::open(dir)?.sync_all()?;
-        }
-        let keys = Keys::new(SecretKey::from_slice(&std::fs::read(path)?)?);
+        let keys = local_keys()?;
         Ok(Self::with_keys(client, owner, keys))
     }
 
@@ -409,6 +423,25 @@ mod tests {
             2
         );
         client.shutdown().await;
+    }
+
+    #[test]
+    fn local_provenance_key_survives_restart_with_private_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = load_local_keys(dir.path()).unwrap();
+        assert_eq!(
+            load_local_keys(dir.path()).unwrap().public_key(),
+            first.public_key()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.path().join("rumor-cache-key-v1"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o077, 0);
+        }
     }
 
     #[test]

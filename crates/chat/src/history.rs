@@ -7,7 +7,7 @@ use futures::StreamExt;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{LOCAL_KEYS, Signal};
+use super::{Signal, cache::local_keys};
 
 const PAGE_SIZE: usize = 256;
 const MAX_PAGE_SIZE: usize = 4096;
@@ -36,25 +36,30 @@ fn checkpoint_key(user: PublicKey, relay: &RelayUrl) -> String {
 }
 
 async fn read_checkpoint(client: &Client, key: &str) -> Result<Option<Checkpoint>> {
+    let keys = local_keys()?;
     Ok(client
         .database()
         .query(
             Filter::new()
                 .kind(Kind::ApplicationSpecificData)
+                .author(keys.public_key())
                 .identifier(key),
         )
         .await?
         .into_iter()
+        .filter(|event| event.verify().is_ok())
         .filter_map(|event| serde_json::from_str::<Checkpoint>(&event.content).ok())
         .max_by_key(|checkpoint| checkpoint.revision))
 }
 
 async fn save_checkpoint(client: &Client, key: &str, checkpoint: &mut Checkpoint) -> Result<()> {
+    let keys = local_keys()?;
     let old = client
         .database()
         .query(
             Filter::new()
                 .kind(Kind::ApplicationSpecificData)
+                .author(keys.public_key())
                 .identifier(key),
         )
         .await?;
@@ -73,7 +78,7 @@ async fn save_checkpoint(client: &Client, key: &str, checkpoint: &mut Checkpoint
     )
     .custom_created_at(Timestamp::from(created_at))
     .tag(Tag::identifier(key))
-    .finalize_async(&*LOCAL_KEYS)
+    .finalize_async(&keys)
     .await?;
     // Persist the replacement before deleting previous revisions.
     if !client.database().save_event(&event).await?.is_success() {
@@ -335,6 +340,49 @@ mod tests {
         );
         assert!(advance(&vec![event(80); MAX_PAGE_SIZE], 80, MAX_PAGE_SIZE).is_err());
     }
+    #[tokio::test]
+    async fn unrelated_records_cannot_inject_or_replace_history_checkpoints() {
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let owner = Keys::generate().public_key();
+        let key = checkpoint_key(owner, &RelayUrl::parse("wss://example.com").unwrap());
+        let mut checkpoint = Checkpoint {
+            revision: 9000,
+            head: 100,
+            until: 0,
+            complete: true,
+        };
+        let foreign = EventBuilder::new(
+            Kind::ApplicationSpecificData,
+            serde_json::to_string(&checkpoint).unwrap(),
+        )
+        .tag(Tag::identifier(&key))
+        .finalize(&Keys::generate())
+        .unwrap();
+        client.database().save_event(&foreign).await.unwrap();
+        assert!(read_checkpoint(&client, &key).await.unwrap().is_none());
+        checkpoint.revision = 0;
+        checkpoint.until = 50;
+        checkpoint.complete = false;
+        save_checkpoint(&client, &key, &mut checkpoint)
+            .await
+            .unwrap();
+        let loaded = read_checkpoint(&client, &key).await.unwrap().unwrap();
+        assert_eq!(loaded.until, 50);
+        assert!(!loaded.complete);
+        assert_eq!(
+            client
+                .database()
+                .query(Filter::new().id(foreign.id))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        client.shutdown().await;
+    }
+
     #[test]
     fn checkpoints_are_account_and_relay_specific() {
         let a = Keys::generate().public_key();

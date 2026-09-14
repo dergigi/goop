@@ -1,6 +1,8 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
-use std::sync::{Arc, LazyLock, RwLock};
+#[cfg(test)]
+use std::sync::LazyLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Error, anyhow};
 use common::EventExt;
@@ -31,7 +33,8 @@ mod room;
 pub use message::*;
 pub use room::*;
 
-/// A static keypair used only for signing locally-cached rumor events.
+/// Test-only local provenance key; production uses its persisted cache key.
+#[cfg(test)]
 static LOCAL_KEYS: LazyLock<Keys> = LazyLock::new(Keys::generate);
 
 pub fn init(window: &mut Window, cx: &mut App) {

@@ -14,7 +14,7 @@ The agreed scope remains NIP-17, external identity signers, and history from the
 - [x] Attempt the sender copy independently of recipient delivery; display partial delivery and retry controls.
 - [x] Keep outgoing jobs and queued plaintext account-scoped and separate from the relay database. Stop work on account changes and freeze in-flight signing identity (`988b4a3`).
 
-The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 27 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. It has not yet been rebuilt and installed with these changes.
+The outgoing implementation is covered by disk-backed restart tests, controlled relay rejection, signer interruption, account-switch cancellation, and prevention of relay-database queue injection. The chat suite currently has 29 passing tests. The desktop application passes `cargo check --locked -p goop --features gpui_macos/runtime_shaders` on the development Mac. It has not yet been rebuilt and installed with these changes.
 
 ## Remaining implementation and regression coverage
 
@@ -40,3 +40,5 @@ Do not publish solely because the implementation checklist is complete. The rele
 Incoming cache migration preserves raw encrypted events and rebuilds verified account-scoped records by replaying them through the signer. Legacy plaintext records lack reliable account/provenance information and are not read. The first upgraded startup can therefore require extra decryption work. Regression tests cover legacy replay, untrusted cache records, account isolation, concurrent duplicate wraps, and group reactions arriving before their target.
 
 Signer refusal recovery is covered for incoming worker restarts and outgoing queue restarts/reconnection, with one request before refusal and no additional signing until explicit retry. The state suite has 6 passing tests, including typed signer-error classification. No real external-signer or cross-client interactive test has been claimed.
+
+History checkpoints now require the persistent local provenance key as well as their account/relay identifier. Old or unrelated signed database records cannot mark history complete or replace trusted progress. Untrusted legacy checkpoints are ignored, causing a fresh scan of the existing inbox relays; retained ciphertext and the verified rumor cache prevent message loss/duplication during this rescan. Tests cover checkpoint injection and persistence/private permissions of the local cache key.
