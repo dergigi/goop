@@ -81,6 +81,7 @@ enum Command {
     Update,
     RefreshMessagingRelays,
     LoadOlderHistory,
+    SearchOtherRelays,
     RetryDecryption,
     BackupEncryption,
     ImportEncryption,
@@ -379,6 +380,9 @@ impl Workspace {
             }
             Command::LoadOlderHistory => {
                 ChatRegistry::global(cx).update(cx, |chat, cx| chat.load_older_history(cx))
+            }
+            Command::SearchOtherRelays => {
+                ChatRegistry::global(cx).update(cx, |chat, cx| chat.search_other_relays(cx))
             }
             Command::RetryDecryption => {
                 ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_failed_messages(cx))
@@ -858,6 +862,10 @@ impl Workspace {
                         // Footer
                         menu.separator()
                             .menu("Rescan all history", Box::new(Command::LoadOlderHistory))
+                            .menu(
+                                "Search other configured relays",
+                                Box::new(Command::SearchOtherRelays),
+                            )
                             .menu(
                                 "Retry failed decryptions",
                                 Box::new(Command::RetryDecryption),

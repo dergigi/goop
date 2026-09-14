@@ -428,7 +428,7 @@ impl ChatRegistry {
     }
 
     fn get_messages(&mut self, cx: &mut Context<Self>) {
-        self.start_history(false, cx);
+        self.start_history(false, false, cx);
     }
 
     /// Resume history automatically on opening/scanning a chat, with a cooldown.
@@ -437,16 +437,20 @@ impl ChatRegistry {
             .last_history
             .is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
         {
-            self.start_history(false, cx);
+            self.start_history(false, false, cx);
         }
     }
 
     /// Explicitly rescan the entire retained history, including previously scanned gaps.
     pub fn load_older_history(&mut self, cx: &mut Context<Self>) {
-        self.start_history(true, cx);
+        self.start_history(true, false, cx);
     }
 
-    fn start_history(&mut self, force: bool, cx: &mut Context<Self>) {
+    pub fn search_other_relays(&mut self, cx: &mut Context<Self>) {
+        self.start_history(true, true, cx);
+    }
+
+    fn start_history(&mut self, force: bool, include_general: bool, cx: &mut Context<Self>) {
         if self.history_running {
             return;
         }
@@ -506,7 +510,12 @@ impl ChatRegistry {
             let id = SubscriptionId::new(USER_GIFTWRAP);
             let _ = client.unsubscribe(&id).await;
             client.subscribe(targets).with_id(id).await?;
-            let mut scans = futures::stream::iter(relays)
+            let mut history_relays: Vec<_> = relays.iter().cloned().collect();
+            if include_general {
+                history_relays.extend(history::general_relays(&client, user, &relays).await?);
+            }
+            // Inbox relays are scheduled first; at most two scans run at once.
+            let mut scans = futures::stream::iter(history_relays)
                 .map(|relay| history::scan_relay(&client, user, relay, &queue, &signals, force))
                 .buffer_unordered(2);
             while let Some(result) = scans.next().await {

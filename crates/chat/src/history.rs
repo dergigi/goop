@@ -1,5 +1,5 @@
-//! Resumable history from the account's current inbox relays only.
-use std::collections::BTreeMap;
+//! Resumable inbox history, with optional recovery from configured general relays.
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
@@ -209,6 +209,26 @@ fn advance(page: &[Event], until: u64, limit: usize) -> Result<(Option<u64>, usi
         return Ok((Some(until), limit * 2));
     }
     Ok((until.checked_sub(1), PAGE_SIZE))
+}
+
+/// Optional recovery from the account's own published general-relay list.
+pub(super) async fn general_relays(
+    client: &Client,
+    user: PublicKey,
+    inbox: &BTreeSet<RelayUrl>,
+) -> Result<Vec<RelayUrl>> {
+    let events = client
+        .database()
+        .query(Filter::new().kind(Kind::RelayList).author(user).limit(1))
+        .await?;
+    let event = events.first().ok_or_else(|| {
+        anyhow!("No saved general-relay list found; open Manage gossip relays to configure it")
+    })?;
+    event.verify()?;
+    let general: BTreeSet<_> = nip65::extract_relay_list(event)
+        .map(|(url, _)| url)
+        .collect();
+    Ok(general.difference(inbox).cloned().collect())
 }
 
 pub(super) async fn scan_relay(
@@ -498,6 +518,51 @@ mod integration_tests {
             .unwrap();
         assert!(queue.scheduled_ids().contains(&missing.id));
         assert_eq!(queue.pending(), 3);
+        client.shutdown().await;
+        relay.shutdown();
+    }
+
+    #[tokio::test]
+    async fn optional_general_relay_search_recovers_extra_copies_without_duplicate_targets() {
+        let relay = LocalRelay::builder().build();
+        relay.run().await.unwrap();
+        let url = relay.url().await;
+        let client = Client::builder()
+            .database(nostr_memory::MemoryDatabase::unbounded())
+            .build();
+        let owner = Keys::generate();
+        let inbox = RelayUrl::parse("wss://inbox.example.com").unwrap();
+        let list = EventBuilder::new(Kind::RelayList, "")
+            .tags([
+                Tag::custom("r", [url.to_string(), "read".into()]),
+                Tag::custom("r", [url.to_string(), "write".into()]),
+                Tag::custom("r", [inbox.to_string()]),
+            ])
+            .finalize(&owner)
+            .unwrap();
+        client.database().save_event(&list).await.unwrap();
+        let targets = general_relays(&client, owner.public_key(), &BTreeSet::from([inbox]))
+            .await
+            .unwrap();
+        assert_eq!(targets, vec![url.clone()]);
+        assert!(
+            general_relays(&client, Keys::generate().public_key(), &BTreeSet::new())
+                .await
+                .is_err()
+        );
+        let event = EventBuilder::new(Kind::GiftWrap, "extra retained copy")
+            .tag(Tag::public_key(owner.public_key()))
+            .finalize(&Keys::generate())
+            .unwrap();
+        relay.add_event(event.clone()).await.unwrap();
+        let (queue, _receiver) = super::super::DecryptQueue::new();
+        let (signals, _rx) = flume::unbounded();
+        for target in targets {
+            scan_relay(&client, owner.public_key(), target, &queue, &signals, true)
+                .await
+                .unwrap();
+        }
+        assert!(queue.scheduled_ids().contains(&event.id));
         client.shutdown().await;
         relay.shutdown();
     }
