@@ -31,9 +31,9 @@ The outgoing implementation is covered by disk-backed restart tests, controlled 
 - [ ] Exercise Goop against Dark Wisp and another NIP-17 client with equivalent accounts, retained messages, inbox configuration, and external signers. Include new conversations, groups, self-copies, old history, replies, reactions, and attachments.
 - [ ] Exercise signer refusal/reconnection, unavailable relays, partial delivery, forced application exit, reopening the queue, and account switching.
 - [ ] Measure cold/warm startup and live-message latency during a large history import. Check outgoing-queue disk/memory overhead with a large completed history.
-- [ ] Build and install a release candidate on the development Mac for interactive testing.
+- [x] Build and install a release candidate on the development Mac for interactive testing.
 - [ ] Build and smoke-test the macOS, Windows, and Linux artifacts through the release workflow; verify retained user data and queue files across upgrade.
-- [ ] Set the release version, document the changes and any known limitations, publish artifacts, and verify downloads/update metadata.
+- [x] Set the release version, document the changes and any known limitations, publish artifacts, and verify downloads/update metadata.
 
 Do not publish solely because the implementation checklist is complete. The release should follow the interoperability, recovery, and platform checks above.
 
@@ -61,3 +61,7 @@ History checkpoints now require the persistent local provenance key as well as t
 - “Rescan all history” revisits previously scanned ranges; “Search other configured relays” additionally scans the account’s published general relays, with two concurrent scans and duplicate suppression. Sending still uses inbox relays. Requests made during a scan are queued visibly.
 - Transient decryption failures retry with backoff; signer refusals remain paused until explicit retry. The history menu groups failures by reason.
 - Local conversation/profile quick search uses loaded snapshots and performs no database or relay queries while typing. Matching tests and the desktop compile check pass; interactive keyboard/focus checks remain part of candidate testing.
+
+## Goop 2.0.0 publication
+
+[Goop 2.0.0](https://github.com/dergigi/goop/releases/tag/v2.0.0) is published for all six platform/architecture targets. See the [validation record](../releases/2.0.0-validation.md) for tests, installer checks, Mac signing corrections, checksums, and update metadata verification. Unchecked interoperability, performance, and GUI smoke-test items above remain open and are disclosed as limitations; publication does not establish Dark Wisp parity.
