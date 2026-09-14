@@ -16,6 +16,7 @@ use nostr_memory::prelude::*;
 use nostr_sdk::prelude::*;
 
 mod blossom;
+pub mod encrypted_file;
 mod constants;
 mod nip05;
 mod nip4e;

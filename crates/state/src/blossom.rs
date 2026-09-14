@@ -54,6 +54,53 @@ pub async fn upload(_server: Url, _path: PathBuf, _cx: &AsyncApp) -> Result<Url,
     Err(anyhow!("File upload not supported on web"))
 }
 
+/// Encrypt chat attachments before any network operation. Public profile uploads
+/// deliberately use the separate `upload` function above.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn upload_encrypted(fallback: Url, path: PathBuf, cx: &AsyncApp)
+    -> Result<(crate::encrypted_file::EncryptedFile, Vec<u8>), Error>
+{
+    use crate::encrypted_file::{EncryptedFile, MAX_FILE_BYTES};
+    let metadata = smol::fs::metadata(&path).await?;
+    anyhow::ensure!(metadata.is_file(), "Attach a file, not a directory");
+    anyhow::ensure!(metadata.len() <= MAX_FILE_BYTES as u64, "Attachment exceeds the 100 MB limit");
+    let mime = from_path(&path).first_or_octet_stream().to_string();
+    let plaintext = smol::fs::read(path).await?;
+    let encrypted = EncryptedFile::encrypt(&plaintext, mime)?;
+    let (client, owner) = cx.update(|cx| {
+        let registry = NostrRegistry::global(cx).read(cx);
+        (registry.client(), registry.current_user())
+    });
+    let owner = owner.ok_or_else(|| anyhow!("Sign in before uploading media"))?;
+    let file = Tokio::spawn(cx, async move {
+        let servers = upload_servers(load_media_servers(&client, owner).await, fallback);
+        let upload_key = Keys::generate();
+        let url = try_upload_servers(servers, |server| {
+            let ciphertext = encrypted.ciphertext.clone();
+            let key = upload_key.clone();
+            async move {
+                anyhow::ensure!(server.scheme() == "https", "Media uploads require HTTPS");
+                let blob = BlossomClient::new(server)
+                    .upload_blob(ciphertext, Some("application/octet-stream".into()), None, Some(&key))
+                    .await?;
+                Ok(blob.url)
+            }
+        }).await?;
+        let file = EncryptedFile::from_tags(url.as_str(), &Tags::from_list(encrypted.file.tags()))?;
+        Ok::<_, Error>(file)
+    }).await.map_err(|_| anyhow!("Encrypted upload task failed"))??;
+    let same_account = cx.update(|cx| NostrRegistry::global(cx).read(cx).current_user() == Some(owner));
+    anyhow::ensure!(same_account, "Account changed during upload; please try again");
+    Ok((file, plaintext))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn upload_encrypted(_: Url, _: PathBuf, _: &AsyncApp)
+    -> Result<(crate::encrypted_file::EncryptedFile, Vec<u8>), Error>
+{
+    Err(anyhow!("File upload not supported on web"))
+}
+
 /// Load the newest BUD-03 list, retaining cached preferences when relays are unavailable.
 pub(crate) async fn load_media_servers(client: &Client, user: PublicKey) -> Vec<Url> {
     let filter = Filter::new()

@@ -23,6 +23,9 @@ webbrowser.workspace = true
 serde_json.workspace = true
 
 mime_guess = "2.0.4"
+aes-gcm = "0.10.3"
+hex = "0.4"
+sha2 = "0.10"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 nostr-memory.workspace = true
@@ -33,6 +36,7 @@ nostr-lmdb.workspace = true
 smol.workspace = true
 gpui_tokio.workspace = true
 rustls = "0.23"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 
 [dev-dependencies]
 nostr-memory.workspace = true
