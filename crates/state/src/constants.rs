@@ -20,9 +20,6 @@ pub const IMAGE_CACHE_SIZE: usize = 20;
 /// Default delay for searching
 pub const FIND_DELAY: u64 = 600;
 
-/// Default limit for searching
-pub const FIND_LIMIT: usize = 20;
-
 /// Default subscription id for device gift wrap events
 pub const DEVICE_GIFTWRAP: &str = "device-gift-wraps";
 
@@ -40,9 +37,6 @@ pub const WOT_RELAYS: [&str; 1] = ["wss://relay.vertexlab.io"];
 
 /// Default search relays
 pub const INDEXER_RELAYS: [&str; 2] = ["wss://indexer.coracle.social", "wss://user.kindpag.es"];
-
-/// Default search relays
-pub const SEARCH_RELAYS: [&str; 2] = ["wss://antiprimal.net", "wss://search.nos.today"];
 
 /// Default bootstrap relays
 pub const BOOTSTRAP_RELAYS: [&str; 4] = [

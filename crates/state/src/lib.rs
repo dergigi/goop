@@ -519,90 +519,13 @@ impl NostrRegistry {
 
     /// Get the public key of a NIP-05 address
     pub fn query_address(&self, addr: Nip05Address, cx: &App) -> Task<Result<PublicKey, Error>> {
-        let client = self.client();
         let http_client = cx.http_client();
 
         cx.background_spawn(async move {
             let profile = addr.profile(&http_client).await?;
             let public_key = profile.public_key;
 
-            subscribe_profiles(&client, [public_key]).await?;
-
             Ok(public_key)
-        })
-    }
-
-    /// Perform a NIP-50 global search for user profiles based on a given query
-    pub fn search(&self, query: &str, cx: &App) -> Task<Result<Vec<PublicKey>, Error>> {
-        let client = self.client();
-        let query = query.to_string();
-
-        // Get the address task if the query is a valid NIP-05 address
-        let address_task = if let Ok(addr) = Nip05Address::parse(&query) {
-            Some(self.query_address(addr, cx))
-        } else {
-            None
-        };
-
-        cx.background_spawn(async move {
-            let mut results: Vec<PublicKey> = Vec::with_capacity(FIND_LIMIT);
-
-            // Return early if the query is a valid NIP-05 address
-            if let Some(task) = address_task
-                && let Ok(public_key) = task.await
-            {
-                results.push(public_key);
-                return Ok(results);
-            }
-
-            // Add search relay to the relay pool
-            for url in SEARCH_RELAYS.into_iter() {
-                if client.relay(url).await.is_ok() {
-                    client
-                        .add_relay(url)
-                        .capabilities(RelayCapabilities::READ)
-                        .await?;
-                } else {
-                    return Err(anyhow!("Failed to add search relay: {}", url));
-                }
-            }
-
-            // Return early if the query is a valid public key
-            if let Ok(public_key) = PublicKey::parse(&query) {
-                results.push(public_key);
-                return Ok(results);
-            }
-
-            // Construct the filter for the search query
-            let filter = Filter::new()
-                .search(query.to_lowercase())
-                .kind(Kind::Metadata)
-                .limit(FIND_LIMIT);
-
-            // Construct target for subscription
-            let target: HashMap<&str, Vec<Filter>> = SEARCH_RELAYS
-                .into_iter()
-                .map(|relay| (relay, vec![filter.clone()]))
-                .collect();
-
-            // Stream events from the search relays
-            let mut stream = client
-                .stream_events(target)
-                .timeout(Duration::from_secs(TIMEOUT))
-                .await?;
-
-            // Collect the results
-            while let Some((_url, res)) = stream.next().await {
-                if let Ok(event) = res {
-                    results.push(event.pubkey);
-                }
-            }
-
-            if results.is_empty() {
-                return Err(anyhow!("No results for query {query}"));
-            }
-
-            Ok(results)
         })
     }
 
