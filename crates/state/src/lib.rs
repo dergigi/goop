@@ -85,6 +85,9 @@ pub struct NostrRegistry {
     /// Current user's public key
     current_user: Option<PublicKey>,
 
+    media_servers: Vec<Url>,
+    media_servers_task: Option<Task<()>>,
+
     /// Tasks for asynchronous operations
     tasks: Vec<Task<Result<(), Error>>>,
 }
@@ -149,6 +152,8 @@ impl NostrRegistry {
             client,
             signer,
             current_user: None,
+            media_servers: Vec::new(),
+            media_servers_task: None,
             tasks: vec![],
         }
     }
@@ -168,6 +173,28 @@ impl NostrRegistry {
         self.current_user
     }
 
+    pub fn media_servers(&self) -> &[Url] {
+        &self.media_servers
+    }
+
+    pub fn refresh_media_servers(&mut self, cx: &mut Context<Self>) {
+        let Some(user) = self.current_user else {
+            return;
+        };
+        let client = self.client();
+        let task = cx.background_spawn(async move { load_media_servers(&client, user).await });
+        self.media_servers_task = Some(cx.spawn(async move |this, cx| {
+            let servers = task.await;
+            this.update(cx, |this, cx| {
+                if this.current_user == Some(user) {
+                    this.media_servers = servers;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+    }
+
     /// Update the signer
     pub fn set_signer<T>(&mut self, new_signer: T, cx: &mut Context<Self>)
     where
@@ -182,6 +209,8 @@ impl NostrRegistry {
                     this.update(cx, |this, cx| {
                         this.signer.swap_inner(new_signer);
                         this.current_user = Some(public_key);
+                        this.media_servers.clear();
+                        this.refresh_media_servers(cx);
                         cx.emit(StateEvent::SignerChanged);
                         cx.notify();
                     })?;
@@ -377,6 +406,8 @@ impl NostrRegistry {
                             if this.current_user.is_some() {
                                 this.signer.swap_inner(Keys::generate());
                                 this.current_user = None;
+                                this.media_servers.clear();
+                                this.media_servers_task = None;
                                 cx.emit(StateEvent::NoSigner);
                                 cx.notify();
                             }

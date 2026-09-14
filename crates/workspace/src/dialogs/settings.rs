@@ -1,9 +1,11 @@
 use gpui::http_client::Url;
+use gpui::prelude::FluentBuilder;
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, px,
+    Subscription, Window, div, px,
 };
 use settings::AppSettings;
+use state::NostrRegistry;
 use theme::{ActiveTheme, Theme, ThemeMode};
 use ui::button::{Button, ButtonVariants};
 use ui::group_box::{GroupBox, GroupBoxVariants};
@@ -19,6 +21,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Preferences> {
 
 pub struct Preferences {
     file_input: Entity<InputState>,
+    _subscription: Subscription,
 }
 
 impl Preferences {
@@ -30,7 +33,13 @@ impl Preferences {
                 .placeholder("https://myblossom.com")
         });
 
-        Self { file_input }
+        let registry = NostrRegistry::global(cx);
+        let subscription = cx.observe(&registry, |_, _, cx| cx.notify());
+        registry.update(cx, |registry, cx| registry.refresh_media_servers(cx));
+        Self {
+            file_input,
+            _subscription: subscription,
+        }
     }
 
     /// Update the file server (blossom) URL
@@ -62,6 +71,7 @@ impl Render for Preferences {
         const NIP4E: &str = "Use a dedicated key to encrypt and decrypt messages.";
         const RESET: &str = "Reset the theme to the default one.";
 
+        let servers = NostrRegistry::global(cx).read(cx).media_servers().to_vec();
         let screening = AppSettings::get_screening(cx);
         let render_markdown = AppSettings::get_render_markdown(cx);
         let hide_avatar = AppSettings::get_hide_avatar(cx);
@@ -191,7 +201,15 @@ impl Render for Preferences {
                     .id("media")
                     .title("Media Upload Service")
                     .fill()
-                    .child(
+                    .when(!servers.is_empty(), |this| {
+                        this.child(v_flex().gap_2()
+                            .child(div().text_xs().text_color(cx.theme().text_muted)
+                                .child("Your published media servers, in upload preference order:"))
+                            .children(servers.iter().enumerate().map(|(index, server)| {
+                                div().text_sm().child(format!("{}. {}", index + 1, server))
+                            })))
+                    })
+                    .when(servers.is_empty(), |this| this.child(
                         v_flex()
                             .gap_0p5()
                             .child(
@@ -213,9 +231,9 @@ impl Render for Preferences {
                                     .text_size(px(10.))
                                     .italic()
                                     .text_color(cx.theme().text_placeholder)
-                                    .child(SharedString::from("Only support blossom service")),
+                                    .child(SharedString::from("Blossom fallback when your account has no media servers.")),
                             ),
-                    ),
+                    )),
             )
     }
 }
