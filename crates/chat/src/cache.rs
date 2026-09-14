@@ -47,6 +47,7 @@ pub(super) struct RumorCache {
     write_lock: Arc<Mutex<()>>,
     rooms: Arc<RwLock<BTreeMap<EventId, u64>>>,
     reaction_targets: Arc<RwLock<BTreeSet<EventId>>>,
+    search: Arc<RwLock<crate::search::MessageSearchIndex>>,
 }
 
 impl RumorCache {
@@ -67,6 +68,7 @@ impl RumorCache {
             write_lock: Arc::default(),
             rooms: Arc::default(),
             reaction_targets: Arc::default(),
+            search: Arc::default(),
         }
     }
 
@@ -85,6 +87,7 @@ impl RumorCache {
     }
 
     pub fn note(&self, rumor: &UnsignedEvent) {
+        self.search.write().unwrap().insert(rumor);
         if let Some(id) = rumor.id {
             if is_chat(rumor.kind) {
                 self.rooms.write().unwrap().insert(id, rumor.uniq_id());
@@ -96,6 +99,10 @@ impl RumorCache {
                     .extend(rumor.tags.event_ids());
             }
         }
+    }
+
+    pub fn search_messages(&self, room: u64) -> Vec<Arc<crate::SearchMessage>> {
+        self.search.read().unwrap().snapshot(room)
     }
 
     pub fn reaction_room(&self, rumor: &UnsignedEvent) -> Option<u64> {

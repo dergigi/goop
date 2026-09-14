@@ -18,6 +18,8 @@ use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
 use state::{NostrRegistry, StateEvent, USER_GIFTWRAP, UniversalSigner};
 mod cache;
+mod search;
+pub use search::SearchMessage;
 use cache::RumorCache;
 mod decryption;
 mod history;
@@ -360,6 +362,11 @@ impl ChatRegistry {
 
     pub(crate) fn outgoing_queue(&self) -> Option<OutgoingQueue> {
         self.outgoing.clone()
+    }
+
+    /// Snapshot already loaded message text without disk or relay access.
+    pub fn search_messages(&self, room: u64) -> Vec<Arc<SearchMessage>> {
+        self.incoming.as_ref().map(|cache| cache.search_messages(room)).unwrap_or_default()
     }
 
     pub fn outgoing_reports(&self, id: &EventId) -> Option<Vec<SendReport>> {
@@ -964,7 +971,7 @@ impl ChatRegistry {
                 .map(|event| event.tags.public_keys().collect())
                 .unwrap_or_default();
 
-            let mut messages = match cache {
+            let mut messages = match &cache {
                 Some(cache) => cache.all().await?,
                 None => vec![],
             };
@@ -973,6 +980,9 @@ impl ChatRegistry {
             }
             let mut grouped: HashMap<u64, Vec<UnsignedEvent>> = HashMap::new();
             for rumor in messages {
+                if let Some(cache) = &cache {
+                    cache.note(&rumor);
+                }
                 if cache::is_chat(rumor.kind) {
                     grouped.entry(rumor.uniq_id()).or_default().push(rumor);
                 }
