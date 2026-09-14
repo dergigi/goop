@@ -117,6 +117,7 @@ impl RenderOnce for Avatar {
         let container_size = image_size.to_pixels(window.rem_size()) + border_width * 2.;
 
         div()
+            .image_cache(common::avatar_cache(cx))
             .flex_shrink_0()
             .size(container_size)
             .rounded_full()

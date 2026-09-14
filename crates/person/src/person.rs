@@ -14,6 +14,9 @@ pub struct Person {
     /// Metadata (profile)
     metadata: Metadata,
 
+    /// None identifies a placeholder that still needs metadata.
+    metadata_timestamp: Option<Timestamp>,
+
     /// Dekey (NIP-4e) announcement
     announcement: Option<Announcement>,
 
@@ -57,10 +60,34 @@ impl Person {
     pub fn new(public_key: PublicKey, metadata: Metadata) -> Self {
         Self {
             public_key,
+            metadata_timestamp: (metadata != Metadata::default()).then(Timestamp::now),
             metadata,
             announcement: None,
             messaging_relays: vec![],
         }
+    }
+
+    pub(crate) fn from_metadata_event(event: &Event) -> anyhow::Result<Self> {
+        let mut person = Self::new(event.pubkey, Metadata::from_json(&event.content)?);
+        person.metadata_timestamp = Some(event.created_at);
+        Ok(person)
+    }
+
+    pub(crate) fn has_metadata(&self) -> bool {
+        self.metadata_timestamp.is_some()
+    }
+
+    /// Merge cached/relay metadata without replacing a newer profile or its relay data.
+    pub(crate) fn merge_metadata(&mut self, incoming: &Self) -> bool {
+        if incoming.metadata_timestamp.is_none()
+            || incoming.metadata_timestamp < self.metadata_timestamp
+        {
+            return false;
+        }
+        let changed = self.metadata != incoming.metadata;
+        self.metadata = incoming.metadata.clone();
+        self.metadata_timestamp = incoming.metadata_timestamp;
+        changed
     }
 
     /// Build profile encryption keys announcement
@@ -133,6 +160,7 @@ impl Person {
     /// Set profile metadata
     pub fn set_metadata(&mut self, metadata: Metadata) {
         self.metadata = metadata;
+        self.metadata_timestamp = Some(Timestamp::now());
     }
 
     /// Set profile encryption keys announcement
@@ -160,4 +188,57 @@ pub fn shorten_pubkey(public_key: PublicKey, len: usize) -> String {
         &pubkey[0..(len + 1)],
         &pubkey[pubkey.len() - len..]
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(public_key: PublicKey, picture: Option<&str>, timestamp: u64) -> Person {
+        let mut metadata = Metadata::default();
+        metadata.picture = picture.map(str::to_owned);
+        let mut person = Person::new(public_key, metadata);
+        person.metadata_timestamp = Some(Timestamp::from(timestamp));
+        person
+    }
+
+    #[test]
+    fn cached_metadata_fills_relay_placeholder_without_losing_relays() {
+        let key = Keys::generate().public_key();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+        let mut placeholder = Person::from(key).with_messaging_relays(relays.clone());
+        assert!(!placeholder.has_metadata());
+        assert!(placeholder.merge_metadata(&profile(
+            key,
+            Some("https://example.com/avatar.png"),
+            10
+        )));
+        assert!(placeholder.has_metadata());
+        assert_eq!(placeholder.messaging_relays, relays);
+        assert_eq!(
+            placeholder.metadata.picture.as_deref(),
+            Some("https://example.com/avatar.png")
+        );
+    }
+
+    #[test]
+    fn late_cache_or_relay_response_cannot_replace_newer_avatar() {
+        let key = Keys::generate().public_key();
+        let mut current = profile(key, Some("https://example.com/new.png"), 20);
+        assert!(!current.merge_metadata(&profile(key, Some("https://example.com/old.png"), 10)));
+        assert!(!current.merge_metadata(&Person::from(key)));
+        assert_eq!(
+            current.metadata.picture.as_deref(),
+            Some("https://example.com/new.png")
+        );
+    }
+
+    #[test]
+    fn newer_profile_can_remove_avatar() {
+        let key = Keys::generate().public_key();
+        let mut current = profile(key, Some("https://example.com/avatar.png"), 10);
+        assert!(current.merge_metadata(&profile(key, None, 20)));
+        assert!(current.metadata.picture.is_none());
+        assert!(current.has_metadata());
+    }
 }

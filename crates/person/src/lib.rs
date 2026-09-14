@@ -4,7 +4,7 @@ use std::sync::RwLock;
 use anyhow::{Error, anyhow};
 use common::EventExt;
 use gpui::{App, AppContext, Context, Entity, Global, Task, Window};
-use instant::Duration;
+use instant::{Duration, Instant};
 use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
 use state::{Announcement, BOOTSTRAP_RELAYS, NostrRegistry, TIMEOUT};
@@ -35,7 +35,7 @@ pub struct PersonRegistry {
     persons: HashMap<PublicKey, Entity<Person>>,
 
     /// Set of public keys that have been seen
-    seen: RwLock<HashSet<PublicKey>>,
+    seen: RwLock<HashMap<PublicKey, Instant>>,
 
     /// Sender for requesting metadata
     sender: flume::Sender<PublicKey>,
@@ -102,7 +102,7 @@ impl PersonRegistry {
 
         Self {
             persons: HashMap::new(),
-            seen: RwLock::new(HashSet::new()),
+            seen: RwLock::new(HashMap::new()),
             sender: metadata_tx,
             tasks,
         }
@@ -127,8 +127,9 @@ impl PersonRegistry {
 
                 match event.kind {
                     Kind::Metadata => {
-                        let metadata = Metadata::from_json(&event.content).unwrap_or_default();
-                        let person = Person::new(event.pubkey, metadata);
+                        let Ok(person) = Person::from_metadata_event(&event) else {
+                            continue;
+                        };
                         if tx.send_async(Dispatch::Person(person)).await.is_err() {
                             log::warn!("PersonRegistry channel closed, dropping metadata event");
                         }
@@ -194,10 +195,7 @@ impl PersonRegistry {
             let events = client.database().query(filter).await?;
             let persons = events
                 .into_iter()
-                .map(|event| {
-                    let metadata = Metadata::from_json(event.content).unwrap_or_default();
-                    Person::new(event.pubkey, metadata)
-                })
+                .filter_map(|event| Person::from_metadata_event(&event).ok())
                 .collect();
 
             Ok(persons)
@@ -247,10 +245,7 @@ impl PersonRegistry {
     /// Insert batch of persons
     fn bulk_insert(&mut self, persons: Vec<Person>, cx: &mut Context<Self>) {
         for person in persons.into_iter() {
-            let public_key = person.public_key();
-            self.persons
-                .entry(public_key)
-                .or_insert_with(|| cx.new(|_| person));
+            self.insert(person, cx);
         }
         cx.notify();
     }
@@ -262,7 +257,7 @@ impl PersonRegistry {
         match self.persons.get(&public_key) {
             Some(this) => {
                 this.update(cx, |this, cx| {
-                    this.set_metadata(person.metadata());
+                    this.merge_metadata(&person);
                     cx.notify();
                 });
             }
@@ -270,17 +265,32 @@ impl PersonRegistry {
                 self.persons.insert(public_key, cx.new(|_| person));
             }
         }
+        cx.refresh_windows();
     }
 
     /// Get single person by public key
     pub fn get(&self, public_key: &PublicKey, cx: &App) -> Person {
-        if let Some(person) = self.persons.get(public_key) {
+        if let Some(person) = self.persons.get(public_key)
+            && person.read(cx).has_metadata()
+        {
             return person.read(cx).clone();
         }
 
         let public_key = *public_key;
 
-        if self.seen.write().unwrap().insert(public_key) {
+        let should_request = {
+            let mut seen = self.seen.write().unwrap();
+            if seen
+                .get(&public_key)
+                .is_some_and(|last| last.elapsed() < Duration::from_secs(30))
+            {
+                false
+            } else {
+                seen.insert(public_key, Instant::now());
+                true
+            }
+        };
+        if should_request {
             let sender = self.sender.clone();
 
             // Spawn background task to request metadata
@@ -293,7 +303,10 @@ impl PersonRegistry {
         }
 
         // Return a temporary profile with default metadata
-        Person::new(public_key, Metadata::default())
+        self.persons
+            .get(&public_key)
+            .map(|person| person.read(cx).clone())
+            .unwrap_or_else(|| Person::new(public_key, Metadata::default()))
     }
 }
 
