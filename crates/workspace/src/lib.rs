@@ -18,9 +18,9 @@ use smallvec::{SmallVec, smallvec};
 use state::{IMAGE_CACHE_SIZE, NostrRegistry, StateEvent};
 use theme::{ActiveTheme, SIDEBAR_WIDTH, Theme, ThemeRegistry};
 use ui::avatar::Avatar;
-use ui::indicator::Indicator;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{ClosePanel, DockArea, DockItem, DockPlacement, PanelView};
+use ui::indicator::Indicator;
 use ui::menu::{DropdownMenu, PopupMenuItem};
 use ui::notification::{Notification, NotificationKind};
 use ui::{Icon, IconName, Root, Sizable, TitleBar, WindowExtension, h_flex, v_flex};
@@ -28,7 +28,7 @@ use ui::{Icon, IconName, Root, Sizable, TitleBar, WindowExtension, h_flex, v_fle
 use crate::dialogs::import::ImportIdentity;
 use crate::dialogs::restore::RestoreEncryption;
 use crate::dialogs::settings;
-use crate::panels::{backup, contact_list, greeter, messaging_relays, profile, relay_list};
+use crate::panels::{contact_list, greeter, messaging_relays, profile, relay_list};
 use crate::sidebar::Sidebar;
 
 mod dialogs;
@@ -67,7 +67,6 @@ enum Command {
     ShowMessaging,
     ShowProfile,
     ShowSettings,
-    ShowBackup,
     ShowContactList,
 }
 
@@ -301,16 +300,6 @@ impl Workspace {
                 self.dock.update(cx, |this, cx| {
                     this.add_panel(
                         Arc::new(contact_list::init(window, cx)),
-                        DockPlacement::Left,
-                        window,
-                        cx,
-                    );
-                });
-            }
-            Command::ShowBackup => {
-                self.dock.update(cx, |this, cx| {
-                    this.add_panel(
-                        Arc::new(backup::init(window, cx)),
                         DockPlacement::Left,
                         window,
                         cx,
@@ -617,11 +606,6 @@ impl Workspace {
                                     Box::new(Command::ShowContactList),
                                 )
                                 .menu_with_icon(
-                                    "Backup",
-                                    IconName::UserKey,
-                                    Box::new(Command::ShowBackup),
-                                )
-                                .menu_with_icon(
                                     "Themes",
                                     IconName::Sun,
                                     Box::new(Command::ToggleTheme),
@@ -713,7 +697,7 @@ impl Workspace {
                                 })
                                 .separator()
                                 .menu_with_icon(
-                                    "Backup",
+                                    "Export Encryption Key",
                                     IconName::Shield,
                                     Box::new(Command::BackupEncryption),
                                 )

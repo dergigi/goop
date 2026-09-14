@@ -7,7 +7,6 @@ use gpui::{
     actions, point, px, size,
 };
 use gpui_platform::application;
-use nostr_sdk::prelude::SecretKey;
 use state::{APP_ID, CLIENT_NAME};
 use ui::Root;
 
@@ -16,14 +15,6 @@ actions!(goop, [Quit]);
 fn main() {
     // Initialize logging
     tracing_subscriber::fmt::init();
-
-    // Parse CLI arguments for --sec <nsec1>
-    let cli_key = parse_cli_key();
-    if let Err(ref e) = cli_key {
-        eprintln!("Failed to parse --sec argument: {e}");
-        std::process::exit(1);
-    }
-    let cli_key = cli_key.unwrap();
 
     // Run application
     application()
@@ -84,7 +75,7 @@ fn main() {
                 settings::init(window, cx);
 
                 // Initialize the nostr client
-                state::init(window, cx, cli_key);
+                state::init(window, cx);
 
                 // Initialize person registry
                 person::init(window, cx);
@@ -132,25 +123,6 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner().unwrap())
         .unwrap();
-}
-
-fn parse_cli_key() -> Result<Option<SecretKey>, String> {
-    let args: Vec<String> = std::env::args().collect();
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "--sec" {
-            if i + 1 < args.len() {
-                let nsec = &args[i + 1];
-                return SecretKey::parse(nsec)
-                    .map(Some)
-                    .map_err(|e| format!("Invalid nsec key '{nsec}': {e}"));
-            } else {
-                return Err("--sec requires a value (nsec1...)".to_string());
-            }
-        }
-        i += 1;
-    }
-    Ok(None)
 }
 
 fn quit(_ev: &Quit, cx: &mut App) {

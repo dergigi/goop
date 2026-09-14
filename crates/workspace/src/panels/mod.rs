@@ -1,4 +1,3 @@
-pub mod backup;
 pub mod contact_list;
 pub mod greeter;
 pub mod messaging_relays;

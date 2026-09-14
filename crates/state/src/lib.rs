@@ -27,7 +27,7 @@ pub use nip4e::*;
 pub use nip05::*;
 pub use signer::{GoopAuthUrlHandler, UniversalSigner};
 
-pub fn init(window: &mut Window, cx: &mut App, cli_key: Option<SecretKey>) {
+pub fn init(window: &mut Window, cx: &mut App) {
     // rustls uses the `aws_lc_rs` provider by default
     // This only errors if the default provider has already
     // been installed. We can ignore this `Result`.
@@ -40,7 +40,7 @@ pub fn init(window: &mut Window, cx: &mut App, cli_key: Option<SecretKey>) {
     #[cfg(not(target_arch = "wasm32"))]
     gpui_tokio::init(cx);
 
-    NostrRegistry::set_global(cx.new(|cx| NostrRegistry::new(window, cx, cli_key)), cx);
+    NostrRegistry::set_global(cx.new(|cx| NostrRegistry::new(window, cx)), cx);
 }
 
 struct GlobalNostrRegistry(Entity<NostrRegistry>);
@@ -109,7 +109,7 @@ impl NostrRegistry {
     }
 
     /// Create a new nostr instance
-    fn new(window: &mut Window, cx: &mut Context<Self>, cli_key: Option<SecretKey>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let signer = UniversalSigner::new(Keys::generate());
         let authenticator = SignerAuthenticator::new(signer.clone());
 
@@ -142,10 +142,6 @@ impl NostrRegistry {
 
             if cfg!(target_arch = "wasm32") {
                 this.finish_identity_loading(cx);
-            } else if let Some(secret) = cli_key {
-                // Use CLI-provided key -- same path as get_user_credential
-                let keys = Keys::new(secret);
-                this.set_signer(keys, cx);
             } else {
                 this.get_user_credential(cx);
             }
@@ -292,15 +288,7 @@ impl NostrRegistry {
                     Some((_username, secret)) => {
                         let content = String::from_utf8(secret)?;
 
-                        if content.starts_with("nsec1") {
-                            let secret_key = SecretKey::parse(&content)?;
-                            let keys = Keys::new(secret_key);
-
-                            this.update(cx, |this, cx| {
-                                this.set_signer(keys, cx);
-                                cx.notify();
-                            })?;
-                        } else if content.starts_with("bunker://") {
+                        if content.starts_with("bunker://") {
                             let keys = master_keyring.await;
                             let timeout = Duration::from_secs(30);
                             let uri = NostrConnectUri::parse(content)?;

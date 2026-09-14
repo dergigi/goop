@@ -1,4 +1,4 @@
-use anyhow::{Error, anyhow};
+use anyhow::Error;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
@@ -10,15 +10,12 @@ use state::{GoopAuthUrlHandler, NostrRegistry, USER_KEYRING};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
-use ui::{Disableable, StyledExt, WindowExtension, divider, v_flex};
+use ui::{Disableable, StyledExt, divider, v_flex};
 
 #[derive(Debug)]
 pub struct ImportIdentity {
-    /// Secret key input
+    /// Bunker connection URI
     key_input: Entity<InputState>,
-
-    /// Password input (if required)
-    pass_input: Entity<InputState>,
 
     /// Error message
     error: Entity<Option<SharedString>>,
@@ -35,8 +32,7 @@ pub struct ImportIdentity {
 
 impl ImportIdentity {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let key_input = cx.new(|cx| InputState::new(window, cx).placeholder("nsec or bunker://"));
-        let pass_input = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let key_input = cx.new(|cx| InputState::new(window, cx).placeholder("bunker://"));
         let error = cx.new(|_| None);
 
         let input_subscription =
@@ -48,7 +44,6 @@ impl ImportIdentity {
 
         Self {
             key_input,
-            pass_input,
             error,
             loading: false,
             tasks: vec![],
@@ -58,84 +53,14 @@ impl ImportIdentity {
 
     fn login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.key_input.read(cx).value();
-        let password = self.pass_input.read(cx).value();
-
-        // Set loading state
         self.set_loading(true, cx);
-
-        if value.starts_with("ncryptsec1") {
-            self.ncryptsec(value, password, window, cx);
-            return;
+        match NostrConnectUri::parse(value.trim()) {
+            Ok(uri @ NostrConnectUri::Bunker { .. }) => self.bunker(uri, window, cx),
+            _ => self.set_error(
+                "Enter a bunker:// connection from your signer application",
+                cx,
+            ),
         }
-
-        if value.starts_with("bunker://") {
-            match NostrConnectUri::parse(value) {
-                Ok(uri) => {
-                    self.bunker(uri, window, cx);
-                }
-                Err(e) => {
-                    self.set_error(e.to_string(), cx);
-                }
-            }
-            return;
-        }
-
-        if let Ok(secret) = SecretKey::parse(&value) {
-            let keys = Keys::new(secret);
-            let nostr = NostrRegistry::global(cx);
-
-            // Update the signer
-            nostr.update(cx, |this, cx| {
-                this.set_signer(keys, cx);
-            });
-        } else {
-            self.set_error("Invalid key", cx);
-        }
-    }
-
-    fn ncryptsec<S>(&mut self, content: S, pwd: S, window: &mut Window, cx: &mut Context<Self>)
-    where
-        S: Into<String>,
-    {
-        let nostr = NostrRegistry::global(cx);
-        let content: String = content.into();
-        let password: String = pwd.into();
-
-        if password.is_empty() {
-            self.set_error("Password is required", cx);
-            return;
-        }
-
-        let Ok(enc) = EncryptedSecretKey::from_bech32(&content) else {
-            self.set_error("Secret Key is invalid", cx);
-            return;
-        };
-
-        // Decrypt in the background to ensure it doesn't block the UI
-        let task = cx.background_spawn(async move {
-            if let Ok(content) = enc.decrypt(&password) {
-                Ok(Keys::new(content))
-            } else {
-                Err(anyhow!("Invalid password"))
-            }
-        });
-
-        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
-            match task.await {
-                Ok(keys) => {
-                    nostr.update_in(cx, |this, window, cx| {
-                        this.set_signer(keys, cx);
-                        window.close_modal(cx);
-                    })?;
-                }
-                Err(e) => {
-                    this.update(cx, |this, cx| {
-                        this.set_error(e.to_string(), cx);
-                    })?;
-                }
-            }
-            Ok(())
-        }));
     }
 
     fn bunker(&mut self, uri: NostrConnectUri, window: &mut Window, cx: &mut Context<Self>) {
@@ -208,11 +133,7 @@ impl ImportIdentity {
 impl Render for ImportIdentity {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         const BUNKER_WARN: &str = "Nostr Connect will usually take more time to get all your messages. Please keep your session open until you see all your messages.";
-        const KEY_WARN: &str = "Goop won't store your identity key on the local device. You need to re-login again in the next session. You can use Nostr Connect for persistent login.";
-
         let is_wasm = cfg!(target_arch = "wasm32");
-        let require_password = self.key_input.read(cx).value().starts_with("ncryptsec1");
-        let key_warning = self.key_input.read(cx).value().starts_with("nsec1") || require_password;
         let bunker_warning = self.key_input.read(cx).value().starts_with("bunker://");
 
         v_flex()
@@ -226,32 +147,15 @@ impl Render for ImportIdentity {
                         v_flex()
                             .gap_1()
                             .text_color(cx.theme().text_muted)
-                            .child("Continue with existing key or bunker connection")
+                            .child("Connect with your signer application")
                             .child(Input::new(&self.key_input)),
                     )
-                    .when(require_password, |this| {
-                        this.child(
-                            v_flex()
-                                .gap_1()
-                                .text_color(cx.theme().text_muted)
-                                .child("Decrypt Password:")
-                                .child(Input::new(&self.pass_input)),
-                        )
-                    })
                     .when(bunker_warning, |this| {
                         this.child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().text_warning)
                                 .child(div().child(BUNKER_WARN)),
-                        )
-                    })
-                    .when(key_warning, |this| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().text_warning)
-                                .child(div().child(KEY_WARN)),
                         )
                     }),
             )
