@@ -607,47 +607,6 @@ impl Workspace {
         h_flex()
             .flex_shrink_0()
             .gap_2()
-            .when(restoring || loading_chats, |this| {
-                this.child(
-                    h_flex()
-                        .gap_2()
-                        .text_xs()
-                        .text_color(cx.theme().text_muted)
-                        .child(Indicator::new().small())
-                        .child(if restoring {
-                            "Reconnecting to signer…"
-                        } else {
-                            "Loading conversations…"
-                        }),
-                )
-            })
-            .when(
-                current_user.is_none() && !restoring && connection_error.is_none(),
-                |this| {
-                    this.child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().text_muted)
-                            .child(SharedString::from("Connect your signer to continue")),
-                    )
-                },
-            )
-            .when_some(connection_error, |this, error| {
-                this.child(
-                    Button::new("retry-signer")
-                        .label(if restoring {
-                            "Retry now"
-                        } else {
-                            "Signer unavailable · Retry"
-                        })
-                        .tooltip(error)
-                        .small()
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            NostrRegistry::global(cx)
-                                .update(cx, |nostr, cx| nostr.retry_signer(cx));
-                        })),
-                )
-            })
             .when_some(displayed_user.as_ref(), |this, public_key| {
                 let persons = PersonRegistry::global(cx);
                 let profile = persons.read(cx).get(public_key, cx);
@@ -707,6 +666,47 @@ impl Workspace {
                                     Box::new(Command::ShowSettings),
                                 )
                         }),
+                )
+            })
+            .when(restoring || loading_chats, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(cx.theme().text_muted)
+                        .child(Indicator::new().small())
+                        .child(if restoring {
+                            "Reconnecting to signer…"
+                        } else {
+                            "Loading conversations…"
+                        }),
+                )
+            })
+            .when(
+                current_user.is_none() && !restoring && connection_error.is_none(),
+                |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().text_muted)
+                            .child(SharedString::from("Connect your signer to continue")),
+                    )
+                },
+            )
+            .when_some(connection_error, |this, error| {
+                this.child(
+                    Button::new("retry-signer")
+                        .label(if restoring {
+                            "Retry now"
+                        } else {
+                            "Signer unavailable · Retry"
+                        })
+                        .tooltip(error)
+                        .small()
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            NostrRegistry::global(cx)
+                                .update(cx, |nostr, cx| nostr.retry_signer(cx));
+                        })),
                 )
             })
     }
