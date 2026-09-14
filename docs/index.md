@@ -20,7 +20,7 @@ Get updates from your agents and reply to them in Goop. Each agent needs its own
 Nostr identity and a NIP-17 messaging integration. Give the agent your public key
 (`npub`) as its contact, then accept its first message in **Requests**.
 
-### OpenClaw
+### OpenClaw [TESTED]
 
 Copy this prompt and send it to your OpenClaw agent:
 
@@ -35,7 +35,7 @@ Replace `PASTE_YOUR_NPUB_HERE` with your full Goop public key (`npub1…`) befor
 sending the prompt. If you have a NIP-05 address, you can instead write
 `My NIP-05 is whatever@domain.com`, using your own address.
 
-### Hermes
+### Hermes [UNTESTED]
 
 Install the community [Hermes NIP-17 platform plugin](https://github.com/boto-coder/hermes-nostr-platform)
 using its setup instructions. Give it the agent’s own identity, add your `npub` to
@@ -48,14 +48,14 @@ Goop identity’s DM relays in the plugin’s configured relays: its current
 [send path only uses existing relay connections](https://github.com/boto-coder/hermes-nostr-platform/blob/82951dd917bdd153b7a5ef3cf159b0b5dfc626c3/adapter.py#L284),
 even when it discovers additional recipient relays.
 
-### NullClaw
+### NullClaw [UNTESTED]
 
 [NullClaw’s Nostr setup](https://github.com/nullclaw/nullclaw#nostr-channel-setup)
 includes a NIP-17 channel. Install its `nak` dependency, run the onboarding wizard,
 and supply your `npub` as the owner. The channel publishes the agent’s DM relays and
 can respond to Goop text messages while NullClaw is running.
 
-### Other harnesses
+### Other harnesses [UNTESTED]
 
 For harnesses without a verified messaging plugin, [Bray](https://github.com/forgesworn/bray)
 provides NIP-17 messaging tools through MCP, and
@@ -72,8 +72,8 @@ for the findings by harness.
 3. Accept it in Goop if it appears in **Requests**, then reply.
 4. Check that the agent receives the reply and can answer it.
 
-These third-party paths were reviewed on 2026-09-14 from their documentation and
-source. They have not all been tested end to end with Goop. See the
+OpenClaw has been tested with Goop. The other integrations have been reviewed
+from documentation and source but have not been tested with Goop. See the
 [detailed NIP-17 integration review](https://github.com/dergigi/goop/blob/master/docs/research/nip17-agent-harnesses.md)
 for implementation findings and sources.
 
