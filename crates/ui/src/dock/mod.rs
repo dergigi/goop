@@ -611,17 +611,26 @@ impl DockArea {
             DockPlacement::Left => self
                 .left_dock
                 .as_ref()
-                .map(|dock| dock.read(cx).collapsible)
+                .map(|dock| {
+                    let dock = dock.read(cx);
+                    dock.collapsible && dock.has_content
+                })
                 .unwrap_or(false),
             DockPlacement::Bottom => self
                 .bottom_dock
                 .as_ref()
-                .map(|dock| dock.read(cx).collapsible)
+                .map(|dock| {
+                    let dock = dock.read(cx);
+                    dock.collapsible && dock.has_content
+                })
                 .unwrap_or(false),
             DockPlacement::Right => self
                 .right_dock
                 .as_ref()
-                .map(|dock| dock.read(cx).collapsible)
+                .map(|dock| {
+                    let dock = dock.read(cx);
+                    dock.collapsible && dock.has_content
+                })
                 .unwrap_or(false),
             DockPlacement::Center => false,
         }

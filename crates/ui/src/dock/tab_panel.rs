@@ -322,10 +322,8 @@ impl TabPanel {
             window.focus(&self.focus_handle, cx);
             let dock = self.dock_area.clone();
             window.defer(cx, move |window, cx| {
-                if let Some(dock) = dock.upgrade()
-                    && let Some(tab) = dock.read(cx).active_tab_group(window, cx)
-                {
-                    window.focus(&Focusable::focus_handle(&tab, cx), cx);
+                if let Some(dock) = dock.upgrade() {
+                    dock.update(cx, |dock, cx| dock.focus_tab_panel(window, cx));
                 }
             });
         }

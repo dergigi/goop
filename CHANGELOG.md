@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Hide a sidebar when its final tab closes, including its resize handle and empty toggle. Reopening a tab restores its sidebar.
+
 - Selecting a person in New Chat immediately opens the existing conversation or starts a new chat, without a message-request dialog. Group recipient selection is available through New group chat.
 
 ## [2.1.0] - 2026-09-14

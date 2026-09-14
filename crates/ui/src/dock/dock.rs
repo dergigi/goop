@@ -5,7 +5,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext, Axis, Context, Element, Empty, Entity, IntoElement, MouseMoveEvent,
     MouseUpEvent, ParentElement as _, Pixels, Point, Render, Style, StyleRefinement, Styled as _,
-    WeakEntity, Window, div, px,
+    Subscription, WeakEntity, Window, div, px,
 };
 
 use super::{DockArea, DockItem};
@@ -74,6 +74,10 @@ pub struct Dock {
 
     /// Whether the Dock is resizing
     resizing: bool,
+
+    /// Cached outside panel rendering to avoid re-entrant reads of TabPanel.
+    pub(super) has_content: bool,
+    panel_subscription: Option<Subscription>,
 }
 
 impl Dock {
@@ -105,6 +109,8 @@ impl Dock {
             collapsible: true,
             size: px(200.0),
             resizing: false,
+            has_content: false,
+            panel_subscription: None,
         }
     }
 
@@ -184,13 +190,46 @@ impl Dock {
         }
     }
 
+    fn panel_has_content(panel: &Arc<dyn PanelView>, cx: &App) -> bool {
+        let view = panel.view();
+        if let Ok(tab) = view.clone().downcast::<TabPanel>() {
+            return !tab.read(cx).panels.is_empty();
+        }
+        if let Ok(stack) = view.downcast::<super::stack_panel::StackPanel>() {
+            return stack
+                .read(cx)
+                .panels
+                .iter()
+                .any(|panel| Self::panel_has_content(panel, cx));
+        }
+        // A standalone panel (including Inbox/Requests) is meaningful even
+        // when the list inside it is empty.
+        true
+    }
+
+    fn refresh_content(&mut self, cx: &mut Context<Self>) {
+        self.has_content = Self::panel_has_content(&self.panel.view(), cx);
+        cx.notify();
+        _ = self.dock_area.update(cx, |_, cx| cx.notify());
+    }
+
     pub fn set_panel(&mut self, panel: DockItem, _window: &mut Window, cx: &mut Context<Self>) {
+        self.panel_subscription = match &panel {
+            DockItem::Tabs { view, .. } => {
+                Some(cx.observe(view, |this, _, cx| this.refresh_content(cx)))
+            }
+            DockItem::Split { view, .. } => {
+                Some(cx.observe(view, |this, _, cx| this.refresh_content(cx)))
+            }
+            DockItem::Panel { .. } => None,
+        };
+        self.has_content = Self::panel_has_content(&panel.view(), cx);
         self.panel = panel;
         cx.notify();
     }
 
     pub fn is_open(&self) -> bool {
-        self.open
+        self.open && self.has_content
     }
 
     pub fn toggle_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -325,7 +364,7 @@ impl Dock {
 
 impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        if !self.open && !self.placement.is_bottom() {
+        if !self.has_content || (!self.open && !self.placement.is_bottom()) {
             return div();
         }
 
