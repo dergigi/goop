@@ -11,7 +11,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|_: &BringToFront, cx| cx.activate(true));
     cx.on_action(|_: &OpenHelp, cx| {
-        cx.open_url("https://github.com/dergigi/goop#keyboard-shortcuts")
+        cx.open_url("https://dergigi.com/goop/")
     });
     #[cfg(target_os = "macos")]
     cx.bind_keys([
@@ -83,7 +83,7 @@ fn application_menus() -> Vec<Menu> {
         ]),
         Menu::new("Help").items([
             MenuItem::action("Keyboard Shortcuts", Command::KeyboardShortcuts),
-            MenuItem::action("Goop Help", OpenHelp),
+            MenuItem::action("Usage Guide", OpenHelp),
         ]),
     ]
 }
