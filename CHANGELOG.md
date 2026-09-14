@@ -17,6 +17,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 - Selecting a person in New Chat immediately opens the existing conversation or starts a new chat, without a message-request dialog. Group recipient selection is available through New group chat.
 
+### Changed
+
+- Replace the theme collection with fixed Light and Dark palettes and a System preference, enabled by default. Existing theme choices migrate to System while other settings are retained.
+
 ## [2.1.0] - 2026-09-14
 
 Goop 2.1 makes the desktop interface calmer and easier to use with a keyboard.

@@ -1,5 +1,4 @@
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 
 use gpui::{App, Global, Pixels, SharedString, Window, px};
 
@@ -7,7 +6,6 @@ mod colors;
 mod geometry;
 mod notification;
 mod platform_kind;
-mod registry;
 mod scale;
 mod scrollbar_mode;
 mod theme;
@@ -16,7 +14,6 @@ pub use colors::*;
 pub use geometry::*;
 pub use notification::*;
 pub use platform_kind::PlatformKind;
-pub use registry::*;
 pub use scale::*;
 pub use scrollbar_mode::*;
 pub use theme::*;
@@ -40,8 +37,6 @@ pub const TABBAR_HEIGHT: Pixels = px(44.0);
 pub const SIDEBAR_WIDTH: Pixels = px(240.);
 
 pub fn init(cx: &mut App) {
-    registry::init(cx);
-
     Theme::sync_system_appearance(None, cx);
     Theme::sync_scrollbar_appearance(cx);
 }
@@ -61,9 +56,6 @@ impl ActiveTheme for App {
 pub struct Theme {
     /// Theme colors
     pub colors: ThemeColors,
-
-    /// Theme family
-    pub theme: Rc<ThemeFamily>,
 
     /// The appearance of the theme (light or dark).
     pub mode: ThemeMode,
@@ -144,24 +136,13 @@ impl Theme {
         };
     }
 
-    /// Apply a new theme to the application.
-    pub fn apply_theme(new_theme: Rc<ThemeFamily>, window: Option<&mut Window>, cx: &mut App) {
-        let theme = cx.global_mut::<Theme>();
-        let mode = theme.mode;
-        // Update the theme
-        theme.theme = new_theme;
-        // Emit a theme change event
-        Self::change(mode, window, cx);
-    }
-
     /// Change the app's appearance
     pub fn change<M>(mode: M, window: Option<&mut Window>, cx: &mut App)
     where
         M: Into<ThemeMode>,
     {
         if !cx.has_global::<Theme>() {
-            let default_theme = ThemeFamily::default();
-            let theme = Theme::from(default_theme);
+            let theme = Theme::default();
 
             cx.set_global(theme);
         }
@@ -174,9 +155,9 @@ impl Theme {
 
         // Set the theme colors
         if mode.is_dark() {
-            theme.colors = *theme.theme.dark();
+            theme.colors = ThemeColors::dark();
         } else {
-            theme.colors = *theme.theme.light();
+            theme.colors = ThemeColors::light();
         }
 
         // Refresh the window if available
@@ -186,8 +167,8 @@ impl Theme {
     }
 }
 
-impl From<ThemeFamily> for Theme {
-    fn from(family: ThemeFamily) -> Self {
+impl Default for Theme {
+    fn default() -> Self {
         let platform = PlatformKind::platform();
         let mode = ThemeMode::default();
 
@@ -199,8 +180,8 @@ impl From<ThemeFamily> for Theme {
 
         // Define the theme colors based on the appearance
         let colors = match mode {
-            ThemeMode::Light => family.light(),
-            ThemeMode::Dark => family.dark(),
+            ThemeMode::Light => ThemeColors::light(),
+            ThemeMode::Dark => ThemeColors::dark(),
         };
 
         Theme {
@@ -212,8 +193,7 @@ impl From<ThemeFamily> for Theme {
             scrollbar_mode: ScrollbarMode::default(),
             notification: NotificationSettings::default(),
             mode,
-            colors: *colors,
-            theme: Rc::new(family),
+            colors,
             platform,
         }
     }

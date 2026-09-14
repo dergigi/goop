@@ -6,7 +6,7 @@ use gpui::{
 };
 use settings::AppSettings;
 use state::NostrRegistry;
-use theme::{ActiveTheme, Theme, ThemeMode};
+use theme::{ActiveTheme, Appearance, Theme};
 use ui::button::{Button, ButtonVariants};
 use ui::group_box::{GroupBox, GroupBoxVariants};
 use ui::input::{Input, InputState};
@@ -57,9 +57,9 @@ impl Preferences {
     }
 
     /// Set the theme mode (light or dark)
-    fn set_theme_mode(mode: ThemeMode, window: &mut Window, cx: &mut App) {
-        AppSettings::update_theme_mode(mode, cx);
-        Theme::change(mode, Some(window), cx);
+    fn set_appearance(mode: Appearance, window: &mut Window, cx: &mut App) {
+        AppSettings::update_appearance(mode, cx);
+        Theme::change(mode.resolve(window.appearance()), Some(window), cx);
     }
 }
 
@@ -67,16 +67,15 @@ impl Render for Preferences {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const SCREENING: &str = "Show an screening dialog to verify the unknown sender.";
         const AVATAR: &str = "Hide all avatar pictures to improve performance.";
-        const MODE: &str = "Use the selected light or dark theme, or to follow the OS.";
+        const MODE: &str = "Follow your system appearance, or choose light or dark.";
         const NIP4E: &str = "Use a dedicated key to encrypt and decrypt messages.";
-        const RESET: &str = "Reset the theme to the default one.";
 
         let servers = NostrRegistry::global(cx).read(cx).media_servers().to_vec();
         let screening = AppSettings::get_screening(cx);
         let render_markdown = AppSettings::get_render_markdown(cx);
         let hide_avatar = AppSettings::get_hide_avatar(cx);
         let nip4e = AppSettings::get_nip4e(cx);
-        let theme_mode = AppSettings::get_theme_mode(cx);
+        let appearance = AppSettings::get_appearance(cx);
 
         v_flex()
             .gap_4()
@@ -127,7 +126,7 @@ impl Render for Preferences {
                             .justify_between()
                             .child(
                                 v_flex()
-                                    .child(div().text_sm().child(SharedString::from("Mode")))
+                                    .child(div().text_sm().child(SharedString::from("Appearance")))
                                     .child(
                                         div()
                                             .text_xs()
@@ -137,46 +136,21 @@ impl Render for Preferences {
                             )
                             .child(
                                 Button::new("theme-mode")
-                                    .label(theme_mode.name())
+                                    .label(appearance.name())
                                     .ghost_alt()
                                     .small()
                                     .dropdown_menu(|this, _window, _cx| {
-                                        this.item(PopupMenuItem::new("Light").on_click(
+                                        this.item(PopupMenuItem::new("System").on_click(|_, window, cx| { Self::set_appearance(Appearance::System, window, cx); }))
+                                        .item(PopupMenuItem::new("Light").on_click(
                                             |_, window, cx| {
-                                                Self::set_theme_mode(ThemeMode::Light, window, cx);
+                                                Self::set_appearance(Appearance::Light, window, cx);
                                             },
                                         ))
                                         .item(
                                             PopupMenuItem::new("Dark").on_click(|_, window, cx| {
-                                                Self::set_theme_mode(ThemeMode::Dark, window, cx);
+                                                Self::set_appearance(Appearance::Dark, window, cx);
                                             }),
                                         )
-                                    }),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .justify_between()
-                            .child(
-                                v_flex()
-                                    .child(div().text_sm().child(SharedString::from("Reset theme")))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().text_muted)
-                                            .child(SharedString::from(RESET)),
-                                    ),
-                            )
-                            .child(
-                                Button::new("reset")
-                                    .label("Reset")
-                                    .ghost_alt()
-                                    .small()
-                                    .on_click(move |_ev, window, cx| {
-                                        AppSettings::global(cx).update(cx, |this, cx| {
-                                            this.reset_theme(window, cx);
-                                        })
                                     }),
                             ),
                     ),

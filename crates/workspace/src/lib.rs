@@ -17,7 +17,7 @@ use person::{PersonRegistry, shorten_pubkey};
 use serde::Deserialize;
 use smallvec::{SmallVec, smallvec};
 use state::{IMAGE_CACHE_SIZE, NostrRegistry, StateEvent};
-use theme::{ActiveTheme, SIDEBAR_WIDTH, Theme, ThemeRegistry};
+use theme::{ActiveTheme, Appearance, SIDEBAR_WIDTH, Theme};
 use ui::avatar::Avatar;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{
@@ -137,7 +137,9 @@ impl Workspace {
         subscriptions.push(
             // Observe system appearance and update theme
             cx.observe_window_appearance(window, |_this, window, cx| {
-                Theme::sync_system_appearance(Some(window), cx);
+                if AppSettings::get_appearance(cx) == Appearance::System {
+                    Theme::sync_system_appearance(Some(window), cx);
+                }
             }),
         );
 
@@ -396,7 +398,7 @@ impl Workspace {
             Command::NewConversation => {
                 dialogs::new_chat::open(window, cx);
             }
-            Command::ShowSettings => {
+            Command::ShowSettings | Command::ToggleTheme => {
                 let view = settings::init(window, cx);
 
                 window.open_modal(cx, move |this, _window, _cx| {
@@ -475,9 +477,6 @@ impl Workspace {
             }
             Command::ResetEncryption => {
                 self.confirm_reset_encryption(window, cx);
-            }
-            Command::ToggleTheme => {
-                self.theme_selector(window, cx);
             }
             Command::BackupEncryption => {
                 let device = DeviceRegistry::global(cx).downgrade();
@@ -591,86 +590,6 @@ impl Workspace {
         });
     }
 
-    fn theme_selector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.open_modal(cx, move |this, _window, cx| {
-            let registry = ThemeRegistry::global(cx);
-            let themes = registry.read(cx).themes();
-
-            this.width(px(520.))
-                .show_close(true)
-                .title("Select theme")
-                .child(v_flex().gap_2().w_full().children({
-                    let mut items = vec![];
-
-                    for (ix, (path, theme)) in themes.iter().enumerate() {
-                        items.push(
-                            h_flex()
-                                .id(ix)
-                                .group("")
-                                .px_2()
-                                .h_8()
-                                .w_full()
-                                .justify_between()
-                                .rounded(cx.theme().radius)
-                                .bg(cx.theme().ghost_element_background)
-                                .hover(|this| this.bg(cx.theme().ghost_element_hover))
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .flex_1()
-                                        .text_sm()
-                                        .child(theme.name.clone())
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .italic()
-                                                .text_color(cx.theme().text_muted)
-                                                .child(theme.author.clone()),
-                                        ),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .invisible()
-                                        .group_hover("", |this| this.visible())
-                                        .child(
-                                            Button::new(format!("url-{ix}"))
-                                                .icon(IconName::Link)
-                                                .ghost()
-                                                .small()
-                                                .on_click({
-                                                    let theme = theme.clone();
-                                                    move |_ev, _window, cx| {
-                                                        cx.open_url(&theme.url);
-                                                    }
-                                                }),
-                                        )
-                                        .child(
-                                            Button::new(format!("set-{ix}"))
-                                                .icon(IconName::Check)
-                                                .primary()
-                                                .small()
-                                                .on_click({
-                                                    let path = path.clone();
-                                                    move |_ev, window, cx| {
-                                                        let settings = AppSettings::global(cx);
-                                                        let path = path.clone();
-
-                                                        settings.update(cx, |this, cx| {
-                                                            this.set_theme(path, window, cx);
-                                                        })
-                                                    }
-                                                }),
-                                        ),
-                                ),
-                        );
-                    }
-
-                    items
-                }))
-        });
-    }
-
     fn titlebar_left(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let nostr = NostrRegistry::global(cx);
         let current_user = nostr.read(cx).current_user();
@@ -766,11 +685,6 @@ impl Workspace {
                                     "Contact List",
                                     IconName::Book,
                                     Box::new(Command::ShowContactList),
-                                )
-                                .menu_with_icon(
-                                    "Themes",
-                                    IconName::Sun,
-                                    Box::new(Command::ToggleTheme),
                                 )
                                 // Only offer in-app updates when auto-update is
                                 // enabled (managed channels update themselves).

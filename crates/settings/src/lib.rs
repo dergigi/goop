@@ -1,12 +1,10 @@
-use std::rc::Rc;
-
 use anyhow::{Error, anyhow};
 use common::config_dir;
 use gpui::{App, AppContext, Context, Entity, Global, Subscription, Task, Window};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
-use theme::{Theme, ThemeFamily, ThemeMode};
+use theme::{Appearance, Theme};
 
 pub fn init(window: &mut Window, cx: &mut App) {
     AppSettings::set_global(cx.new(|cx| AppSettings::new(window, cx)), cx)
@@ -36,8 +34,7 @@ macro_rules! setting_accessors {
 }
 
 setting_accessors! {
-    pub theme: Option<String>,
-    pub theme_mode: ThemeMode,
+    pub appearance: Appearance,
     pub hide_avatar: bool,
     pub render_markdown: bool,
     pub screening: bool,
@@ -108,11 +105,9 @@ impl RoomConfig {
 /// Settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    /// Theme
-    pub theme: Option<String>,
-
-    /// Theme mode
-    pub theme_mode: ThemeMode,
+    /// Missing in legacy settings: migrate to following the system.
+    #[serde(default)]
+    pub appearance: Appearance,
 
     /// Hide user avatars
     pub hide_avatar: bool,
@@ -141,8 +136,7 @@ fn default_render_markdown() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: None,
-            theme_mode: ThemeMode::default(),
+            appearance: Appearance::System,
             hide_avatar: false,
             render_markdown: default_render_markdown(),
             screening: true,
@@ -253,44 +247,10 @@ impl AppSettings {
         }
     }
 
-    /// Set theme
-    pub fn set_theme<T>(&mut self, theme: T, window: &mut Window, cx: &mut Context<Self>)
-    where
-        T: Into<String>,
-    {
-        // Update settings
-        self.inner.update(cx, |this, cx| {
-            this.theme = Some(theme.into());
-            cx.notify();
-        });
-
-        // Apply the new theme
-        self.apply_theme(window, cx);
-    }
-
-    /// Reset theme
-    pub fn reset_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.inner.update(cx, |this, cx| {
-            this.theme = None;
-            cx.notify();
-        });
-        self.apply_theme(window, cx);
-    }
-
-    /// Apply theme
+    /// Apply the fixed light/dark palette using the saved appearance preference.
     pub fn apply_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(name) = self.inner.read(cx).theme.as_ref() {
-            let mode = self.inner.read(cx).theme_mode;
-
-            if let Ok(new_theme) = ThemeFamily::from_assets(name) {
-                Theme::apply_theme(Rc::new(new_theme), Some(window), cx);
-                Theme::change(mode, Some(window), cx);
-            } else {
-                log::info!("Failed to load theme: {name}");
-            }
-        } else {
-            Theme::apply_theme(Rc::new(ThemeFamily::default()), Some(window), cx);
-        }
+        let mode = self.inner.read(cx).appearance.resolve(window.appearance());
+        Theme::change(mode, Some(window), cx);
     }
 
     /// Check if decoupling encryption key is enabled
@@ -346,5 +306,35 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let restored: Settings = serde_json::from_str(&json).unwrap();
         assert!(!restored.render_markdown);
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::*;
+    #[test]
+    fn legacy_theme_settings_migrate_without_losing_other_preferences() {
+        let mut json = serde_json::to_value(Settings::default()).unwrap();
+        let object = json.as_object_mut().unwrap();
+        object.remove("appearance");
+        object.insert("theme".into(), serde_json::json!("themes/forest.json"));
+        object.insert("theme_mode".into(), serde_json::json!("Dark"));
+        object.insert("hide_avatar".into(), serde_json::json!(true));
+        let settings: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(settings.appearance, Appearance::System);
+        assert!(settings.hide_avatar);
+        let saved = serde_json::to_value(settings).unwrap();
+        assert!(saved.get("theme").is_none());
+        assert!(saved.get("theme_mode").is_none());
+    }
+    #[test]
+    fn manual_appearance_round_trips() {
+        let mut settings = Settings::default();
+        settings.appearance = Appearance::Dark;
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Settings>(&saved).unwrap().appearance,
+            Appearance::Dark
+        );
     }
 }
