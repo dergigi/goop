@@ -1399,7 +1399,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "coop"
+name = "goop"
 version = "1.0.1"
 dependencies = [
  "assets",
@@ -1425,7 +1425,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "coop_web"
+name = "goop_web"
 version = "1.0.1"
 dependencies = [
  "assets",

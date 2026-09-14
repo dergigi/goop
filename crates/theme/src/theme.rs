@@ -61,10 +61,10 @@ pub struct ThemeFamily {
 impl Default for ThemeFamily {
     fn default() -> Self {
         ThemeFamily {
-            id: "coop".into(),
-            name: "Coop Default Theme".into(),
-            author: "Coop".into(),
-            url: "https://github.com/lumehq/coop".into(),
+            id: "goop".into(),
+            name: "Goop Default Theme".into(),
+            author: "Goop".into(),
+            url: "https://github.com/dergigi/goop".into(),
             light: ThemeColors::light(),
             dark: ThemeColors::dark(),
         }
@@ -185,8 +185,8 @@ mod tests {
         let json_data = r##"{
             "id": "test-theme",
             "name": "Test Theme",
-            "author": "Coop",
-            "url": "https://github.com/lumehq/coop",
+            "author": "Goop",
+            "url": "https://github.com/dergigi/goop",
             "light": {
                 "background": "#ffffff",
                 "surface_background": "#fafafa",

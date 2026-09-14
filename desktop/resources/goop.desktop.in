@@ -10,5 +10,5 @@ Exec=$APP_CLI $APP_ARGS
 Icon=$APP_ICON
 Categories=Network;InstantMessaging;
 Keywords=chat;messaging;nostr;privacy;
-MimeType=x-scheme-handler/nostr;x-scheme-handler/coop;
+MimeType=x-scheme-handler/nostr;x-scheme-handler/goop;
 Actions=NewChat;

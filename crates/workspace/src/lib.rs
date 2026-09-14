@@ -4,7 +4,7 @@ use ::settings::AppSettings;
 use anyhow::Error;
 use auto_update::AutoUpdater;
 use chat::{ChatEvent, ChatRegistry};
-use common::{CoopImageCache, download_dir};
+use common::{GoopImageCache, download_dir};
 use device::{DeviceEvent, DeviceRegistry};
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -65,7 +65,7 @@ pub struct Workspace {
     dock: Entity<DockArea>,
 
     /// App's Image Cache
-    image_cache: Entity<CoopImageCache>,
+    image_cache: Entity<GoopImageCache>,
 
     /// Async tasks
     tasks: Vec<Task<Result<(), Error>>>,
@@ -82,7 +82,7 @@ impl Workspace {
 
         let sidebar = cx.new(|cx| Sidebar::new(window, cx));
         let dock = cx.new(|cx| DockArea::new(window, cx));
-        let image_cache = CoopImageCache::new(IMAGE_CACHE_SIZE, cx);
+        let image_cache = GoopImageCache::new(IMAGE_CACHE_SIZE, cx);
 
         let mut subscriptions = smallvec![];
 

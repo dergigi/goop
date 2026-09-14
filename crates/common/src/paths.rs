@@ -14,14 +14,14 @@ pub fn download_dir() -> &'static PathBuf {
         .get_or_init(|| dirs::download_dir().expect("failed to determine download directory"))
 }
 
-/// Returns the path to the configuration directory used by Coop.
+/// Returns the path to the configuration directory used by Goop.
 pub fn config_dir() -> &'static PathBuf {
     static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONFIG_DIR.get_or_init(|| {
         if cfg!(target_os = "windows") {
             return dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
-                .join("Coop");
+                .join("Goop");
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -30,19 +30,19 @@ pub fn config_dir() -> &'static PathBuf {
             } else {
                 dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
-            .join("coop");
+            .join("goop");
         }
 
-        home_dir().join(".config").join("coop")
+        home_dir().join(".config").join("goop")
     })
 }
 
-/// Returns the path to the support directory used by Coop.
+/// Returns the path to the support directory used by Goop.
 pub fn support_dir() -> &'static PathBuf {
     static SUPPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
     SUPPORT_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            return home_dir().join("Library/Application Support/Coop");
+            return home_dir().join("Library/Application Support/Goop");
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -51,13 +51,13 @@ pub fn support_dir() -> &'static PathBuf {
             } else {
                 dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
-            .join("coop");
+            .join("goop");
         }
 
         if cfg!(target_os = "windows") {
             return dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("coop");
+                .join("goop");
         }
 
         config_dir().clone()

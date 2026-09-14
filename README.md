@@ -1,8 +1,14 @@
-Coop is a simple, fast, and reliable nostr client for secure messaging across all platforms.
+# Goop
+
+Goop is Gigi's fork of [Coop](https://git.reya.info/reya/coop), a simple, fast, and reliable nostr client for secure messaging across all platforms.
+
+Upstream: https://git.reya.info/reya/coop.git
 
 ### License
 
 Copyright (C) 2025 Ren Amamiya & other Coop contributors
+
+Copyright (C) 2026 Gigi & other Goop contributors
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 

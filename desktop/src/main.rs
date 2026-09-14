@@ -11,7 +11,7 @@ use nostr_sdk::prelude::SecretKey;
 use state::{APP_ID, CLIENT_NAME};
 use ui::Root;
 
-actions!(coop, [Quit]);
+actions!(goop, [Quit]);
 
 fn main() {
     // Initialize logging
@@ -49,7 +49,7 @@ fn main() {
 
             // Set menu items
             cx.set_menus(vec![Menu {
-                name: "Coop".into(),
+                name: "Goop".into(),
                 items: vec![MenuItem::action("Quit", Quit)],
                 disabled: false,
             }]);

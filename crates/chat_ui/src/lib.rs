@@ -4,7 +4,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 pub use actions::*;
 use anyhow::{Context as AnyhowContext, Error};
 use chat::{ChatRegistry, Message, Room, RoomEvent, SendReport, SendStatus};
-use common::{TimestampExt, coop_cache};
+use common::{TimestampExt, goop_cache};
 use futures::lock::Mutex;
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -856,7 +856,7 @@ impl ChatPanel {
             .line_height(relative(1.3))
             .child(
                 svg()
-                    .path("brand/coop.svg")
+                    .path("brand/goop.svg")
                     .size_12()
                     .text_color(cx.theme().ghost_element_active),
             )
@@ -1641,7 +1641,7 @@ impl Focusable for ChatPanel {
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .image_cache(coop_cache(self.id.clone(), 100))
+            .image_cache(goop_cache(self.id.clone(), 100))
             .on_action(cx.listener(Self::on_command))
             .size_full()
             .when(*self.subject_bar.read(cx), |this| {

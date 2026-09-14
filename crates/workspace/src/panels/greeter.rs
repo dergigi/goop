@@ -61,7 +61,7 @@ impl Panel for GreeterPanel {
         div()
             .child(
                 svg()
-                    .path("brand/coop.svg")
+                    .path("brand/goop.svg")
                     .size_4()
                     .text_color(cx.theme().text_muted),
             )
@@ -79,7 +79,7 @@ impl Focusable for GreeterPanel {
 
 impl Render for GreeterPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const TITLE: &str = "Welcome to Coop!";
+        const TITLE: &str = "Welcome to Goop!";
         const DESCRIPTION: &str = "Chat Freely, Stay Private on Nostr.";
 
         h_flex()
@@ -101,7 +101,7 @@ impl Render for GreeterPanel {
                             .w_full()
                             .child(
                                 svg()
-                                    .path("brand/coop.svg")
+                                    .path("brand/goop.svg")
                                     .size_12()
                                     .text_color(cx.theme().icon_muted),
                             )

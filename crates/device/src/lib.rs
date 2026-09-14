@@ -22,7 +22,7 @@ use ui::button::Button;
 use ui::notification::{Notification, NotificationKind};
 use ui::{Disableable, Sizable, StyledExt, WindowExtension, h_flex, v_flex};
 
-const IDENTIFIER: &str = "coop:device";
+const IDENTIFIER: &str = "goop:device";
 
 pub fn init(window: &mut Window, cx: &mut App) {
     DeviceRegistry::set_global(cx.new(|cx| DeviceRegistry::new(window, cx)), cx);
@@ -606,7 +606,7 @@ impl DeviceRegistry {
     /// Build a notification for the encryption request.
     fn notification(&self, event: Event, cx: &Context<Self>) -> Notification {
         const MSG: &str = "You've requested an encryption key from another device. \
-                           Approve to allow Coop to share with it.";
+                           Approve to allow Goop to share with it.";
 
         let request = Announcement::from(&event);
         let persons = PersonRegistry::global(cx);

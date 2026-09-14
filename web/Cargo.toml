@@ -1,5 +1,5 @@
 [package]
-name = "coop_web"
+name = "goop_web"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

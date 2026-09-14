@@ -7,24 +7,24 @@ use gpui::{
     ImageCacheItem, ImageCacheProvider, ImageSource, Resource, hash,
 };
 
-pub fn coop_cache(id: impl Into<ElementId>, max_items: usize) -> CoopImageCacheProvider {
-    CoopImageCacheProvider {
+pub fn goop_cache(id: impl Into<ElementId>, max_items: usize) -> GoopImageCacheProvider {
+    GoopImageCacheProvider {
         id: id.into(),
         max_items,
     }
 }
 
-pub struct CoopImageCacheProvider {
+pub struct GoopImageCacheProvider {
     id: ElementId,
     max_items: usize,
 }
 
-impl ImageCacheProvider for CoopImageCacheProvider {
+impl ImageCacheProvider for GoopImageCacheProvider {
     fn provide(&mut self, window: &mut gpui::Window, cx: &mut App) -> gpui::AnyImageCache {
         window
             .with_global_id(self.id.clone(), |id, window| {
                 window.with_element_state(id, |cache, _| {
-                    let cache = cache.unwrap_or_else(|| CoopImageCache::new(self.max_items, cx));
+                    let cache = cache.unwrap_or_else(|| GoopImageCache::new(self.max_items, cx));
                     (cache.clone(), cache)
                 })
             })
@@ -32,16 +32,16 @@ impl ImageCacheProvider for CoopImageCacheProvider {
     }
 }
 
-pub struct CoopImageCache {
+pub struct GoopImageCache {
     max_items: usize,
     usage_list: VecDeque<u64>,
     cache: HashMap<u64, (ImageCacheItem, Resource)>,
 }
 
-impl CoopImageCache {
+impl GoopImageCache {
     pub fn new(max_items: usize, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
-            log::info!("Creating CoopImageCache");
+            log::info!("Creating GoopImageCache");
             cx.on_release(|this: &mut Self, cx| {
                 for (ix, (mut image, resource)) in take(&mut this.cache) {
                     if let Some(Ok(image)) = image.get() {
@@ -53,7 +53,7 @@ impl CoopImageCache {
             })
             .detach();
 
-            CoopImageCache {
+            GoopImageCache {
                 max_items,
                 usage_list: VecDeque::with_capacity(max_items),
                 cache: HashMap::with_capacity(max_items),
@@ -62,7 +62,7 @@ impl CoopImageCache {
     }
 }
 
-impl ImageCache for CoopImageCache {
+impl ImageCache for GoopImageCache {
     fn load(
         &mut self,
         resource: &Resource,

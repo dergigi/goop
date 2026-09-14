@@ -1,15 +1,15 @@
 /// Client name (Application name)
-pub const CLIENT_NAME: &str = "Coop";
+pub const CLIENT_NAME: &str = "Goop";
 
-/// COOP's public key
+/// Upstream Coop public key
 pub const COOP_PUBKEY: &str = "npub1j3rz3ndl902lya6ywxvy5c983lxs8mpukqnx4pa4lt5wrykwl5ys7wpw3x";
 
 /// App ID
-pub const APP_ID: &str = "su.reya.coop";
+pub const APP_ID: &str = "com.dergigi.goop";
 
 /// Keyring name
-pub const MASTER_KEYRING: &str = "Coop Master Key";
-pub const USER_KEYRING: &str = "Coop User Credential";
+pub const MASTER_KEYRING: &str = "Goop Master Key";
+pub const USER_KEYRING: &str = "Goop User Credential";
 
 /// Default timeout for subscription
 pub const TIMEOUT: u64 = 2;

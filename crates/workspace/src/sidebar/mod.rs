@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use anyhow::Error;
 use chat::{ChatEvent, ChatRegistry, Room, RoomKind};
-use common::{DebouncedDelay, TimestampExt, coop_cache};
+use common::{DebouncedDelay, TimestampExt, goop_cache};
 use entry::RoomEntry;
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -521,7 +521,7 @@ impl Render for Sidebar {
         };
 
         v_flex()
-            .image_cache(coop_cache("sidebar", IMAGE_CACHE_SIZE))
+            .image_cache(goop_cache("sidebar", IMAGE_CACHE_SIZE))
             .size_full()
             .gap_2()
             .child(

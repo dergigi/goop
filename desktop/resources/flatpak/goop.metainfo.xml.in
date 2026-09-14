@@ -7,8 +7,8 @@
     <name>$APP_NAME</name>
     <summary>Chat Freely, Stay Private on Nostr</summary>
 
-    <developer id="su.reya">
-        <name translate="no">Ren Amamiya</name>
+    <developer id="com.dergigi">
+        <name translate="no">Gigi</name>
     </developer>
 
     <description>
@@ -35,13 +35,13 @@
         <content_attribute id="social-audio">intense</content_attribute>
     </content_rating>
 
-    <url type="homepage">https://reya.su/coop</url>
-    <url type="bugtracker">https://github.com/lumehq/coop/issues</url>
-    <url type="faq">https://github.com/lumehq/coop</url>
-    <url type="help">https://github.com/lumehq/coop/issues</url>
-    <url type="contact">https://reya.su/</url>
-    <url type="vcs-browser">https://github.com/lumehq/coop</url>
-    <url type="contribute">https://github.com/lumehq/coop/blob/main/CONTRIBUTING.md</url>
+    <url type="homepage">https://github.com/dergigi/goop</url>
+    <url type="bugtracker">https://github.com/dergigi/goop/issues</url>
+    <url type="faq">https://github.com/dergigi/goop</url>
+    <url type="help">https://github.com/dergigi/goop/issues</url>
+    <url type="contact">https://dergigi.com/</url>
+    <url type="vcs-browser">https://github.com/dergigi/goop</url>
+    <url type="contribute">https://github.com/dergigi/goop</url>
 
     <supports>
         <internet>yes</internet>
@@ -55,7 +55,7 @@
 
     <screenshots>
         <screenshot type="default">
-            <caption>Coop with the default screen, showing current user's chat rooms</caption>
+            <caption>Goop with the default screen, showing current user's chat rooms</caption>
             <image>https://npub1zfss807aer0j26mwp2la0ume0jqde3823rmu97ra6sgyyg956e0s6xw445.blossom.band/07b03b8c269b67eedcd265d11ebe7384ba797364056a60105cd02cf34de4eff2.png</image>
         </screenshot>
         <screenshot>
@@ -63,7 +63,7 @@
             <image>https://npub1zfss807aer0j26mwp2la0ume0jqde3823rmu97ra6sgyyg956e0s6xw445.blossom.band/4125cd78696274e92c53c09ac2fed0c8c7a74912dca6ab80bef21badd6ae4232.png</image>
         </screenshot>
         <screenshot>
-            <caption>Coop in Dark Mode with split panels feature</caption>
+            <caption>Goop in Dark Mode with split panels feature</caption>
             <image>https://npub1zfss807aer0j26mwp2la0ume0jqde3823rmu97ra6sgyyg956e0s6xw445.blossom.band/9cea2a2d5d18ec6472d357f7288f283dc43c672580956cef3242f0d07e214691.png</image>
         </screenshot>
         <screenshot>

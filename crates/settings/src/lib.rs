@@ -122,7 +122,7 @@ pub struct Settings {
     /// Enable decoupling encryption key
     pub nip4e: bool,
 
-    /// Trusted relays; Coop will automatically authenticate with these relays
+    /// Trusted relays; Goop will automatically authenticate with these relays
     pub trusted_relays: Vec<String>,
 
     /// Server for blossom media attachments

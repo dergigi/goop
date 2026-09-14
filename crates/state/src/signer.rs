@@ -191,9 +191,9 @@ impl AsyncNip44 for UniversalSigner {
 }
 
 #[derive(Debug, Clone)]
-pub struct CoopAuthUrlHandler;
+pub struct GoopAuthUrlHandler;
 
-impl AuthUrlHandler for CoopAuthUrlHandler {
+impl AuthUrlHandler for GoopAuthUrlHandler {
     fn on_auth_url(
         &self,
         auth_url: Url,

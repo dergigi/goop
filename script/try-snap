@@ -5,7 +5,7 @@
 # It expects a version to be passed as the first argument, and expects
 # the built `.snap` for that version to be in the current directory.
 #
-# This will uninstall the current `coop` snap, replacing it with a snap
+# This will uninstall the current `goop` snap, replacing it with a snap
 # that directly uses the `snap/unpacked` directory.
 
 set -euxo pipefail
@@ -23,7 +23,7 @@ case "$ARCH" in
   *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-snap_file="coop_${1}_${ARCH_SUFFIX}.snap"
+snap_file="goop_${1}_${ARCH_SUFFIX}.snap"
 if [ ! -f "$snap_file" ]; then
   echo "Snap file not found: $snap_file"
   echo "Build it first with: script/bundle-snap $1"
@@ -33,7 +33,7 @@ fi
 # Rerun as root
 [ "$UID" -eq 0 ] || exec sudo bash -e "$0" "$@"
 
-snap remove coop || true
+snap remove goop || true
 mkdir -p snap
 rm -rf snap/unpacked
 unsquashfs -dest snap/unpacked "$snap_file"

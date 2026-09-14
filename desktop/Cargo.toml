@@ -1,18 +1,18 @@
 [package]
-name = "coop"
+name = "goop"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "coop"
+name = "goop"
 path = "src/main.rs"
 
 [package.metadata.packager]
-name = "Coop"
-product-name = "Coop"
+name = "Goop"
+product-name = "Goop"
 description = "Chat Freely, Stay Private on Nostr"
-identifier = "su.reya.coop"
+identifier = "com.dergigi.goop"
 category = "SocialNetworking"
 version = "1.0.1"
 out-dir = "../dist"

@@ -1,9 +1,9 @@
 # Snaps built by snapcraft without Snap Store credentials are unsigned and
 # cannot be installed without bypassing signature checks. Use:
-#   sudo snap install --dangerous ./coop_<version>_<arch>.snap
-# For signed installs (`snap install coop`), publish via the Snap Store.
-name: coop
-title: Coop
+#   sudo snap install --dangerous ./goop_<version>_<arch>.snap
+# For signed installs (`snap install goop`), publish via the Snap Store.
+name: goop
+title: Goop
 base: core24
 version: "$RELEASE_VERSION"
 summary: Chat Freely, Stay Private on Nostr
@@ -14,15 +14,15 @@ description: |
 grade: stable
 confinement: classic
 compression: lzo
-website: https://reya.su/coop
-source-code: https://github.com/lumehq/coop
-issues: https://github.com/lumehq/coop/issues
-contact: https://reya.su
+website: https://github.com/dergigi/goop
+source-code: https://github.com/dergigi/goop
+issues: https://github.com/dergigi/goop/issues
+contact: https://dergigi.com
 
 parts:
-  coop:
+  goop:
     plugin: dump
-    source: target/release/coop-linux-$ARCH_SUFFIX.tar.gz
+    source: target/release/goop-linux-$ARCH_SUFFIX.tar.gz
 
     organize:
       # These renames seem to not be necessary, but it's tidier.
@@ -31,10 +31,10 @@ parts:
 
     stage-packages:
       - libasound2t64
-      # snapcraft has a lint that this is unused, but without it Coop exits with
+      # snapcraft has a lint that this is unused, but without it Goop exits with
       # "Missing Vulkan entry points: LibraryLoadFailure" in blade_graphics.
       - libvulkan1
-      # snapcraft has a lint that this is unused, but without it Coop exits with
+      # snapcraft has a lint that this is unused, but without it Goop exits with
       # "NoWaylandLib" when run with Wayland.
       - libwayland-client0
       - libxcb1
@@ -57,8 +57,8 @@ parts:
       - -usr/share/man
 
 apps:
-  coop:
-    command: usr/bin/coop
-    common-id: su.reya.coop
+  goop:
+    command: usr/bin/goop
+    common-id: com.dergigi.goop
     environment:
-      COOP_BUNDLE_TYPE: snap
+      GOOP_BUNDLE_TYPE: snap

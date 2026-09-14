@@ -97,7 +97,7 @@ jobs:
       - name: Build Snap
         if: runner.os == 'Linux'
         run: |
-          VERSION=$(script/get-crate-version coop)
+          VERSION=$(script/get-crate-version goop)
           ./script/bundle-linux
           ./script/bundle-snap $VERSION
 
@@ -138,7 +138,7 @@ jobs:
       - name: Get version
         id: version
         run: |
-          VERSION=$(script/get-crate-version coop)
+          VERSION=$(script/get-crate-version goop)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
@@ -154,17 +154,10 @@ jobs:
 
       - name: Create draft release
         id: create_release
-        uses: akkuman/gitea-release-action@v1
+        uses: softprops/action-gh-release@v2
         with:
-          server_url: "https://git.reya.su/"
-          repository: "reya/coop"
-          token: ${{ secrets.GITEA_TOKEN }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
           draft: true
           prerelease: false
-          files: |
-            artifacts/**/*
-
-      - name: Output release info
-        run: |
-          echo "Created draft release: ${{ steps.create_release.outputs.url }}"
-          echo "Release ID: ${{ steps.create_release.outputs.id }}"
+          files: artifacts/**/*

@@ -6,7 +6,7 @@ use gpui::{
 };
 use instant::Duration;
 use nostr_connect::prelude::*;
-use state::{CoopAuthUrlHandler, NostrRegistry, USER_KEYRING};
+use state::{GoopAuthUrlHandler, NostrRegistry, USER_KEYRING};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
@@ -152,7 +152,7 @@ impl ImportIdentity {
             let mut signer = NostrConnect::new(uri, keys, timeout, None)?;
 
             // Handle auth url with the default browser
-            signer.auth_url_handler(CoopAuthUrlHandler);
+            signer.auth_url_handler(GoopAuthUrlHandler);
 
             nostr.update(cx, |this, cx| {
                 this.set_signer(signer, cx);
@@ -208,7 +208,7 @@ impl ImportIdentity {
 impl Render for ImportIdentity {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         const BUNKER_WARN: &str = "Nostr Connect will usually take more time to get all your messages. Please keep your session open until you see all your messages.";
-        const KEY_WARN: &str = "Coop won't store your identity key on the local device. You need to re-login again in the next session. You can use Nostr Connect for persistent login.";
+        const KEY_WARN: &str = "Goop won't store your identity key on the local device. You need to re-login again in the next session. You can use Nostr Connect for persistent login.";
 
         let is_wasm = cfg!(target_arch = "wasm32");
         let require_password = self.key_input.read(cx).value().starts_with("ncryptsec1");

@@ -4,15 +4,15 @@ use gpui::{App, AppContext, Context, Entity, Global, SharedString, Subscription,
 use gpui_updater::{EngineConfig, GitHubSource, UpdateStatus, Updater, Version};
 use instant::{Duration, Instant};
 
-const COOP_UPDATE_EXPLANATION: &str = "COOP_UPDATE_EXPLANATION";
-const COOP_BUNDLE_TYPE: &str = "COOP_BUNDLE_TYPE";
+const GOOP_UPDATE_EXPLANATION: &str = "GOOP_UPDATE_EXPLANATION";
+const GOOP_BUNDLE_TYPE: &str = "GOOP_BUNDLE_TYPE";
 
 fn get_github_repo_owner() -> String {
-    std::env::var("COOP_GITHUB_REPO_OWNER").unwrap_or_else(|_| "reyakov".to_string())
+    std::env::var("GOOP_GITHUB_REPO_OWNER").unwrap_or_else(|_| "dergigi".to_string())
 }
 
 fn get_github_repo_name() -> String {
-    std::env::var("COOP_GITHUB_REPO_NAME").unwrap_or_else(|_| "coop".to_string())
+    std::env::var("GOOP_GITHUB_REPO_NAME").unwrap_or_else(|_| "goop".to_string())
 }
 
 /// Whether updates are managed by an external distribution channel
@@ -21,9 +21,9 @@ fn uses_managed_updates() -> bool {
     // The Flatpak runtime exports `FLATPAK_ID` inside the sandbox.
     std::env::var("FLATPAK_ID").is_ok()
         // Allow opting out of in-app updates via an explicit environment variable.
-        || std::env::var(COOP_UPDATE_EXPLANATION).is_ok()
-        // The Snap package sets `COOP_BUNDLE_TYPE=snap` (see snapcraft.yaml.in).
-        || std::env::var(COOP_BUNDLE_TYPE).is_ok_and(|value| value == "snap")
+        || std::env::var(GOOP_UPDATE_EXPLANATION).is_ok()
+        // The Snap package sets `GOOP_BUNDLE_TYPE=snap` (see snapcraft.yaml.in).
+        || std::env::var(GOOP_BUNDLE_TYPE).is_ok_and(|value| value == "snap")
 }
 
 /// Initialize the auto-update system.
@@ -51,7 +51,7 @@ pub use gpui_updater::UpdateStatus as AutoUpdateStatus;
 
 /// The global auto-updater entity.
 ///
-/// Wraps [`gpui_updater::Updater`] with Coop-specific configuration
+/// Wraps [`gpui_updater::Updater`] with Goop-specific configuration
 /// (GitHub repo, Flatpak detection, delayed auto-check).
 ///
 /// Retrieve the global instance via [`AutoUpdater::global`].

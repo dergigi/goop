@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Prepare Flathub submission for Coop
+# Prepare Flathub submission for Goop
 # This script:
 # 1. Vendors all Rust dependencies (crates.io + git)
 # 2. Generates release info for metainfo.xml
-# 3. Creates the Flathub manifest (su.reya.coop.yml)
+# 3. Creates the Flathub manifest (com.dergigi.goop.yml)
 #
 # Usage: ./script/prepare-flathub [--release-date YYYY-MM-DD]
 
@@ -12,9 +12,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Configuration
-APP_ID="su.reya.coop"
-APP_NAME="Coop"
-REPO_URL="https://git.reya.su/reya/coop"
+APP_ID="com.dergigi.goop"
+APP_NAME="Goop"
+REPO_URL="https://github.com/dergigi/goop"
 BRANDING_LIGHT="#FFE629"
 BRANDING_DARK="#FFE629"
 
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Get version from workspace
-VERSION=$(script/get-crate-version coop)
+VERSION=$(script/get-crate-version goop)
 if [[ -z "$RELEASE_DATE" ]]; then
     RELEASE_DATE=$(date +%Y-%m-%d)
 fi
@@ -93,7 +93,7 @@ echo "      Created flathub/release-info.xml"
 # Step 4: Generate the metainfo file with release info
 echo "[4/5] Generating metainfo.xml..."
 export APP_ID APP_NAME BRANDING_LIGHT BRANDING_DARK
-cat desktop/resources/flatpak/coop.metainfo.xml.in | \
+cat desktop/resources/flatpak/goop.metainfo.xml.in | \
     sed -e "/@release_info@/r flathub/release-info.xml" -e '/@release_info@/d' \
     > flathub/${APP_ID}.metainfo.xml
 echo "      Created flathub/${APP_ID}.metainfo.xml"
@@ -106,14 +106,14 @@ COMMIT=$(git rev-parse HEAD)
 
 # Generate the YAML manifest
 cat > flathub/${APP_ID}.yml << 'MANIFEST_EOF'
-id: su.reya.coop
+id: com.dergigi.goop
 runtime: org.freedesktop.Platform
 runtime-version: "24.08"
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
   - org.freedesktop.Sdk.Extension.llvm18
-command: coop
+command: goop
 finish-args:
   - --talk-name=org.freedesktop.Flatpak
   - --device=dri
@@ -131,11 +131,11 @@ build-options:
     CXX: clang++
 
 modules:
-  - name: coop
+  - name: goop
     buildsystem: simple
     build-options:
       env:
-        CARGO_HOME: /run/build/coop/cargo
+        CARGO_HOME: /run/build/goop/cargo
         CARGO_NET_OFFLINE: "true"
         RELEASE_VERSION: "@VERSION@"
     build-commands:
@@ -146,34 +146,34 @@ modules:
       # Extract vendored deps
       - tar -xzf vendor.tar.gz
 
-      # Build the project (entire workspace, then install coop binary)
-      - cargo build --release --offline --package coop
+      # Build the project (entire workspace, then install goop binary)
+      - cargo build --release --offline --package goop
 
       # Install binary
-      - install -Dm755 target/release/coop /app/bin/coop
+      - install -Dm755 target/release/goop /app/bin/goop
 
       # Install icons
-      - install -Dm644 desktop/resources/icon.png /app/share/icons/hicolor/512x512/apps/su.reya.coop.png
-      - install -Dm644 desktop/resources/icon@2x.png /app/share/icons/hicolor/1024x1024/apps/su.reya.coop.png
+      - install -Dm644 desktop/resources/icon.png /app/share/icons/hicolor/512x512/apps/com.dergigi.goop.png
+      - install -Dm644 desktop/resources/icon@2x.png /app/share/icons/hicolor/1024x1024/apps/com.dergigi.goop.png
 
       # Install desktop file
       - |
-        export APP_ID="su.reya.coop"
-        export APP_ICON="su.reya.coop"
-        export APP_NAME="Coop"
-        export APP_CLI="coop"
+        export APP_ID="com.dergigi.goop"
+        export APP_ICON="com.dergigi.goop"
+        export APP_NAME="Goop"
+        export APP_CLI="goop"
         export APP_ARGS="%U"
         export DO_STARTUP_NOTIFY="true"
-        envsubst < desktop/resources/coop.desktop.in > coop.desktop
-        install -Dm644 coop.desktop /app/share/applications/su.reya.coop.desktop
+        envsubst < desktop/resources/goop.desktop.in > goop.desktop
+        install -Dm644 goop.desktop /app/share/applications/com.dergigi.goop.desktop
 
       # Install metainfo (use pre-generated one with release info)
-      - install -Dm644 su.reya.coop.metainfo.xml /app/share/metainfo/su.reya.coop.metainfo.xml
+      - install -Dm644 com.dergigi.goop.metainfo.xml /app/share/metainfo/com.dergigi.goop.metainfo.xml
 
     sources:
       # Main source code - specific commit
       - type: git
-        url: https://git.reya.su/reya/coop.git
+        url: https://github.com/dergigi/goop.git
         commit: "@COMMIT@"
         tag: "v@VERSION@"
 
@@ -184,7 +184,7 @@ modules:
 
       # Pre-generated metainfo with release info
       - type: file
-        path: su.reya.coop.metainfo.xml
+        path: com.dergigi.goop.metainfo.xml
         sha256: "@METAINFO_SHA256@"
 
       # Cargo config for vendoring

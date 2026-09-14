@@ -25,7 +25,7 @@ pub use blossom::*;
 pub use constants::*;
 pub use nip4e::*;
 pub use nip05::*;
-pub use signer::{CoopAuthUrlHandler, UniversalSigner};
+pub use signer::{GoopAuthUrlHandler, UniversalSigner};
 
 pub fn init(window: &mut Window, cx: &mut App, cli_key: Option<SecretKey>) {
     // rustls uses the `aws_lc_rs` provider by default
@@ -259,7 +259,7 @@ impl NostrRegistry {
                         let mut signer = NostrConnect::new(uri, keys, timeout, None)?;
 
                         // Handle auth url with the default browser
-                        signer.auth_url_handler(CoopAuthUrlHandler);
+                        signer.auth_url_handler(GoopAuthUrlHandler);
 
                         this.update(cx, |this, cx| {
                             this.set_signer(signer, cx);
