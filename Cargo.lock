@@ -1070,6 +1070,7 @@ name = "chat"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "async-utility",
  "common",
  "device",
  "flume 0.11.1",
@@ -1079,12 +1080,16 @@ dependencies = [
  "instant",
  "itertools 0.13.0",
  "log",
+ "nostr-memory",
  "nostr-sdk",
  "person",
+ "serde",
+ "serde_json",
  "settings",
  "smallvec",
  "smol",
  "state",
+ "tokio",
 ]
 
 [[package]]

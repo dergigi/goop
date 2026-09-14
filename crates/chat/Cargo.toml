@@ -22,7 +22,15 @@ log.workspace = true
 flume.workspace = true
 
 futures.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+async-utility = "0.3.2"
 fuzzy-matcher = "0.3.7"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 smol.workspace = true
+
+[dev-dependencies]
+nostr-sdk = { workspace = true, features = ["local-relay"] }
+nostr-memory.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

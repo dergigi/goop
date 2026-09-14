@@ -1,20 +1,23 @@
 use std::cmp::Reverse;
-use std::collections::{BTreeSet, HashMap, HashSet, hash_map};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use anyhow::{Error, anyhow};
 use common::EventExt;
+use decryption::DecryptQueue;
+use futures::StreamExt;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, Global, SharedString, Subscription, Task,
-    WeakEntity, Window,
+    App, AppContext, Context, Entity, EventEmitter, Global, Subscription, Task, WeakEntity, Window,
 };
-use instant::Duration;
+use instant::{Duration, Instant};
 use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
-use state::{DEVICE_GIFTWRAP, NostrRegistry, USER_GIFTWRAP, UniversalSigner};
+use state::{NostrRegistry, StateEvent, USER_GIFTWRAP, UniversalSigner};
+mod decryption;
+mod history;
+pub use history::RelayHistory;
 
 mod message;
 mod room;
@@ -49,29 +52,12 @@ pub enum ChatEvent {
 }
 
 /// Channel signal.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 enum Signal {
     /// Inbox Relays found, the app is ready to subscribe messages
     InboxReady,
-    /// Message received from relay pool
-    Message(NewMessage),
-    /// Eose received from relay pool
-    Eose,
-    /// An error occurred
-    Error(FailedMessage),
-}
-
-impl Signal {
-    pub fn message(gift_wrap: EventId, rumor: UnsignedEvent) -> Self {
-        Self::Message(NewMessage::new(gift_wrap, rumor))
-    }
-
-    pub fn error<T>(event: &Event, reason: T) -> Self
-    where
-        T: Into<SharedString>,
-    {
-        Self::Error(FailedMessage::new(event, reason))
-    }
+    Decrypted(EventId, Result<NewMessage, FailedMessage>),
+    History(RelayUrl, RelayHistory),
 }
 
 /// Chat Registry
@@ -92,8 +78,13 @@ pub struct ChatRegistry {
     /// Mapping of unwrapped event ids to their gift wrap event ids
     event_map: Arc<RwLock<HashMap<EventId, EventId>>>,
 
-    /// True while the initial event backlog is still loading
-    tracking: Arc<AtomicBool>,
+    history: BTreeMap<RelayUrl, RelayHistory>,
+    history_running: bool,
+    last_history: Option<Instant>,
+    queue: Option<DecryptQueue>,
+    history_task: Option<Task<Result<(), Error>>>,
+    decrypt_task: Option<Task<Result<(), Error>>>,
+    retry_task: Option<Task<Result<(), Error>>>,
 
     /// Channel for sending signals to the UI.
     signal_tx: flume::Sender<Signal>,
@@ -162,6 +153,8 @@ impl ChatRegistry {
                     this.handle_notifications(cx);
                     this.get_metadata(cx);
                     this.get_rooms(cx);
+                } else if matches!(event, StateEvent::NoSigner) {
+                    this.reset(cx);
                 };
             }),
         );
@@ -177,7 +170,13 @@ impl ChatRegistry {
             trash: cx.new(|_| BTreeSet::default()),
             seen: Arc::new(RwLock::new(HashMap::default())),
             event_map: Arc::new(RwLock::new(HashMap::default())),
-            tracking: Arc::new(AtomicBool::new(true)),
+            history: BTreeMap::new(),
+            history_running: false,
+            last_history: None,
+            queue: None,
+            history_task: None,
+            decrypt_task: None,
+            retry_task: None,
             matcher: CachedMatcher(SkimMatcherV2::default()),
             signal_rx: rx,
             signal_tx: tx,
@@ -188,142 +187,90 @@ impl ChatRegistry {
         }
     }
 
-    /// Handle nostr notifications
+    /// Route live deliveries into the same bounded queue as downloaded history.
     fn handle_notifications(&mut self, cx: &mut Context<Self>) {
-        // Cancel previous notification tasks before spawning new ones
-        self.notification_listener = None;
-        self.signal_consumer = None;
-
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();
         let signer = nostr.read(cx).signer();
-
+        let Some(user) = nostr.read(cx).current_user() else {
+            return;
+        };
+        let (queue, receiver) = DecryptQueue::new();
+        self.queue = Some(queue.clone());
+        let decrypt_queue = queue.clone();
+        let decrypt_client = client.clone();
+        let signals = self.signal_tx.clone();
+        self.decrypt_task = Some(cx.background_spawn(async move {
+            decrypt_queue
+                .run(receiver, decrypt_client, signer, signals)
+                .await
+        }));
         let seen = self.seen.clone();
-        let event_map = self.event_map.clone();
-        let trash = self.trash.downgrade();
-
-        let sub_id1 = SubscriptionId::new(DEVICE_GIFTWRAP);
-        let sub_id2 = SubscriptionId::new(USER_GIFTWRAP);
-
-        // Channel for communication between nostr and gpui
         let tx = self.signal_tx.clone();
-        let rx = self.signal_rx.clone();
-
         self.notification_listener = Some(cx.background_spawn(async move {
             let mut notifications = client.notifications();
-            let mut processed_events = HashSet::new();
-            const MAX_PROCESSED: usize = 10_000;
-
             while let Some(notification) = notifications.next().await {
                 let ClientNotification::Message { message, relay_url } = notification else {
                     continue;
                 };
-
-                match *message {
-                    RelayMessage::Event { event, .. } => {
-                        // Prune the dedup set before it grows unbounded
-                        if processed_events.len() >= MAX_PROCESSED {
-                            processed_events.clear();
-                        }
-                        if !processed_events.insert(event.id) {
-                            continue;
-                        }
-
-                        // Handle msg relays event to determine when the app is ready to subscribe
-                        if event.kind == Kind::InboxRelays {
-                            let current_user = signer.get_public_key_async().await?;
-                            if event.pubkey == current_user {
-                                tx.send_async(Signal::InboxReady).await?;
-                            }
-                        }
-
-                        // Skip non-gift wrap events
-                        if event.kind != Kind::GiftWrap {
-                            continue;
-                        }
-
-                        // Keep track of which relays have seen this event
-                        {
-                            let mut seen = seen.write().unwrap();
-                            seen.entry(event.id).or_default().insert(relay_url);
-                        }
-
-                        // Extract the rumor from the gift wrap event
-                        match extract_rumor(&client, &signer, event.as_ref()).await {
-                            Ok(rumor) => {
-                                let Some(rumor_id) = rumor.id else {
-                                    log::error!("Rumor missing id after ensure_id");
-                                    continue;
-                                };
-                                {
-                                    let mut event_map = event_map.write().unwrap();
-                                    event_map.insert(rumor_id, event.id);
-                                }
-
-                                if rumor.tags.is_empty() {
-                                    let signal = Signal::error(&event, "Recipient is missing");
-                                    tx.send_async(signal).await?;
-                                }
-
-                                // Emit message for both new and backlog events
-                                let signal = Signal::message(event.id, rumor);
-                                tx.send_async(signal).await?;
-                            }
-                            Err(e) => {
-                                let reason = format!("Failed to extract rumor: {e}");
-                                let signal = Signal::error(event.as_ref(), reason);
-                                tx.send_async(signal).await?;
-                            }
-                        }
+                if let RelayMessage::Event {
+                    event,
+                    subscription_id,
+                } = *message
+                {
+                    if event.kind == Kind::InboxRelays && event.pubkey == user {
+                        tx.send_async(Signal::InboxReady).await?;
                     }
-                    RelayMessage::EndOfStoredEvents(id)
-                        if (id.as_ref() == &sub_id1 || id.as_ref() == &sub_id2) =>
+                    if event.kind == Kind::GiftWrap
+                        && event.tags.public_keys().any(|key| key == user)
                     {
-                        tx.send_async(Signal::Eose).await?;
+                        seen.write()
+                            .unwrap()
+                            .entry(event.id)
+                            .or_default()
+                            .insert(relay_url);
+                        // History pages are persisted/enqueued by the page worker.
+                        if subscription_id.as_ref().as_str() == USER_GIFTWRAP {
+                            client.database().save_event(&event).await?;
+                            queue.enqueue_live(event.into_owned()).await?;
+                        }
                     }
-                    _ => {}
                 }
             }
-
             Ok(())
         }));
-
+        let rx = self.signal_rx.clone();
         self.signal_consumer = Some(cx.spawn(async move |this, cx| {
-            while let Ok(message) = rx.recv_async().await {
-                match message {
-                    Signal::Message(message) => {
-                        this.update(cx, |this, cx| {
-                            this.new_message(message, cx);
-                        })?;
+            while let Ok(signal) = rx.recv_async().await {
+                this.update(cx, |this, cx| {
+                    match signal {
+                        Signal::InboxReady => this.get_messages(cx),
+                        Signal::History(relay, progress) => {
+                            this.history.insert(relay, progress);
+                        }
+                        Signal::Decrypted(id, result) => {
+                            this.trash.update(cx, |trash, cx| {
+                                trash.retain(|failed| failed.event_id != id);
+                                if let Err(failed) = &result {
+                                    trash.insert(failed.clone());
+                                }
+                                cx.notify();
+                            });
+                            if let Ok(message) = result {
+                                if let Some(rumor_id) = message.rumor.id {
+                                    this.event_map.write().unwrap().insert(rumor_id, id);
+                                }
+                                this.new_message(message, cx);
+                            }
+                        }
                     }
-                    Signal::InboxReady => {
-                        this.update(cx, |this, cx| {
-                            this.get_messages(cx);
-                        })?;
-                    }
-                    Signal::Eose => {
-                        this.update(cx, |this, _cx| {
-                            this.tracking.store(false, Ordering::Release);
-                        })?;
-
-                        this.update(cx, |this, cx| {
-                            this.get_rooms(cx);
-                        })?;
-                    }
-                    Signal::Error(failed) => {
-                        trash.update(cx, |this, cx| {
-                            this.insert(failed);
-                            cx.notify();
-                        })?;
-                    }
-                };
+                    cx.notify();
+                })?;
             }
-
             Ok(())
         }));
     }
 
-    /// Get all necessary metadata from relays for current user
     pub fn get_metadata(&mut self, cx: &mut Context<Self>) {
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();
@@ -379,67 +326,168 @@ impl ChatRegistry {
         }));
     }
 
-    /// Get all messages for the provided signer
     fn get_messages(&mut self, cx: &mut Context<Self>) {
+        self.start_history(false, cx);
+    }
+
+    /// Resume history automatically on opening/scanning a chat, with a cooldown.
+    pub fn ensure_history(&mut self, cx: &mut Context<Self>) {
+        if self
+            .last_history
+            .is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
+        {
+            self.start_history(false, cx);
+        }
+    }
+
+    /// Explicitly retry incomplete relays and check for additional older history.
+    pub fn load_older_history(&mut self, cx: &mut Context<Self>) {
+        self.start_history(true, cx);
+    }
+
+    fn start_history(&mut self, force: bool, cx: &mut Context<Self>) {
+        if self.history_running {
+            return;
+        }
+        let Some(queue) = self.queue.clone() else {
+            return;
+        };
         let nostr = NostrRegistry::global(cx);
+        let Some(user) = nostr.read(cx).current_user() else {
+            return;
+        };
         let client = nostr.read(cx).client();
-        let signer = nostr.read(cx).signer();
-
-        self.tasks.push(cx.spawn(async move |this, cx| {
-            let task: Task<Result<(), Error>> = cx.background_spawn(async move {
-                let public_key = signer.get_public_key_async().await?;
-
-                let filter = Filter::new()
-                    .kind(Kind::InboxRelays)
-                    .author(public_key)
-                    .limit(1);
-
-                let event = client
-                    .database()
-                    .query(filter)
-                    .await?
-                    .into_iter()
-                    .next()
-                    .ok_or(anyhow::anyhow!("No inbox relays found"))?;
-
-                let relays: Vec<RelayUrl> = nip17::extract_relay_list(&event).collect();
-                for url in relays.iter() {
-                    client.add_relay(url).and_connect().await?;
-                }
-
-                let filter = Filter::new().kind(Kind::GiftWrap).pubkey(public_key);
-                let id = SubscriptionId::new(USER_GIFTWRAP);
-
-                let target: HashMap<RelayUrl, Filter> = relays
-                    .into_iter()
-                    .map(|relay| (relay, filter.clone()))
-                    .collect();
-
-                client.subscribe(target).with_id(id).await?;
-
-                Ok(())
-            });
-
-            if let Err(e) = task.await {
-                this.update(cx, |_this, cx| {
-                    cx.emit(ChatEvent::Error(e.to_string()));
-                })?;
+        let signals = self.signal_tx.clone();
+        self.history_running = true;
+        self.last_history = Some(Instant::now());
+        self.history.clear();
+        cx.notify();
+        let task = cx.background_spawn(async move {
+            // Replay locally saved ciphertext, including failures from an earlier
+            // session, before advancing the persisted network checkpoint.
+            let cached = client
+                .database()
+                .query(Filter::new().kind(Kind::GiftWrap).pubkey(user))
+                .await?;
+            for event in cached {
+                queue.enqueue(event, false).await?;
             }
-
+            let event = client
+                .database()
+                .query(Filter::new().kind(Kind::InboxRelays).author(user).limit(1))
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("No inbox relays found"))?;
+            let relays: BTreeSet<RelayUrl> = nip17::extract_relay_list(&event).collect();
+            if relays.is_empty() {
+                return Err(anyhow!("No inbox relays configured"));
+            }
+            for relay in &relays {
+                client.add_relay(relay).await?;
+                signals
+                    .send_async(Signal::History(relay.clone(), RelayHistory::default()))
+                    .await?;
+            }
+            // Keep live traffic separate; old history has its own resumable scans.
+            let live = Filter::new()
+                .kind(Kind::GiftWrap)
+                .pubkey(user)
+                .since(Timestamp::from(
+                    Timestamp::now().as_secs().saturating_sub(2 * 24 * 60 * 60),
+                ));
+            let targets: HashMap<_, _> = relays
+                .iter()
+                .cloned()
+                .map(|relay| (relay, live.clone()))
+                .collect();
+            let id = SubscriptionId::new(USER_GIFTWRAP);
+            let _ = client.unsubscribe(&id).await;
+            client.subscribe(targets).with_id(id).await?;
+            let mut scans = futures::stream::iter(relays)
+                .map(|relay| history::scan_relay(&client, user, relay, &queue, &signals, force))
+                .buffer_unordered(2);
+            while let Some(result) = scans.next().await {
+                if let Err(error) = result {
+                    log::warn!("History relay failed: {error}");
+                }
+            }
             Ok(())
+        });
+        self.history_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.history_running = false;
+                if let Err(error) = &result {
+                    cx.emit(ChatEvent::Error(error.to_string()));
+                }
+                cx.notify();
+            })?;
+            result
         }));
     }
 
-    /// Reload the chat registry, fetching messages and contact list from relays.
+    pub fn retry_failed_messages(&mut self, cx: &mut Context<Self>) {
+        let Some(queue) = self.queue.clone() else {
+            return;
+        };
+        let events: Vec<_> = self
+            .trash
+            .read(cx)
+            .iter()
+            .filter_map(|failed| Event::from_json(failed.raw_event.as_ref()).ok())
+            .collect();
+        self.retry_task = Some(cx.background_spawn(async move {
+            for event in events {
+                queue.enqueue(event, true).await?;
+            }
+            Ok(())
+        }));
+        cx.notify();
+    }
+
+    pub fn history_relays(&self) -> &BTreeMap<RelayUrl, RelayHistory> {
+        &self.history
+    }
+    pub fn history_running(&self) -> bool {
+        self.history_running
+    }
+    pub fn pending_messages(&self) -> usize {
+        self.queue.as_ref().map_or(0, |queue| queue.pending())
+    }
+    pub fn history_summary(&self, cx: &App) -> String {
+        let loaded = self.queue.as_ref().map_or(0, |queue| queue.loaded());
+        let pending = self.pending_messages();
+        let received: usize = self.history.values().map(|relay| relay.received).sum();
+        let errors = self
+            .history
+            .values()
+            .filter(|relay| relay.error.is_some())
+            .count();
+        let failed = self.count_trash_messages(cx);
+        let status = if self.history_running {
+            "Loading history"
+        } else if pending > 0 {
+            "Decrypting messages"
+        } else if errors > 0 {
+            "History incomplete"
+        } else {
+            "History checked"
+        };
+        format!(
+            "{status} · {received} received · {loaded} loaded · {pending} pending · {failed} failed · {errors} relay errors"
+        )
+    }
+
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        self.reset(cx);
         self.get_metadata(cx);
+        self.load_older_history(cx);
+        self.retry_failed_messages(cx);
         self.get_rooms(cx);
     }
 
-    /// Get the loading status of the chat registry
     pub fn loading(&self) -> bool {
-        self.tracking.load(Ordering::Acquire)
+        self.history_running || self.pending_messages() > 0
     }
 
     /// Get a weak reference to a room by its ID
@@ -588,6 +636,20 @@ impl ChatRegistry {
 
     /// Reset the registry.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
+        self.history_task = None;
+        self.decrypt_task = None;
+        self.retry_task = None;
+        self.notification_listener = None;
+        self.signal_consumer = None;
+        self.queue = None;
+        self.history_running = false;
+        self.last_history = None;
+        self.history.clear();
+        self.seen = Arc::default();
+        self.event_map = Arc::default();
+        let (tx, rx) = flume::unbounded();
+        self.signal_tx = tx;
+        self.signal_rx = rx;
         self.rooms.clear();
         self.room_index.clear();
         self.trash.update(cx, |this, cx| {

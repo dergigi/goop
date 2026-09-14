@@ -89,7 +89,9 @@ impl PartialEq for Message {
 
 impl Ord for Message {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.created_at.cmp(&other.created_at)
+        self.created_at
+            .cmp(&other.created_at)
+            .then_with(|| self.id.cmp(&other.id))
     }
 }
 
@@ -110,6 +112,7 @@ impl Hash for Message {
 pub struct NewMessage {
     pub room: u64,
     pub gift_wrap: EventId,
+    pub historical: bool,
     pub rumor: UnsignedEvent,
 }
 
@@ -120,6 +123,7 @@ impl NewMessage {
         Self {
             room,
             gift_wrap,
+            historical: false,
             rumor,
         }
     }
@@ -128,6 +132,7 @@ impl NewMessage {
 /// Trash message.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FailedMessage {
+    pub event_id: EventId,
     pub raw_event: SharedString,
     pub reason: SharedString,
 }
@@ -138,6 +143,7 @@ impl FailedMessage {
         T: Into<SharedString>,
     {
         Self {
+            event_id: event.id,
             raw_event: SharedString::from(event.as_json()),
             reason: reason.into(),
         }
@@ -187,4 +193,24 @@ fn extract_reply_ids(inner: &Tags) -> Vec<EventId> {
     }
 
     replies_to
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    #[test]
+    fn messages_in_the_same_second_are_not_deduplicated() {
+        let keys = Keys::generate();
+        let first = EventBuilder::new(Kind::PrivateDirectMessage, "first")
+            .custom_created_at(Timestamp::from(100))
+            .finalize(&keys)
+            .unwrap();
+        let second = EventBuilder::new(Kind::PrivateDirectMessage, "second")
+            .custom_created_at(Timestamp::from(100))
+            .finalize(&keys)
+            .unwrap();
+        let messages =
+            std::collections::BTreeSet::from([Message::from(&first), Message::from(&second)]);
+        assert_eq!(messages.len(), 2);
+    }
 }
