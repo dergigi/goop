@@ -56,6 +56,10 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         KeyBinding::new(&format!("{modifier}-b"), Command::ToggleSidebar, None),
         KeyBinding::new(&format!("{modifier}-k"), Command::SearchConversations, None),
         KeyBinding::new(&format!("{modifier}-p"), Command::SearchProfiles, None),
+        KeyBinding::new(&format!("{modifier}-shift-p"), Command::ShowProfile, None),
+        KeyBinding::new(&format!("{modifier}-shift-c"), Command::ShowContactList, None),
+        KeyBinding::new(&format!("{modifier}-shift-m"), Command::ShowMessaging, None),
+        KeyBinding::new(&format!("{modifier}-shift-g"), Command::ShowRelayList, None),
         KeyBinding::new(
             &format!("{modifier}-r"),
             Command::RefreshMessagingRelays,

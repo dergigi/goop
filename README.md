@@ -23,6 +23,10 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 - **Cmd/Ctrl+W**, **Cmd/Ctrl+Shift+W**, **Cmd/Ctrl+Shift+T** — close the current tab, close all tabs, or restore a closed tab.
 - **Ctrl+Tab / Ctrl+Shift+Tab** (all platforms) — next / previous tab.
 - **Cmd/Ctrl+R** — reload messaging and rescan history.
+- **Cmd/Ctrl+Shift+C** — open Contacts.
+- **Cmd/Ctrl+Shift+P** — open your Profile.
+- **Cmd/Ctrl+Shift+M** — open Messaging Relays.
+- **Cmd/Ctrl+Shift+G** — open Gossip Relays.
 - **Cmd/Ctrl+,** — open settings.
 - **Enter / Shift+Enter** — send a message / insert a newline.
 

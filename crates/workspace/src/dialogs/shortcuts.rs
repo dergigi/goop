@@ -30,6 +30,12 @@ pub fn open(window: &mut Window, cx: &mut App) {
                 ("Next tab", Box::new(NextPanel)),
                 ("Previous tab", Box::new(PreviousPanel)),
             ]),
+            ("Profile and relays", vec![
+                ("Profile", Box::new(Command::ShowProfile)),
+                ("Contacts", Box::new(Command::ShowContactList)),
+                ("Messaging relays", Box::new(Command::ShowMessaging)),
+                ("Gossip relays", Box::new(Command::ShowRelayList)),
+            ]),
             ("Application", vec![
                 ("Settings", Box::new(Command::ShowSettings)),
                 ("Reload", Box::new(Command::RefreshMessagingRelays)),

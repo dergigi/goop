@@ -9,6 +9,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Shortcuts for Contacts (Cmd/Ctrl+Shift+C), Profile (Cmd/Ctrl+Shift+P), Messaging Relays (Cmd/Ctrl+Shift+M), and Gossip Relays (Cmd/Ctrl+Shift+G), shown in menus and shortcut help.
 - Open the agent messaging guide from “Set up your agents to message you” in Get Started.
 
 ### Changed
