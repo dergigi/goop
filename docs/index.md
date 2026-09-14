@@ -8,6 +8,8 @@ title: Usage guide
 Goop is a NIP-17 messaging client for private, encrypted conversations on Nostr, designed for people who love the keyboard.
 This guide covers Goop 2.1.
 
+If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.chat/) a try.
+
 [Keyboard shortcuts](#keyboard-shortcuts) · [How to use Goop with agents](#how-to-use-goop-with-agents)
 
 ## Keyboard shortcuts
