@@ -626,6 +626,19 @@ impl Render for Sidebar {
                 ),
             )
             .child(
+                h_flex().px_2().gap_2()
+                    .child(Button::new("quick-conversations")
+                        .label(if cx.theme().platform.is_mac() { "Chats ⌘K" } else { "Chats Ctrl+K" })
+                        .tooltip("Search loaded conversations")
+                        .small().ghost().flex_1()
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::SearchConversations), cx)))
+                    .child(Button::new("quick-profiles")
+                        .label(if cx.theme().platform.is_mac() { "Profiles ⌘P" } else { "Profiles Ctrl+P" })
+                        .tooltip("Search loaded profiles")
+                        .small().ghost().flex_1()
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::SearchProfiles), cx))),
+            )
+            .child(
                 h_flex()
                     .px_2()
                     .gap_2()

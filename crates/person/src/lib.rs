@@ -302,6 +302,14 @@ impl PersonRegistry {
         })
     }
 
+    /// Snapshot loaded profiles without scheduling database or relay requests.
+    pub fn loaded(&self, cx: &App) -> Vec<Person> {
+        self.persons
+            .values()
+            .map(|person| person.read(cx).clone())
+            .collect()
+    }
+
     /// Get single person by public key
     pub fn get(&self, public_key: &PublicKey, cx: &App) -> Person {
         // Render cached metadata immediately, but still refresh it on first use

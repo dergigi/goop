@@ -47,6 +47,8 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
     cx.bind_keys([
         KeyBinding::new(&format!("{modifier}-,"), Command::ShowSettings, None),
         KeyBinding::new(&format!("{modifier}-f"), Command::Search, None),
+        KeyBinding::new(&format!("{modifier}-k"), Command::SearchConversations, None),
+        KeyBinding::new(&format!("{modifier}-p"), Command::SearchProfiles, None),
         KeyBinding::new(
             &format!("{modifier}-r"),
             Command::RefreshMessagingRelays,
@@ -73,6 +75,8 @@ struct MsgRelayNotification;
 #[action(namespace = workspace, no_json)]
 enum Command {
     Search,
+    SearchConversations,
+    SearchProfiles,
     ShowInbox,
     ShowRequests,
     FocusComposer,
@@ -327,6 +331,9 @@ impl Workspace {
                         .update(cx, |sidebar, cx| sidebar.dismiss_search(window, cx));
                     chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
                 }
+            }
+            Command::SearchConversations | Command::SearchProfiles => {
+                dialogs::quick_search::open(matches!(command, Command::SearchProfiles), window, cx);
             }
             Command::Search | Command::NewConversation => {
                 self.sidebar.update(cx, |sidebar, cx| {
@@ -686,6 +693,12 @@ impl Workspace {
                                         .child(Avatar::new(avatar.clone()).xsmall())
                                         .child(name.clone())
                                 }))
+                                .separator()
+                                .menu(
+                                    "Search conversations",
+                                    Box::new(Command::SearchConversations),
+                                )
+                                .menu("Search profiles", Box::new(Command::SearchProfiles))
                                 .separator()
                                 .menu_with_icon(
                                     "Profile",
