@@ -134,6 +134,7 @@ impl ChatPanel {
             InputState::new(window, cx)
                 .placeholder(format!("Message {}", name))
                 .auto_grow(1, 20)
+                .submit_on_enter(true)
                 .clean_on_escape()
         });
 
@@ -147,7 +148,7 @@ impl ChatPanel {
         subscriptions.push(
             // Subscribe the chat input event
             cx.subscribe_in(&input, window, move |this, _input, event, window, cx| {
-                if let InputEvent::PressEnter { .. } = event {
+                if let InputEvent::PressEnter { shift: false, .. } = event {
                     this.send_text_message(window, cx);
                 };
             }),
