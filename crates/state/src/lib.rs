@@ -89,6 +89,11 @@ pub struct NostrRegistry {
 
     /// True until saved credentials and their signer have finished resolving.
     identity_loading: bool,
+    remembered_user: Option<PublicKey>,
+    connection_error: Option<String>,
+    pending_signer: Option<UniversalSigner>,
+    connection_task: Option<Task<Result<(), Error>>>,
+    credential_task: Option<Task<Result<(), Error>>>,
 
     media_servers: Vec<Url>,
     media_servers_task: Option<Task<()>>,
@@ -154,6 +159,13 @@ impl NostrRegistry {
             signer,
             current_user: None,
             identity_loading: true,
+            remembered_user: std::fs::read_to_string(config_dir().join("last-signer-pubkey"))
+                .ok()
+                .and_then(|value| PublicKey::parse(value.trim()).ok()),
+            connection_error: None,
+            pending_signer: None,
+            connection_task: None,
+            credential_task: None,
             media_servers: Vec::new(),
             media_servers_task: None,
             tasks: vec![],
@@ -177,6 +189,23 @@ impl NostrRegistry {
 
     pub fn identity_loading(&self) -> bool {
         self.identity_loading
+    }
+
+    /// Display-only remembered identity; never authorizes account operations.
+    pub fn displayed_user(&self) -> Option<PublicKey> {
+        self.current_user.or(self.remembered_user)
+    }
+
+    pub fn signer_connection_error(&self) -> Option<&str> {
+        self.connection_error.as_deref()
+    }
+
+    pub fn retry_signer(&mut self, cx: &mut Context<Self>) {
+        if let Some(signer) = self.pending_signer.clone() {
+            self.begin_signer_connection(signer, cx);
+        } else {
+            self.get_user_credential(cx);
+        }
     }
 
     fn finish_identity_loading(&mut self, cx: &mut Context<Self>) {
@@ -217,32 +246,78 @@ impl NostrRegistry {
         <T as AsyncSignEvent>::Error: std::error::Error + Send + Sync + 'static,
         <T as AsyncNip44>::Error: std::error::Error + Send + Sync + 'static,
     {
-        self.identity_loading = true;
-        cx.notify();
-        let task = cx.spawn(async move |this, cx| {
-            match new_signer.get_public_key_async().await {
-                Ok(public_key) => {
-                    this.update(cx, |this, cx| {
-                        this.signer.swap_inner(new_signer);
-                        this.current_user = Some(public_key);
-                        this.identity_loading = false;
-                        this.media_servers.clear();
-                        this.refresh_media_servers(cx);
-                        cx.emit(StateEvent::SignerChanged);
-                        cx.notify();
-                    })?;
-                }
-                Err(e) => {
-                    this.update(cx, |this, cx| {
-                        this.finish_identity_loading(cx);
-                        cx.emit(StateEvent::error(e.to_string()));
-                    })?;
-                }
-            };
+        self.begin_signer_connection(UniversalSigner::new(new_signer), cx);
+    }
 
-            Ok(())
-        });
-        self.tasks.push(task);
+    fn begin_signer_connection(&mut self, signer: UniversalSigner, cx: &mut Context<Self>) {
+        self.connection_task = None;
+        self.pending_signer = Some(signer.clone());
+        self.identity_loading = true;
+        self.connection_error = None;
+        cx.notify();
+        let executor = cx.background_executor().clone();
+        self.connection_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                use futures::{FutureExt, pin_mut, select};
+                let request = signer.get_public_key_async().fuse();
+                let timeout = executor.timer(Duration::from_secs(30)).fuse();
+                pin_mut!(request, timeout);
+                let result: Result<PublicKey, Error> = select! {
+                    result = request => result.map_err(Into::into),
+                    _ = timeout => Err(SignerFailure::Timeout.into()),
+                };
+                match result {
+                    Ok(public_key) => {
+                        this.update(cx, |this, cx| {
+                            this.signer.swap_inner(signer.clone());
+                            this.current_user = Some(public_key);
+                            this.remembered_user = Some(public_key);
+                            this.identity_loading = false;
+                            this.connection_error = None;
+                            this.pending_signer = None;
+                            this.media_servers.clear();
+                            this.refresh_media_servers(cx);
+                            cx.emit(StateEvent::SignerChanged);
+                            cx.notify();
+                        })?;
+                        // Only a public display hint; signer credentials stay in Keychain.
+                        if let Err(error) = std::fs::create_dir_all(config_dir()).and_then(|_| {
+                            std::fs::write(
+                                config_dir().join("last-signer-pubkey"),
+                                public_key.to_hex(),
+                            )
+                        }) {
+                            log::warn!("Could not remember the displayed identity: {error}");
+                        }
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        let retry = reconnect_automatically(error.as_ref());
+                        this.update(cx, |this, cx| {
+                            this.identity_loading = retry;
+                            if this.connection_error.is_none() {
+                                cx.emit(StateEvent::error(error.to_string()));
+                            }
+                            this.connection_error = Some(if retry {
+                                "Signer unavailable. Retrying the saved connection…".into()
+                            } else {
+                                format!("Could not connect to signer: {error}")
+                            });
+                            // A failed connection is not a sign-out: retain account and chats.
+                            cx.notify();
+                        })?;
+                        if !retry {
+                            return Ok(());
+                        }
+                        executor.timer(Duration::from_secs(15)).await;
+                        this.update(cx, |this, cx| {
+                            this.identity_loading = true;
+                            cx.notify();
+                        })?;
+                    }
+                }
+            }
+        }));
     }
 
     /// Connect to the bootstrapping relays
@@ -282,16 +357,20 @@ impl NostrRegistry {
     /// Check the user's credential and set the signer if valid
     fn get_user_credential(&mut self, cx: &mut Context<Self>) {
         let user_keyring = cx.read_credentials(USER_KEYRING);
-        let master_keyring = self.get_master_key(cx);
+        self.identity_loading = true;
+        self.connection_error = None;
+        self.connection_task = None;
+        self.pending_signer = None;
+        cx.notify();
 
-        self.tasks.push(cx.spawn(async move |this, cx| {
+        self.credential_task = Some(cx.spawn(async move |this, cx| {
             let result: Result<(), Error> = async {
                 match user_keyring.await? {
                     Some((_username, secret)) => {
                         let content = String::from_utf8(secret)?;
 
                         if content.starts_with("bunker://") {
-                            let keys = master_keyring.await;
+                            let keys = this.update(cx, |this, cx| this.get_master_key(cx, false))?.await?;
                             let timeout = Duration::from_secs(30);
                             let uri = NostrConnectUri::parse(content)?;
 
@@ -315,7 +394,15 @@ impl NostrRegistry {
                         }
                     }
                     None => {
-                        this.update(cx, |this, cx| this.finish_identity_loading(cx))?;
+                        this.update(cx, |this, cx| {
+                            if this.remembered_user.is_some() || this.current_user.is_some() {
+                                this.identity_loading = false;
+                                this.connection_error = Some("Saved signer credentials are unavailable. Check Keychain access and retry.".into());
+                                cx.notify();
+                            } else {
+                                this.finish_identity_loading(cx);
+                            }
+                        })?;
                     }
                 }
                 Ok(())
@@ -323,8 +410,9 @@ impl NostrRegistry {
             .await;
             if let Err(error) = result {
                 this.update(cx, |this, cx| {
-                    this.finish_identity_loading(cx);
-                    cx.emit(StateEvent::error(error.to_string()));
+                    this.identity_loading = false;
+                    this.connection_error = Some(format!("Could not restore saved signer: {error}"));
+                    cx.notify();
                 })?;
             }
             Ok(())
@@ -332,34 +420,23 @@ impl NostrRegistry {
     }
 
     /// Get the master key that used for Nostr Connect
-    pub fn get_master_key(&self, cx: &App) -> Task<Keys> {
-        if cfg!(target_arch = "wasm32") {
-            return cx.background_spawn(async move { Keys::generate() });
-        }
-
+    pub fn get_master_key(&self, cx: &App, create_if_missing: bool) -> Task<Result<Keys, Error>> {
         let task = cx.read_credentials(MASTER_KEYRING);
-
+        let create_if_missing = create_if_missing && self.remembered_user.is_none();
         cx.spawn(async move |cx| {
-            let (keys, new_key) = match task.await {
-                Ok(Some((_user, secret))) => match SecretKey::from_slice(&secret) {
-                    Ok(secret_key) => (Keys::new(secret_key), false),
-                    _ => (Keys::generate(), true),
-                },
-                _ => (Keys::generate(), true),
-            };
-
-            if new_key {
-                let keys_clone = keys.clone();
-                let username = keys_clone.public_key().to_hex();
-                let password = keys_clone.secret_key().to_secret_bytes();
-
-                cx.update(|cx| {
-                    let task = cx.write_credentials(MASTER_KEYRING, &username, &password);
-                    cx.background_spawn(async move { task.await.ok() }).detach();
+            let saved = task.await?.map(|(_, secret)| secret);
+            let (keys, created) = connection_keys(saved, create_if_missing)?;
+            if created {
+                let save = cx.update(|cx| {
+                    cx.write_credentials(
+                        MASTER_KEYRING,
+                        &keys.public_key().to_hex(),
+                        &keys.secret_key().to_secret_bytes(),
+                    )
                 });
+                save.await?;
             }
-
-            keys
+            Ok(keys)
         })
     }
 
@@ -591,5 +668,53 @@ impl NostrRegistry {
 
             Err(anyhow!("No results for query: {query}"))
         })
+    }
+}
+
+fn connection_keys(saved: Option<Vec<u8>>, create_if_missing: bool) -> Result<(Keys, bool), Error> {
+    match saved {
+        Some(secret) => Ok((Keys::new(SecretKey::from_slice(&secret)?), false)),
+        None if create_if_missing => Ok((Keys::generate(), true)),
+        None => Err(anyhow!(
+            "Saved signer connection key is unavailable; check Keychain access and retry"
+        )),
+    }
+}
+
+fn reconnect_automatically(error: &(dyn std::error::Error + 'static)) -> bool {
+    matches!(
+        SignerFailure::classify(error),
+        SignerFailure::Disconnected | SignerFailure::Timeout
+    )
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::*;
+    #[test]
+    fn restoring_never_replaces_missing_or_invalid_connection_keys() {
+        assert!(connection_keys(None, false).is_err());
+        assert!(connection_keys(Some(vec![0; 5]), false).is_err());
+        assert!(connection_keys(Some(vec![0; 5]), true).is_err());
+        let existing = Keys::generate();
+        for allow_creation in [false, true] {
+            let (keys, created) = connection_keys(
+                Some(existing.secret_key().to_secret_bytes().to_vec()),
+                allow_creation,
+            )
+            .unwrap();
+            assert!(!created);
+            assert_eq!(keys.public_key(), existing.public_key());
+        }
+        assert!(connection_keys(None, true).unwrap().1);
+    }
+
+    #[test]
+    fn transient_failures_retry_but_refusals_require_user_action() {
+        assert!(reconnect_automatically(&SignerFailure::Timeout));
+        assert!(reconnect_automatically(&SignerFailure::Disconnected));
+        assert!(!reconnect_automatically(&SignerFailure::Rejected));
+        assert!(!reconnect_automatically(&SignerFailure::Cancelled));
+        assert!(!reconnect_automatically(&SignerFailure::Other));
     }
 }

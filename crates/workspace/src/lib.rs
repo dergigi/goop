@@ -607,6 +607,8 @@ impl Workspace {
     fn titlebar_left(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let nostr = NostrRegistry::global(cx);
         let current_user = nostr.read(cx).current_user();
+        let displayed_user = nostr.read(cx).displayed_user();
+        let connection_error = nostr.read(cx).signer_connection_error().map(str::to_owned);
         let restoring = nostr.read(cx).identity_loading();
         let loading_chats = current_user.is_some() && ChatRegistry::global(cx).read(cx).loading();
 
@@ -621,21 +623,40 @@ impl Workspace {
                         .text_color(cx.theme().text_muted)
                         .child(Indicator::new().small())
                         .child(if restoring {
-                            "Restoring your identity…"
+                            "Reconnecting to signer…"
                         } else {
                             "Loading conversations…"
                         }),
                 )
             })
-            .when(current_user.is_none() && !restoring, |this| {
+            .when(
+                current_user.is_none() && !restoring && connection_error.is_none(),
+                |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().text_muted)
+                            .child(SharedString::from("Connect your signer to continue")),
+                    )
+                },
+            )
+            .when_some(connection_error, |this, error| {
                 this.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().text_muted)
-                        .child(SharedString::from("Connect your signer to continue")),
+                    Button::new("retry-signer")
+                        .label(if restoring {
+                            "Retry now"
+                        } else {
+                            "Signer unavailable · Retry"
+                        })
+                        .tooltip(error)
+                        .small()
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            NostrRegistry::global(cx)
+                                .update(cx, |nostr, cx| nostr.retry_signer(cx));
+                        })),
                 )
             })
-            .when_some(current_user.as_ref(), |this, public_key| {
+            .when_some(displayed_user.as_ref(), |this, public_key| {
                 let persons = PersonRegistry::global(cx);
                 let profile = persons.read(cx).get(public_key, cx);
                 let avatar = profile.avatar();

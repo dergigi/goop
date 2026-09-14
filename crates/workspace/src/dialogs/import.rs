@@ -65,26 +65,33 @@ impl ImportIdentity {
 
     fn bunker(&mut self, uri: NostrConnectUri, window: &mut Window, cx: &mut Context<Self>) {
         let nostr = NostrRegistry::global(cx);
-        let master_keys = nostr.read(cx).get_master_key(cx);
+        let master_keys = nostr.read(cx).get_master_key(cx, true);
         let password = uri.to_string();
         let save = cx.write_credentials(USER_KEYRING, "bunker", password.as_bytes());
 
-        self.tasks.push(cx.spawn_in(window, async move |_this, cx| {
-            let keys = master_keys.await;
-            let timeout = Duration::from_secs(30);
+        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
+            let result: Result<(), Error> = async {
+                let keys = master_keys.await?;
+                save.await?;
+                let timeout = Duration::from_secs(30);
 
-            // Construct the nostr connect signer
-            let mut signer = NostrConnect::new(uri, keys, timeout, None)?;
+                // Construct the nostr connect signer
+                let mut signer = NostrConnect::new(uri, keys, timeout, None)?;
 
-            // Handle auth url with the default browser
-            signer.auth_url_handler(GoopAuthUrlHandler);
+                // Handle auth url with the default browser
+                signer.auth_url_handler(GoopAuthUrlHandler);
 
-            nostr.update(cx, |this, cx| {
-                this.set_signer(signer, cx);
-                cx.background_spawn(async move { save.await.ok() }).detach();
-                cx.notify();
-            });
+                nostr.update(cx, |this, cx| {
+                    this.set_signer(signer, cx);
+                    cx.notify();
+                });
 
+                Ok(())
+            }
+            .await;
+            if let Err(error) = result {
+                this.update_in(cx, |this, _, cx| this.set_error(error.to_string(), cx))?;
+            }
             Ok(())
         }));
     }
