@@ -109,7 +109,15 @@ async fn fetch_page(
 ) -> Result<Vec<Event>> {
     let id = SubscriptionId::new(format!("goop-history-{}", SubscriptionId::generate()));
     let _subscription = PageSubscription(client.clone(), id.clone());
-    let mut notifications = client.notifications();
+    let relay_connection = client
+        .relay(relay)
+        .await?
+        .ok_or_else(|| anyhow!("History relay is not connected"))?;
+    // Relay notifications include authentication failures, which the client-wide
+    // stream omits. Subscribe before sending REQ to retain fast responses.
+    let mut notifications = relay_connection.notifications();
+    let mut awaiting_authentication = false;
+    let mut authentication_failed = false;
     let mut filter = Filter::new()
         .kind(Kind::GiftWrap)
         .pubkey(user)
@@ -128,26 +136,42 @@ async fn fetch_page(
         }
         let mut events = BTreeMap::new();
         while let Some(notification) = notifications.next().await {
-            if let ClientNotification::Message { relay_url, message } = notification {
-                if &relay_url != relay {
-                    continue;
-                }
-                match *message {
-                    RelayMessage::Event {
-                        subscription_id,
-                        event,
-                    } if subscription_id.as_ref() == &id => {
+            match notification {
+                RelayNotification::Message { message } => match *message {
+                    RelayMessage::Event { subscription_id, event }
+                        if subscription_id.as_ref() == &id => {
                         events.insert(event.id, event.into_owned());
                     }
                     RelayMessage::EndOfStoredEvents(sub_id) if sub_id.as_ref() == &id => {
                         return Ok(events.into_values().collect());
                     }
-                    RelayMessage::Closed {
-                        subscription_id,
-                        message,
-                    } if subscription_id.as_ref() == &id => bail!("{message}"),
+                    RelayMessage::Closed { subscription_id, message }
+                        if subscription_id.as_ref() == &id => {
+                        if MachineReadablePrefix::parse(&message) == Some(MachineReadablePrefix::AuthRequired) {
+                            // The SDK retains this subscription and resends it after
+                            // authenticated OK. Cancelling here races that recovery.
+                            awaiting_authentication = true;
+                            if authentication_failed {
+                                bail!("Relay authentication failed; check your signer and retry history loading");
+                            }
+                        } else {
+                            bail!("{message}");
+                        }
+                    }
                     _ => {}
+                },
+                RelayNotification::AuthenticationFailed => {
+                    authentication_failed = true;
+                    // Optional AUTH must not fail an otherwise readable query.
+                    if awaiting_authentication {
+                        bail!("Relay authentication failed; check your signer and retry history loading");
+                    }
                 }
+                RelayNotification::Authenticated => {
+                    awaiting_authentication = false;
+                    authentication_failed = false;
+                },
+                _ => {}
             }
         }
         Err(anyhow!("Relay notification stream closed"))
@@ -155,7 +179,13 @@ async fn fetch_page(
     .await;
     // Subscription is manual so timeouts cannot masquerade as successful EOSE.
     let _ = client.unsubscribe(&id).await;
-    result.ok_or_else(|| anyhow!("History request timed out; progress retained"))?
+    result.ok_or_else(|| {
+        if awaiting_authentication {
+            anyhow!("Relay authentication timed out; check your signer and retry history loading")
+        } else {
+            anyhow!("History request timed out; progress retained")
+        }
+    })?
 }
 
 /// Keep the oldest timestamp inclusive on the next page to avoid cutting through
@@ -395,5 +425,154 @@ mod integration_tests {
         assert!(receiver.interactive.is_empty());
         client.shutdown().await;
         relay.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod authentication_tests {
+    use super::*;
+    use futures::FutureExt;
+    use nostr_sdk::authenticator::{Authenticator, SignerAuthenticator};
+    use nostr_sdk::local_relay::{LocalRelay, LocalRelayBuilderNip42};
+    use state::UniversalSigner;
+
+    #[derive(Debug)]
+    struct GatedAuthenticator {
+        signer: SignerAuthenticator<UniversalSigner>,
+        release: flume::Receiver<bool>,
+    }
+
+    impl Authenticator for GatedAuthenticator {
+        fn make_auth_event<'a>(
+            &'a self,
+            relay: &'a RelayUrl,
+            challenge: &'a str,
+        ) -> futures::future::BoxFuture<'a, std::result::Result<Event, nostr_sdk::error::Error>>
+        {
+            Box::pin(async move {
+                if !self.release.recv_async().await.unwrap() {
+                    return Err(nostr_sdk::error::Error::other(std::io::Error::other(
+                        "Signer declined",
+                    )));
+                }
+                self.signer.make_auth_event(relay, challenge).await
+            })
+        }
+    }
+
+    async fn scan_after_auth_challenge(
+        client: &Client,
+        user: PublicKey,
+        url: &RelayUrl,
+        queue: &super::super::DecryptQueue,
+        signals: &flume::Sender<Signal>,
+        release: &flume::Sender<bool>,
+        approve: bool,
+    ) -> Result<()> {
+        let mut notifications = client.notifications();
+        let scan = scan_relay(client, user, url.clone(), queue, signals, false).fuse();
+        futures::pin_mut!(scan);
+        loop {
+            futures::select! {
+                result = scan => return result,
+                notification = notifications.next().fuse() => {
+                    if let Some(ClientNotification::Message { message, .. }) = notification
+                        && let RelayMessage::Closed { message, .. } = *message
+                        && MachineReadablePrefix::parse(&message) == Some(MachineReadablePrefix::AuthRequired)
+                    {
+                        // Each REQ may renew the challenge, including after reconnect.
+                        release.send_async(approve).await.unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    async fn disconnect(client: &Client, url: &RelayUrl) {
+        // Recreate the connection through the pool, retaining the account's
+        // database/checkpoints. This guarantees a fresh relay AUTH session.
+        client.remove_relay(url).force().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn history_recovers_after_delayed_authentication_and_reconnect() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let relay = LocalRelay::builder()
+                .nip42(LocalRelayBuilderNip42::read())
+                .auth_dm(true)
+                .build();
+            relay.run().await.unwrap();
+            let url = relay.url().await;
+            let keys = Keys::generate();
+            let user = keys.public_key();
+            let (release, approvals) = flume::unbounded();
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .authenticator(GatedAuthenticator {
+                    signer: SignerAuthenticator::new(UniversalSigner::new(keys)),
+                    release: approvals,
+                })
+                .build();
+            let (queue, receivers) = super::super::DecryptQueue::new();
+            let (signals, _progress) = flume::unbounded();
+            for round in 0..2 {
+                let event = EventBuilder::new(Kind::GiftWrap, format!("history {round}"))
+                    .tag(Tag::public_key(user))
+                    .finalize(&Keys::generate())
+                    .unwrap();
+                relay.add_event(event.clone()).await.unwrap();
+                scan_after_auth_challenge(&client, user, &url, &queue, &signals, &release, true)
+                    .await
+                    .unwrap();
+                assert_eq!(receivers.history.try_recv().unwrap().0.id, event.id);
+                assert!(receivers.history.is_empty());
+                assert!(
+                    read_checkpoint(&client, &checkpoint_key(user, &url))
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .complete
+                );
+                disconnect(&client, &url).await;
+            }
+            client.shutdown().await;
+            relay.shutdown();
+        })
+        .await
+        .expect("history should recover without manual reload");
+    }
+
+    #[tokio::test]
+    async fn signer_failure_preserves_checkpoint_and_retry_recovers() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let relay = LocalRelay::builder().nip42(LocalRelayBuilderNip42::read()).auth_dm(true).build();
+            relay.run().await.unwrap();
+            let url = relay.url().await;
+            let keys = Keys::generate();
+            let user = keys.public_key();
+            let (release, approvals) = flume::unbounded();
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .authenticator(GatedAuthenticator { signer: SignerAuthenticator::new(UniversalSigner::new(keys)), release: approvals })
+                .build();
+            let key = checkpoint_key(user, &url);
+            let mut checkpoint = Checkpoint { revision: 0, head: Timestamp::now().as_secs(), until: 100, complete: false };
+            save_checkpoint(&client, &key, &mut checkpoint).await.unwrap();
+            let (queue, receivers) = super::super::DecryptQueue::new();
+            let (signals, progress) = flume::unbounded();
+            let error = scan_after_auth_challenge(&client, user, &url, &queue, &signals, &release, false).await.unwrap_err();
+            assert!(error.to_string().contains("authentication"), "{error}");
+            let retained = read_checkpoint(&client, &key).await.unwrap().unwrap();
+            assert_eq!(retained.revision, checkpoint.revision);
+            assert_eq!(retained.until, checkpoint.until);
+            assert!(!retained.complete);
+            assert!(receivers.history.is_empty());
+            assert!(matches!(progress.try_iter().last(), Some(Signal::History(_, state)) if !state.done && state.error.is_some()));
+            disconnect(&client, &url).await;
+            scan_after_auth_challenge(&client, user, &url, &queue, &signals, &release, true).await.unwrap();
+            assert!(read_checkpoint(&client, &key).await.unwrap().unwrap().complete);
+            client.shutdown().await;
+            relay.shutdown();
+        }).await.expect("signer failure must be reported promptly and remain retryable");
     }
 }
