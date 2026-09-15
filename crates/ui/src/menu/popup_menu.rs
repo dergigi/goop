@@ -1122,7 +1122,7 @@ impl PopupMenu {
                 ),
             ),
             PopupMenuItem::ElementItem {
-                render, disabled, ..
+                icon, render, disabled, ..
             } => this
                 .when(!disabled, |this| {
                     this.on_click(
@@ -1130,6 +1130,14 @@ impl PopupMenu {
                     )
                 })
                 .disabled(*disabled)
+                .gap_x_1()
+                .children(Self::render_icon(
+                    icon.is_some() || is_left_check,
+                    is_left_check,
+                    icon.clone(),
+                    window,
+                    cx,
+                ))
                 .child(
                     h_flex()
                         .flex_1()
