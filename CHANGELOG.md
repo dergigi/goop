@@ -21,6 +21,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Show archived chats under a single Archive heading, without date or pinned sections.
+
 - Show report signing and delivery errors in the dialog, preserve inputs for retry, require relay acknowledgement before confirming submission, and disclose partial delivery. Unchanged retries reuse the same signed report.
 
 - Keep outgoing queue errors visible until recovery, and distinguish history that has not been scanned from a completed scan.

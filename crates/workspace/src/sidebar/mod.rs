@@ -23,10 +23,10 @@ pub(crate) mod entry;
 enum ChatAction { MarkAllRead, SetRead(u64, bool), Pin(u64, bool), Archive(u64, bool), Leave(u64, bool) }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum DateGroup { Pinned, Today, Yesterday, LastWeek, Older }
+enum DateGroup { Archive, Pinned, Today, Yesterday, LastWeek, Older }
 impl DateGroup {
     fn label(self) -> &'static str {
-        match self { Self::Pinned => "Pinned", Self::Today => "Today", Self::Yesterday => "Yesterday",
+        match self { Self::Archive => "Archive", Self::Pinned => "Pinned", Self::Today => "Today", Self::Yesterday => "Yesterday",
             Self::LastWeek => "Last 7 Days", Self::Older => "Older" }
     }
 }
@@ -183,6 +183,11 @@ impl Sidebar {
         let mut rows = Vec::new();
         let mut previous = None;
         let mut rooms = chat.read(cx).rooms(self.filter.read(cx), cx);
+        if self.current_filter(&RoomKind::Archived, cx) {
+            if !rooms.is_empty() { rows.push(SidebarRow::Heading(DateGroup::Archive)); }
+            rows.extend(rooms.into_iter().map(SidebarRow::Chat));
+            return rows;
+        }
         rooms.sort_by_key(|room| !chat.read(cx).is_pinned(room.read(cx)));
         for room in rooms {
             let date = i64::try_from(room.read(cx).created_at.as_secs()).ok()
