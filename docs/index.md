@@ -26,6 +26,12 @@ Camera images are decoded on your device, never uploaded or saved. Scanning also
 
 Only bunker connection QR codes are accepted here; an `nsec` private key or a website QR code is not a signer connection.
 
+## Emoji and reactions
+
+Use the composer’s emoji button to browse or search by name, shortcode, or emoji. Categories and skin-tone controls include an **All** option for mixed-tone variants. Choose an emoji to insert it at the cursor.
+
+On a message, choose **Add reaction** to open the same picker; the three quick reactions remain available. Search and press **Enter** to choose, or press **Down** to move into the grid and navigate with arrow keys. **Escape** cancels and returns focus to the composer. The catalogue uses [Unicode 17.0 emoji data](https://docs.rs/emojis/0.9.0/emojis/); appearance follows your operating system’s emoji font.
+
 ## Log out
 
 Open the account menu in the title bar and choose **Log out**, immediately after **Settings**. Confirm to disconnect the signer and forget the saved login on this device. **Cancel** keeps you signed in. Local chat history and encryption keys are kept; reconnect your signer to log in again.

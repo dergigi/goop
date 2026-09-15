@@ -6,7 +6,6 @@ use serde::Deserialize;
 #[action(namespace = chat, no_json)]
 pub enum Command {
     Find,
-    Insert(&'static str),
     ChangeSubject(String),
     ToggleBackup,
     Copy(PublicKey),

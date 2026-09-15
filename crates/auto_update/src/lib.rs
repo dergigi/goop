@@ -164,7 +164,7 @@ impl AutoUpdater {
 
     pub fn idle(&self, cx: &App) -> bool {
         let status = self.updater.read(cx).status();
-        if status == &UpdateStatus::Idle {
+        if matches!(status, UpdateStatus::Idle | UpdateStatus::UpToDate) {
             return true;
         }
         if matches!(status, UpdateStatus::Errored(_))

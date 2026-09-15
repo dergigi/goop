@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+test-support = ["gpui/test-support", "ui/test-support"]
+
 [dependencies]
+emojis = "0.9"
 state = { path = "../state" }
 ui = { path = "../ui" }
 theme = { path = "../theme" }

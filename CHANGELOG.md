@@ -7,6 +7,19 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Add a full searchable Unicode emoji picker to the composer and message reactions, with categories, skin-tone variants, and keyboard navigation.
+
+### Changed
+
+- Insert chosen emoji at the composer cursor, replacing selected text.
+- Hide the idle "Up to date" label in the title bar while retaining active update progress.
+
+### Fixed
+
+- Recognize complete flag and joined emoji sequences when replying with an emoji reaction, without treating plain numbers as emoji.
+
 ## [2.8.1] - 2026-09-15
 
 ### Added

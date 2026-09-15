@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 pub use actions::*;
 use anyhow::Error;
@@ -16,7 +16,6 @@ use gpui::{
 };
 use nostr_sdk::prelude::*;
 use person::{Person, PersonRegistry};
-use regex::Regex;
 use settings::AppSettings;
 use smallvec::{SmallVec, smallvec};
 use state::{NostrRegistry, upload_encrypted};
@@ -35,17 +34,12 @@ use ui::{
 
 use crate::text::RenderedText;
 
-const REACTION_EMOJIS: &[&str] = &["👍", "👎", "😄", "🎉", "😕", "❤️", "🚀", "👀"];
 const COMPACT_REACTION_EMOJIS: &[&str] = &["👍", "❤️", "👀"];
-
-/// Regex matching strings that consist entirely of emoji characters,
-/// zero-width joiners, variation selectors, and keycap combiners.
-static EMOJI_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\p{Emoji}\u{200D}\u{FE0F}\u{20E3}]+$").unwrap());
 
 mod actions;
 mod encrypted_media;
 mod delivery_status;
+mod emoji_picker;
 mod find;
 mod text;
 
@@ -378,10 +372,10 @@ impl ChatPanel {
 
         // If replying to exactly one message with only a valid emoji,
         // send as a reaction instead of a text message
-        if replies.len() == 1 && EMOJI_RE.is_match(&content) && self.attachments.read(cx).is_empty()
+        if replies.len() == 1 && emojis::get(content.trim()).is_some() && self.attachments.read(cx).is_empty()
         {
             for reply in &replies {
-                self.send_reaction(&content, reply, window, cx);
+                self.send_reaction(content.trim(), reply, window, cx);
             }
             self.clear(window, cx);
             return;
@@ -779,12 +773,6 @@ impl ChatPanel {
     fn on_command(&mut self, command: &Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::Find => self.focus_find(window, cx),
-            Command::Insert(content) => {
-                self.input.update(cx, |this, cx| {
-                    let new_value = format!("{} {}", this.value(), content);
-                    this.set_value(new_value, window, cx);
-                });
-            }
             Command::ChangeSubject(subject) => {
                 if self
                     .room
@@ -1568,6 +1556,18 @@ impl ChatPanel {
 
                 items
             })
+            .child({
+                let chat = cx.weak_entity();
+                let id = *id;
+                emoji_picker::EmojiPopover::new(SharedString::from(format!("reaction-picker-{id}")),
+                    Button::new("add-reaction").icon(IconName::Emoji).tooltip("Add reaction").small().ghost(),
+                    move |choice, window, cx| {
+                        chat.update(cx, |this, cx| {
+                            if let Some(emoji) = choice { this.send_reaction(emoji, &id, window, cx); }
+                            this.focus_composer(window, cx);
+                        }).ok();
+                    })
+            })
             .child(div().flex_shrink_0().h_4().w_px().bg(cx.theme().border))
             .child(
                 Button::new("reply")
@@ -1734,18 +1734,20 @@ impl ChatPanel {
             })
     }
 
-    fn render_emoji_menu(&self, _window: &Window, _cx: &Context<Self>) -> impl IntoElement {
-        Button::new("emoji")
-            .icon(IconName::Emoji)
-            .ghost()
-            .large()
-            .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |this, _window, _cx| {
-                let menu = this.horizontal();
-                REACTION_EMOJIS.iter().fold(menu, |this, emoji| {
-                    this.menu(*emoji, Box::new(Command::Insert(emoji)))
-                })
+    fn render_emoji_menu(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let chat = cx.weak_entity();
+        emoji_picker::EmojiPopover::new("composer-emoji-picker",
+            Button::new("emoji").icon(IconName::Emoji).tooltip("Choose emoji").ghost().large(),
+            move |choice, window, cx| {
+                chat.update(cx, |this, cx| {
+                    if let Some(emoji) = choice {
+                        this.input.update(cx, |input, cx| input.replace(emoji, window, cx));
+                    }
+                    this.focus_composer(window, cx);
+                }).ok();
             })
     }
+
 }
 
 impl Panel for ChatPanel {

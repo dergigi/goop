@@ -1,5 +1,6 @@
 //! Find within one chat's decrypted messages. No relay requests are made here.
 use super::*;
+use regex::Regex;
 
 pub(super) struct FindBar {
     pub input: Entity<InputState>,
