@@ -10,6 +10,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 ### Added
 
 - Add “Found a bug? Feature request? DM Goop!” as the fifth Get Started option, opening a direct chat with Goop.
+- Add a bug-report button to the Settings footer that opens the same Goop chat.
 
 ### Changed
 

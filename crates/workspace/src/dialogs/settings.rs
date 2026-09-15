@@ -201,10 +201,20 @@ impl Render for Preferences {
                     )),
             )
             .child(
-                h_flex().flex_wrap().gap_1().text_xs().text_color(cx.theme().text_muted)
-                    .child(crate::build_info::version_link())
-                    .child("·")
-                    .child(crate::build_info::build_link()),
+                h_flex().w_full().gap_2()
+                    .child(h_flex().flex_1().min_w_0().flex_wrap().gap_1().text_xs().text_color(cx.theme().text_muted)
+                        .child(crate::build_info::version_link())
+                        .child("·")
+                        .child(crate::build_info::build_link()))
+                    .child(Button::new("report-bug").icon(IconName::Bug).label("Report a bug")
+                        .small().ghost().on_click(|_, window, cx| {
+                            window.close_modal(cx);
+                            window.defer(cx, |window, cx| {
+                                let key = nostr_sdk::prelude::PublicKey::parse(state::GOOP_NPUB)
+                                    .expect("Goop project npub must be valid");
+                                window.dispatch_action(Box::new(crate::Command::OpenProfileChat(key, false)), cx);
+                            });
+                        })),
             )
     }
 }
