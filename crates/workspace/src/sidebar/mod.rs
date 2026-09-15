@@ -266,6 +266,9 @@ impl Sidebar {
                 let focus_handle = self.focus_handle.clone();
                 div().child(entry).context_menu(move |menu, _, _| {
                     menu.action_context(focus_handle.clone())
+                        .when(!group, |menu| menu
+                            .menu("View profile", Box::new(crate::Command::OpenProfile(public_key)))
+                            .separator())
                         .menu(if pinned { "Unpin" } else { "Pin" }, Box::new(ChatAction::Pin(id, !pinned)))
                         .when(!left, |menu| menu.menu(if archived { "Unarchive" } else { "Archive" },
                             Box::new(ChatAction::Archive(id, !archived))))

@@ -11,8 +11,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
-- Add a menu on the first chat-list heading with “Mark all as read” for the current list.
+- Add a vertical three-dot menu on the first chat-list heading with “Mark all as read” for the current list.
 - Add right-click Pin/Unpin, Archive/Unarchive, and Mark as read/Mark as unread actions to chat rows. Manual unread marks persist on this device and remain visible on an open chat until it is refocused or displays new incoming messages.
+
+- Add “View profile” to one-to-one chat context menus, opening the profile in the right sidepane.
 
 ### Changed
 
