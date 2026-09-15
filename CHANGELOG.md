@@ -7,6 +7,18 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-15
+
+### Changed
+
+- Align blocked-user avatars and names in fixed sidebar columns.
+- Collapse the optional report explanation and show acknowledged report results as toasts. Keep automatic-blocking failures visible without reopening a completion dialog.
+- Show the connected messaging-relay count in the title bar. Render history relays as compact rows with observed connection/authentication indicators and clickable warning triangles.
+
+### Fixed
+
+- Make signer setup reachable without a profile menu. Open setup after an initial credential-loading failure when no account is known, retain the underlying error and retry action, and handle startup state that settles before the workspace subscribes.
+
 ## [2.7.0] - 2026-09-15
 
 ### Added
@@ -284,7 +296,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.7.1...HEAD
+[2.7.1]: https://github.com/dergigi/goop/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/dergigi/goop/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/dergigi/goop/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/dergigi/goop/compare/v2.4.0...v2.5.0

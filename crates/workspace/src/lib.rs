@@ -121,6 +121,7 @@ pub enum Command {
     ShowRelayList,
     ShowMessaging,
     ShowConnectionStatus,
+    ConnectSigner,
     ShowProfile,
     OpenProfile(PublicKey),
     ShowBlockedUsers,
@@ -344,6 +345,11 @@ impl Workspace {
                 this.set_center(center, window, cx);
                 this.set_left_dock(sidebar, Some(SIDEBAR_WIDTH), true, window, cx);
             });
+            // Startup state may have settled before this window subscribed.
+            if NostrRegistry::global(cx).read(cx).needs_signer_setup() {
+                window.close_all_modals(cx);
+                this.import_identity(window, cx);
+            }
         });
 
         Self {
@@ -525,6 +531,12 @@ impl Workspace {
                         cx,
                     );
                 });
+            }
+            Command::ConnectSigner => {
+                if NostrRegistry::global(cx).read(cx).needs_signer_setup() {
+                    window.close_all_modals(cx);
+                    self.import_identity(window, cx);
+                }
             }
             Command::ShowConnectionStatus => {
                 let panel = self.connection_status.clone();
@@ -786,11 +798,14 @@ impl Workspace {
             })
             .child(
                 Button::new("connection-status-summary")
-                    .label(self.connection_status.read(cx).summary(cx))
-                    .tooltip("Connection status and recovery")
+                    .label(if nostr.read(cx).needs_signer_setup() { "Connect your signer".into() } else { self.connection_status.read(cx).summary(cx) })
+                    .tooltip(if nostr.read(cx).needs_signer_setup() { "Set up your signer" } else { "Connection status and recovery" })
                     .small().ghost()
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.on_command(&Command::ShowConnectionStatus, window, cx);
+                        let action = if NostrRegistry::global(cx).read(cx).needs_signer_setup() {
+                            Command::ConnectSigner
+                        } else { Command::ShowConnectionStatus };
+                        this.on_command(&action, window, cx);
                     })),
             )
     }

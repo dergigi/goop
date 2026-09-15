@@ -13,6 +13,7 @@ use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
 use ui::scroll::ScrollableElement;
+use ui::notification::Notification;
 use ui::{Disableable, Sizable, WindowExtension, h_flex, v_flex};
 
 const REASONS: [(Report, &str, &str); 7] = [
@@ -150,6 +151,7 @@ struct ReportForm {
     owner: Option<PublicKey>,
     reason: Option<Report>,
     explanation: Entity<InputState>,
+    explanation_expanded: bool,
     signed: Option<Event>,
     sending: bool,
     submitted_auto_block: bool,
@@ -186,6 +188,7 @@ impl ReportForm {
             owner: NostrRegistry::global(cx).read(cx).current_user(),
             reason: None,
             explanation,
+            explanation_expanded: false,
             signed: None,
             sending: false,
             submitted_auto_block: false,
@@ -263,16 +266,28 @@ impl ReportForm {
                     Either::Right(_) => Err(anyhow!("Report delivery timed out. Receipt is unconfirmed; retrying will reuse the same report.")),
                 }
             }.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.sending = false;
                 let same_account = NostrRegistry::global(cx).read(cx).current_user() == Some(owner);
+                let mut block_warning = auto_block && !same_account;
                 let result = finish_report(result, auto_block, same_account, || {
-                    ChatRegistry::global(cx).update(cx, |chat, cx| {
+                    let result = ChatRegistry::global(cx).update(cx, |chat, cx| {
                         if chat.is_blocked(this.target) { Ok(()) } else { chat.block_user(this.target, true, cx) }
-                    })
+                    });
+                    block_warning = result.is_err();
+                    result
                 });
                 match result {
-                    Ok(message) => this.success = Some(message),
+                    Ok(message) => {
+                        this.success = Some(message.clone());
+                        let notice = if block_warning {
+                            Notification::warning(message).autohide(false)
+                        } else {
+                            Notification::success(message)
+                        };
+                        window.close_modal(cx);
+                        window.push_notification(notice, cx);
+                    },
                     Err(error) => this.error = Some(error.to_string()),
                 }
                 cx.notify();
@@ -284,21 +299,6 @@ impl ReportForm {
 
 impl Render for ReportForm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        if let Some(message) = &self.success {
-            return v_flex()
-                .gap_3()
-                .text_sm()
-                .max_h((window.viewport_size().height - px(112.)).max(px(80.)))
-                .overflow_y_scrollbar()
-                .child(message.clone())
-                .child(format!("Reported {}", self.name))
-                .child(
-                    Button::new("report-done")
-                        .label("Done")
-                        .primary()
-                        .on_click(|_, window, cx| window.close_modal(cx)),
-                );
-        }
         let auto_block = if self.sending { self.submitted_auto_block } else { AppSettings::get_auto_block_reports(cx) };
         v_flex().gap_3().text_sm()
             .max_h((window.viewport_size().height - px(112.)).max(px(80.))).overflow_y_scrollbar()
@@ -322,8 +322,20 @@ impl Render for ReportForm {
                         this.reason = Some(reason.clone()); this.error = None; cx.notify();
                     }))
             })))
-            .child("Explanation (optional, public)")
-            .child(Input::new(&self.explanation).disabled(self.sending))
+            .child(Button::new("toggle-report-explanation")
+                .label(if self.explanation_expanded { "Hide explanation" } else if self.explanation.read(cx).value().is_empty() { "Add an explanation (optional)" } else { "Edit explanation" })
+                .icon(if self.explanation_expanded { ui::IconName::ChevronDown } else { ui::IconName::Plus })
+                .align_left().small().ghost().disabled(self.sending)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.explanation_expanded = !this.explanation_expanded;
+                    if this.explanation_expanded {
+                        this.explanation.update(cx, |input, cx| input.focus(window, cx));
+                    }
+                    cx.notify();
+                })))
+            .when(self.explanation_expanded, |view| view
+                .child(div().text_xs().text_color(cx.theme().text_muted).child("Your explanation will be public."))
+                .child(Input::new(&self.explanation).disabled(self.sending)))
             .when_some(self.error.clone(), |view, error| view.child(v_flex().gap_2()
                 .child(div().text_color(cx.theme().text_warning).child(error.clone()))
                 .child(Button::new("copy-report-error").label("Copy error").small().ghost()

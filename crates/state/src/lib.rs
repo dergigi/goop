@@ -201,6 +201,13 @@ impl NostrRegistry {
         self.current_user.or(self.remembered_user)
     }
 
+    /// Offer setup after startup settles when there is no known account or
+    /// active connection attempt. A credential-store error must not strand a
+    /// first-time user behind an unavailable profile menu.
+    pub fn needs_signer_setup(&self) -> bool {
+        !self.identity_loading && self.displayed_user().is_none() && self.pending_signer.is_none()
+    }
+
     pub fn signer_connection_error(&self) -> Option<&str> {
         self.connection_error.as_deref()
     }
@@ -468,6 +475,9 @@ impl NostrRegistry {
                 this.update(cx, |this, cx| {
                     this.identity_loading = false;
                     this.connection_error = Some(format!("Could not restore saved signer: {error}"));
+                    if this.needs_signer_setup() {
+                        cx.emit(StateEvent::NoSigner);
+                    }
                     cx.notify();
                 })?;
             }

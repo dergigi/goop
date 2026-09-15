@@ -37,6 +37,7 @@ image = { version = "0.25", default-features = false }
 flume.workspace = true
 
 [dev-dependencies]
+nostr-memory.workspace = true
 qrcode = { version = "0.14", default-features = false }
 
 nostr-sdk = { workspace = true, features = ["local-relay"] }

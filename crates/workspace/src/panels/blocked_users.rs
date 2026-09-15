@@ -59,13 +59,13 @@ impl Render for BlockedUsers {
                 let profile = PersonRegistry::global(cx).read(cx).get(&key,cx);
                 h_flex().min_w_0().w_full().gap_1()
                     .child(Button::new(format!("profile-{key}"))
-                        .flex_1().min_w_0().truncate_label().small().ghost()
+                        .flex_1().min_w_0().truncate_label().align_left().small().ghost()
                         .tooltip(key.to_bech32().unwrap())
-                        .child(h_flex().min_w_0().gap_2()
-                            .child(Avatar::new(profile.avatar()).small())
+                        .child(h_flex().w_full().min_w_0().gap_2()
+                            .child(Avatar::new(profile.avatar()).small().flex_shrink_0())
                             .child(div().min_w_0().truncate().child(profile.name())))
                         .on_click(move |_,window,cx| window.dispatch_action(Box::new(crate::Command::OpenProfile(key)),cx)))
-                    .child(Button::new(format!("unblock-{key}")).label("Unblock").small().ghost()
+                    .child(Button::new(format!("unblock-{key}")).label("Unblock").flex_shrink_0().small().ghost()
                         .on_click(move |_,window,cx| crate::dialogs::moderation::block(key,window,cx)))
             }))
     }

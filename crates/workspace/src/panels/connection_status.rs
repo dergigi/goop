@@ -68,7 +68,8 @@ async fn sample(
     client: &Client,
     owner: PublicKey,
     watches: &mut BTreeMap<RelayUrl, RelayWatch>,
-) -> anyhow::Result<Vec<RelayState>> {
+    history_urls: BTreeSet<RelayUrl>,
+) -> anyhow::Result<(Vec<RelayState>, Vec<RelayState>)> {
     let events = client
         .database()
         .query(Filter::new().kind(Kind::InboxRelays).author(owner).limit(1))
@@ -78,9 +79,10 @@ async fn sample(
         .next()
         .map(|event| nip17::extract_relay_list(&event).collect())
         .unwrap_or_default();
-    watches.retain(|url, _| urls.contains(url));
+    let all_urls: BTreeSet<_> = urls.union(&history_urls).cloned().collect();
+    watches.retain(|url, _| all_urls.contains(url));
     let mut result = Vec::new();
-    for url in urls {
+    for url in all_urls {
         let relay = client.relay(&url).await?;
         let mut state = RelayState {
             url: url.clone(),
@@ -122,7 +124,7 @@ async fn sample(
         }
         result.push(state);
     }
-    Ok(result)
+    Ok(result.into_iter().partition(|relay| urls.contains(&relay.url)))
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -172,7 +174,7 @@ fn connection_summary(
     signed_in: bool,
     relays: Option<&[RelayState]>,
     error: bool,
-) -> Option<String> {
+) -> String {
     let message = if signer_error {
         "Signer unavailable"
     } else if loading {
@@ -184,16 +186,6 @@ fn connection_summary(
     } else if let Some(relays) = relays {
         if relays.is_empty() {
             "No messaging relays found"
-        } else if relays
-            .iter()
-            .any(|r| r.auth == Some("Authentication failed") || r.closed.is_some())
-        {
-            "Messaging relay needs attention"
-        } else if relays
-            .iter()
-            .any(|r| r.auth == Some("Waiting for signer authentication"))
-        {
-            "Waiting for relay authentication…"
         } else if relays
             .iter()
             .all(|r| r.status != Some(RelayStatus::Connected))
@@ -209,12 +201,13 @@ fn connection_summary(
                 "Messaging relays disconnected"
             }
         } else {
-            return None;
+            let connected = relays.iter().filter(|r| r.status == Some(RelayStatus::Connected)).count();
+            return format!("{connected}/{} relays connected", relays.len());
         }
     } else {
         "Checking messaging relays…"
     };
-    Some(message.into())
+    message.into()
 }
 
 pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
@@ -228,6 +221,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
                 if owner != this.owner {
                     this.owner = owner;
                     this.relays = None;
+                    this.history_relays.clear();
                     this.error = None;
                 }
                 cx.notify();
@@ -237,8 +231,9 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
             let mut sampled_owner = None;
             let mut watches = BTreeMap::new();
             loop {
-                let (owner, client) = this.read_with(cx, |this, cx| {
-                    (this.owner, NostrRegistry::global(cx).read(cx).client())
+                let (owner, client, history_urls) = this.read_with(cx, |this, cx| {
+                    (this.owner, NostrRegistry::global(cx).read(cx).client(),
+                        ChatRegistry::global(cx).read(cx).history_relays().keys().cloned().collect())
                 })?;
                 if sampled_owner != owner {
                     watches.clear();
@@ -247,7 +242,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
                 if let Some(owner) = owner {
                     let (next_watches, result) = cx
                         .background_spawn(async move {
-                            let result = sample(&client, owner, &mut watches).await;
+                            let result = sample(&client, owner, &mut watches, history_urls).await;
                             (watches, result)
                         })
                         .await;
@@ -257,12 +252,14 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
                             return;
                         }
                         match result {
-                            Ok(relays) => {
+                            Ok((relays, history_relays)) => {
                                 this.relays = Some(relays);
+                                this.history_relays = history_relays;
                                 this.error = None;
                             }
                             Err(error) => {
                                 this.relays = None;
+                                this.history_relays.clear();
                                 this.error = Some(error.to_string());
                             }
                         }
@@ -277,6 +274,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
         ConnectionStatus {
             owner,
             relays: None,
+            history_relays: Vec::new(),
             error: None,
             focus: cx.focus_handle(),
             _task: task,
@@ -288,6 +286,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
 pub struct ConnectionStatus {
     owner: Option<PublicKey>,
     relays: Option<Vec<RelayState>>,
+    history_relays: Vec<RelayState>,
     error: Option<String>,
     focus: FocusHandle,
     _task: Task<anyhow::Result<()>>,
@@ -298,65 +297,13 @@ impl ConnectionStatus {
     pub fn summary(&self, cx: &App) -> String {
         let nostr = NostrRegistry::global(cx);
         let nostr = nostr.read(cx);
-        if let Some(summary) = connection_summary(
+        connection_summary(
             nostr.identity_loading(),
             nostr.signer_connection_error().is_some(),
             self.owner.is_some(),
             self.relays.as_deref(),
             self.error.is_some(),
-        ) {
-            return summary;
-        }
-        let relays = self
-            .relays
-            .as_ref()
-            .expect("connection summary covers unchecked relays");
-        let connected = relays
-            .iter()
-            .filter(|r| r.status == Some(RelayStatus::Connected))
-            .count();
-        if connected == 0 {
-            return "Messaging relays disconnected".into();
-        }
-        let chat = ChatRegistry::global(cx);
-        let chat = chat.read(cx);
-        let delivery = Delivery::collect(chat.delivery_reports());
-        if chat.outgoing_error().is_some() {
-            return "Outgoing queue needs attention".into();
-        }
-        if delivery.paused > 0 {
-            return format!("{} sends paused", delivery.paused);
-        }
-        if delivery.failed > 0 {
-            return format!("{} sends delayed", delivery.failed);
-        }
-        if connected < relays.len() {
-            return format!("{connected}/{} messaging relays connected", relays.len());
-        }
-        if chat.history_error().is_some()
-            || chat.history_relays().values().any(|r| r.error.is_some())
-        {
-            return "History incomplete".into();
-        }
-        if chat.history_running() {
-            return "Downloading message history…".into();
-        }
-        if chat.pending_messages() > 0 {
-            return format!("Decrypting {} messages…", chat.pending_messages());
-        }
-        if chat.count_trash_messages(cx) > 0 {
-            return "Some messages could not be decrypted".into();
-        }
-        if delivery.preparing > 0 {
-            return format!("Preparing {} messages for signing…", delivery.preparing);
-        }
-        if delivery.pending > 0 {
-            return format!("Sending {} messages…", delivery.pending);
-        }
-        if chat.loading() {
-            return "Loading conversation list…".into();
-        }
-        "Messaging relays connected".into()
+        )
     }
 
     fn details(&self, cx: &App) -> Vec<(String, String)> {
@@ -468,7 +415,7 @@ impl Render for ConnectionStatus {
             .map(|relay| relay.url.to_string()).collect();
         let mut details = details.into_iter();
         let signer_detail = details.next().map(|(_, text)| text).unwrap_or_default();
-        let details: Vec<_> = details.filter(|(heading, _)| !relay_urls.contains(heading) && !heading.strip_prefix("History: ").is_some_and(|url| relay_urls.contains(url))).collect();
+        let details: Vec<_> = details.filter(|(heading, _)| !relay_urls.contains(heading) && !heading.starts_with("History: ")).collect();
         let signed_in = self.owner.is_some();
         let nostr = NostrRegistry::global(cx);
         let signer_needs_retry = nostr.read(cx).identity_loading()
@@ -489,6 +436,9 @@ impl Render for ConnectionStatus {
             .child(h_flex().gap_2().flex_wrap()
                 .child(Button::new("copy-status").label("Copy status").small().ghost()
                     .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))
+                .when(nostr.read(cx).needs_signer_setup(), |view| view.child(
+                    Button::new("setup-status-signer").label("Connect your signer").small().primary()
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::ConnectSigner), cx))))
                 .child(Button::new("retry-status-signer").label("Reconnect signer").small().ghost().disabled(!signer_needs_retry)
                     .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx)))))
             .child(v_flex().gap_2()
@@ -502,8 +452,20 @@ impl Render for ConnectionStatus {
                             if progress.error.is_some() { "Scan incomplete" } else if progress.done { "History checked" } else { "Loading history…" })
                     }), chat.history_relays().get(&relay.url).and_then(|progress| progress.error.clone()), cx)))
             ))
-            .children(details.into_iter().map(|(heading, detail)| v_flex().gap_1().child(heading)
-                .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(detail))))
+            .children(details.into_iter().map(|(heading, detail)| {
+                let history = heading == "Message history";
+                v_flex().gap_1().child(heading)
+                    .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(detail))
+                    .when(history, |view| view.children(chat.history_relays().iter()
+                        .filter(|(url, _)| !relay_urls.contains(&url.to_string()))
+                        .map(|(url, progress)| {
+                            let state = self.history_relays.iter().find(|relay| &relay.url == url).cloned()
+                                .unwrap_or_else(|| RelayState { url: url.clone(), status: None, auth: None, closed: None });
+                            relay_row(&state, Some(format!("{} messages received · {}", progress.received,
+                                if progress.error.is_some() { "Scan incomplete" } else if progress.done { "History checked" } else { "Loading history…" })),
+                                progress.error.clone(), cx).into_any_element()
+                        })))
+            }))
             .child(h_flex().gap_2().flex_wrap()
                 .child(Button::new("manage-status-relays").label("Manage messaging relays").small().ghost()
                     .on_click(|_, window, cx| {
@@ -570,6 +532,7 @@ fn relay_row(relay: &RelayState, history: Option<String>, history_error: Option<
         Some(RelayStatus::Sleeping) => ("Sleeping", cx.theme().icon_muted),
         Some(RelayStatus::Banned) => ("Disabled", cx.theme().icon_muted),
         Some(RelayStatus::Shutdown) => ("Shut down", cx.theme().icon_muted),
+        None => ("Connection status not observed", cx.theme().icon_muted),
         _ => ("Disconnected", cx.theme().icon_muted),
     };
     let errors = relay_errors(relay, history_error.as_deref());
@@ -594,7 +557,7 @@ fn relay_row(relay: &RelayState, history: Option<String>, history_error: Option<
                 .child(Icon::new(IconName::UserKey).xsmall().text_color(cx.theme().text_warning))))
         .when_some(error, |row, error| row.child(
             Button::new("relay-error")
-                .icon(Icon::new(IconName::Warning).text_color(cx.theme().text_warning))
+                .icon(Icon::new(IconName::WarningTriangle).text_color(cx.theme().text_warning))
                 .xsmall().ghost().tooltip("Show relay error")
                 .on_click(move |_, window, cx| {
                     let error = error.clone();
@@ -641,28 +604,28 @@ mod tests {
             closed: None,
         }];
         assert_eq!(
-            connection_summary(false, false, false, Some(&old), false).as_deref(),
-            Some("Connect your signer")
+            connection_summary(false, false, false, Some(&old), false).as_str(),
+            "Connect your signer"
         );
         assert_eq!(
-            connection_summary(true, false, true, Some(&old), false).as_deref(),
-            Some("Connecting to signer…")
+            connection_summary(true, false, true, Some(&old), false).as_str(),
+            "Connecting to signer…"
         );
         assert_eq!(
-            connection_summary(true, true, true, Some(&old), false).as_deref(),
-            Some("Signer unavailable")
+            connection_summary(true, true, true, Some(&old), false).as_str(),
+            "Signer unavailable"
         );
     }
 
     #[test]
     fn unchecked_missing_and_disconnected_relays_are_distinct() {
         assert_eq!(
-            connection_summary(false, false, true, None, false).as_deref(),
-            Some("Checking messaging relays…")
+            connection_summary(false, false, true, None, false).as_str(),
+            "Checking messaging relays…"
         );
         assert_eq!(
-            connection_summary(false, false, true, Some(&[]), false).as_deref(),
-            Some("No messaging relays found")
+            connection_summary(false, false, true, Some(&[]), false).as_str(),
+            "No messaging relays found"
         );
         let mut relay = RelayState {
             url: RelayUrl::parse("wss://example.com").unwrap(),
@@ -671,15 +634,54 @@ mod tests {
             closed: None,
         };
         assert_eq!(
-            connection_summary(false, false, true, Some(&[relay.clone()]), false).as_deref(),
-            Some("Messaging relays disconnected")
+            connection_summary(false, false, true, Some(&[relay.clone()]), false).as_str(),
+            "Messaging relays disconnected"
         );
         relay.status = Some(RelayStatus::Connected);
         relay.closed = Some("auth-required: authenticate first".into());
         assert_eq!(
-            connection_summary(false, false, true, Some(&[relay]), false).as_deref(),
-            Some("Messaging relay needs attention")
+            connection_summary(false, false, true, Some(&[relay]), false).as_str(),
+            "1/1 relays connected"
         );
+    }
+
+    #[tokio::test]
+    async fn history_relays_are_sampled_without_changing_the_messaging_list() {
+        let client = ClientBuilder::default().database(nostr_memory::MemoryDatabase::unbounded()).build();
+        let owner = Keys::generate();
+        let inbox = RelayUrl::parse("wss://inbox.example.com").unwrap();
+        let history = RelayUrl::parse("wss://history.example.com").unwrap();
+        let event = EventBuilder::new(Kind::InboxRelays, "")
+            .tag(Tag::parse(["relay", inbox.as_str()]).unwrap())
+            .finalize(&owner).unwrap();
+        client.database().save_event(&event).await.unwrap();
+        client.add_relay(&inbox).await.unwrap();
+        client.add_relay(&history).await.unwrap();
+        let mut watches = BTreeMap::new();
+        let (messaging, extra) = sample(&client, owner.public_key(), &mut watches,
+            BTreeSet::from([inbox.clone(), history.clone()])).await.unwrap();
+        assert_eq!(messaging.iter().map(|r| r.url.clone()).collect::<Vec<_>>(), vec![inbox.clone()]);
+        assert_eq!(extra.iter().map(|r| r.url.clone()).collect::<Vec<_>>(), vec![history]);
+        assert!(extra[0].status.is_some());
+        assert_ne!(extra[0].status, Some(RelayStatus::Connected));
+        assert!(extra[0].auth.is_none());
+        let (_, extra) = sample(&client, owner.public_key(), &mut watches, BTreeSet::new()).await.unwrap();
+        assert!(extra.is_empty());
+        assert_eq!(watches.keys().cloned().collect::<Vec<_>>(), vec![inbox]);
+        client.shutdown().await;
+    }
+
+    #[test]
+    fn connected_count_survives_individual_auth_and_subscription_errors() {
+        let mut relays = (0..6).map(|i| RelayState {
+            url: RelayUrl::parse(&format!("wss://relay{i}.example.com")).unwrap(),
+            status: Some(RelayStatus::Connected), auth: None, closed: None,
+        }).collect::<Vec<_>>();
+        relays[0].auth = Some("Authentication failed");
+        relays[0].closed = Some("auth-required".into());
+        relays[5].status = Some(RelayStatus::Disconnected);
+        assert_eq!(connection_summary(false, false, true, Some(&relays), false).as_str(), "5/6 relays connected");
+        assert!(!relay_errors(&relays[0], None).is_empty());
     }
 
     #[test]

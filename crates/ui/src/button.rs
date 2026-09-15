@@ -121,6 +121,7 @@ pub struct Button {
     icon: Option<Icon>,
     label: Option<SharedString>,
     truncate_label: bool,
+    align_left: bool,
     tooltip: Option<SharedString>,
     children: Vec<AnyElement>,
 
@@ -161,6 +162,7 @@ impl Button {
             icon: None,
             label: None,
             truncate_label: false,
+            align_left: false,
             variant: ButtonVariant::default(),
             disabled: false,
             selected: false,
@@ -188,6 +190,12 @@ impl Button {
     /// Set label to the Button, if no label is set, the button will be in Icon Button mode.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Align the label and custom content to the left edge.
+    pub fn align_left(mut self) -> Self {
+        self.align_left = true;
         self
     }
 
@@ -438,8 +446,9 @@ impl RenderOnce for Button {
             .child({
                 h_flex()
                     .id("label")
+                    .when(self.align_left, |this| this.w_full())
                     .when(self.truncate_label, |this| this.min_w_0().max_w_full())
-                    .justify_center()
+                    .map(|this| if self.align_left { this.justify_start() } else { this.justify_center() })
                     .map(|this| match self.size {
                         Size::XSmall => this.text_xs().gap_1(),
                         Size::Small => this.text_sm().gap_1p5(),

@@ -32,6 +32,7 @@ pub struct ImportIdentity {
 
     /// Input subscription
     _subscription: Option<Subscription>,
+    _state_subscription: Subscription,
 }
 
 impl ImportIdentity {
@@ -56,6 +57,7 @@ impl ImportIdentity {
             loading: false,
             tasks: vec![],
             _subscription: Some(input_subscription),
+            _state_subscription: cx.observe(&NostrRegistry::global(cx), |_, _, cx| cx.notify()),
         }
     }
 
@@ -178,6 +180,10 @@ impl Render for ImportIdentity {
             .size_full()
             .gap_4()
             .text_sm()
+            .when_some(NostrRegistry::global(cx).read(cx).signer_connection_error().map(str::to_owned), |view, error| view
+                .child(div().text_color(cx.theme().text_warning).child(error))
+                .child(Button::new("retry-saved-signer").label("Retry saved connection").ghost()
+                    .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |state, cx| state.retry_signer(cx)))))
             .child(
                 v_flex()
                     .gap_2()

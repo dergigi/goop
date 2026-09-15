@@ -9464,6 +9464,7 @@ dependencies = [
  "log",
  "nokhwa",
  "nostr-connect",
+ "nostr-memory",
  "nostr-sdk",
  "person",
  "qrcode",
