@@ -1,5 +1,5 @@
 title: Goop
-description: A simple NIP-17 client that just works.
+description: A native NIP-17 client for you and your agents.
 baseurl: /goop
 url: https://dergigi.com
 remote_theme: just-the-docs/just-the-docs@v0.12.0
@@ -14,7 +14,7 @@ aux_links:
     - https://github.com/dergigi/goop/releases/latest
   GitHub:
     - https://github.com/dergigi/goop
-footer_content: "A simple NIP-17 client that just works."
+footer_content: "A native NIP-17 client for you and your agents."
 gh_edit_link: true
 gh_edit_link_text: Edit this page
 gh_edit_repository: https://github.com/dergigi/goop

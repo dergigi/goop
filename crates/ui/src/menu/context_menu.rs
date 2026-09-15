@@ -29,6 +29,18 @@ pub trait ContextMenuExt: ParentElement + Styled {
         let id = format!("context-menu-{:p}", &self as *const _);
         ContextMenu::new(id, self).menu(f)
     }
+
+    /// Keep menu state attached to a specific item across redraws and reordering.
+    fn context_menu_with_id(
+        self,
+        id: impl Into<ElementId>,
+        f: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
+    ) -> ContextMenu<Self>
+    where
+        Self: Sized,
+    {
+        ContextMenu::new(id, self).menu(f)
+    }
 }
 
 impl<E: ParentElement + Styled> ContextMenuExt for E {}
@@ -319,5 +331,49 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for ContextMenu<
                 });
             },
         );
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use super::*;
+    use crate::menu::PopupMenuItem;
+    use gpui::{Modifiers, Render, TestAppContext, point};
+    use std::cell::Cell;
+
+    struct MenuRows { chosen: Rc<Cell<u64>> }
+    impl Render for MenuRows {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            crate::v_flex().size_full().children((1u64..=2).map(|id| {
+                let chosen = self.chosen.clone();
+                div().w_full().h(px(40.)).context_menu_with_id(("chat-row", id), move |menu, _, _| {
+                    let chosen = chosen.clone();
+                    menu.item(PopupMenuItem::new("View profile").on_click(move |_, window, cx| {
+                        let chosen = chosen.clone();
+                        window.defer(cx, move |_, _| chosen.set(id));
+                    }))
+                })
+            }))
+        }
+    }
+
+    #[gpui::test]
+    fn row_menu_keeps_its_action_across_redraws(cx: &mut TestAppContext) {
+        let chosen = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            theme::init(cx);
+            crate::init(cx);
+            MenuRows { chosen: chosen.clone() }
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(point(px(20.), px(60.)), None, Modifiers::default());
+        cx.simulate_mouse_down(point(px(20.), px(60.)), MouseButton::Right, Modifiers::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| { window.refresh(); window.draw(cx).clear(cx); });
+        cx.update(|window, cx| { window.refresh(); window.draw(cx).clear(cx); });
+        cx.simulate_mouse_move(point(px(45.), px(77.)), None, Modifiers::default());
+        cx.simulate_click(point(px(45.), px(77.)), Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(chosen.get(), 2, "the second row's profile action must survive redraws");
     }
 }

@@ -1,6 +1,6 @@
 # Goop
 
-A simple NIP-17 client that just works.
+A native NIP-17 client for you and your agents.
 
 Goop is Gigi's fork of [Coop](https://git.reya.info/reya/coop), available for macOS, Windows, and Linux.
 

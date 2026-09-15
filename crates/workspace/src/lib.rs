@@ -8,7 +8,7 @@ use common::{GoopImageCache, download_dir};
 use device::{DeviceEvent, DeviceRegistry};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, Focusable, InteractiveElement, IntoElement,
+    Action, App, AppContext, Axis, Context, Entity, InteractiveElement, IntoElement,
     KeyBinding, ParentElement, Render, SharedString, Styled, Subscription, Task, Window, div,
     image_cache, px,
 };
@@ -35,6 +35,7 @@ use crate::dialogs::settings;
 use crate::panels::{contact_list, greeter, messaging_relays, profile, relay_list};
 use crate::sidebar::Sidebar;
 
+mod build_info;
 mod dialogs;
 mod panels;
 mod sidebar;
@@ -197,7 +198,7 @@ impl Workspace {
                 match event {
                     DeviceEvent::Requesting => {
                         const MSG: &str =
-                            "Please open other client and approve the request for encryption key.";
+                            "Open your other client and approve the encryption key request.";
 
                         let note = Notification::new()
                             .id::<DeviceNotifcation>()
@@ -210,7 +211,7 @@ impl Workspace {
                     }
                     DeviceEvent::NotSet => {
                         const MSG: &str =
-                            "User're not setup encryption key yet. Do you want to create one?";
+                            "You haven't set up an encryption key yet. Would you like to create one?";
 
                         let note = Notification::new()
                             .id::<DeviceNotifcation>()
@@ -233,7 +234,7 @@ impl Workspace {
                     DeviceEvent::Set => {
                         let note = Notification::new()
                             .id::<DeviceNotifcation>()
-                            .message("Encryption Key has been set")
+                            .message("Your encryption key has been set.")
                             .with_kind(NotificationKind::Success);
 
                         window.push_notification(note, cx);
@@ -250,7 +251,7 @@ impl Workspace {
             cx.subscribe_in(&chat, window, move |this, chat, ev, window, cx| {
                 match ev {
                     ChatEvent::InboxRelayNotFound => {
-                        const MSG: &str = "Messaging Relays not found. Cannot receive messages.";
+                        const MSG: &str = "No messaging relays were found. Goop cannot receive messages.";
 
                         window.push_notification(
                             Notification::warning(MSG)
@@ -368,9 +369,9 @@ impl Workspace {
                     modal.title("About Goop").show_close(true).child(
                         v_flex()
                             .gap_2()
-                            .child(format!("Goop {}", env!("CARGO_PKG_VERSION")))
-                            .child(format!("Build {}", env!("GOOP_BUILD_REVISION")))
-                            .child("A simple NIP-17 client that just works.")
+                            .child(h_flex().child(build_info::version_link()))
+                            .child(h_flex().child(build_info::build_link()))
+                            .child("A native NIP-17 client for you and your agents.")
                             .child(
                                 Button::new("about-source")
                                     .label("Goop on GitHub")
@@ -384,10 +385,6 @@ impl Workspace {
             }
 
             Command::ToggleSidebar => {
-                if Focusable::focus_handle(&self.sidebar, cx).contains_focused(window, cx) {
-                    self.dock
-                        .update(cx, |dock, cx| dock.focus_tab_panel(window, cx));
-                }
                 self.dock.update(cx, |dock, cx| {
                     dock.toggle_dock(DockPlacement::Left, window, cx)
                 });
@@ -600,11 +597,11 @@ impl Workspace {
     }
 
     fn confirm_reset_encryption(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const ENC_MSG: &str = "Encryption Key is a special key that used to encrypt and decrypt your messages. \
+        const ENC_MSG: &str = "An encryption key is a special key used to encrypt and decrypt your messages. \
                                Your identity is completely decoupled from all encryption processes to protect your privacy.";
 
         const ENC_WARN: &str = "By resetting your encryption key, you will lose access to \
-                                all your encrypted messages before. This action cannot be undone.";
+                                all your previously encrypted messages. This action cannot be undone.";
 
         let device = DeviceRegistry::global(cx);
         let ent = device.downgrade();

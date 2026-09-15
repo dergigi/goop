@@ -65,7 +65,7 @@ impl Preferences {
 
 impl Render for Preferences {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const SCREENING: &str = "Show an screening dialog to verify the unknown sender.";
+        const SCREENING: &str = "Show a screening dialog to verify unknown senders.";
         const AVATAR: &str = "Hide all avatar pictures to improve performance.";
         const MODE: &str = "Follow your system appearance, or choose light or dark.";
         const NIP4E: &str = "Use a dedicated key to encrypt and decrypt messages.";
@@ -95,7 +95,7 @@ impl Render for Preferences {
                     )
                     .child(
                         Switch::new("avatar")
-                            .label("Hide user avatar")
+                            .label("Hide user avatars")
                             .description(AVATAR)
                             .checked(hide_avatar)
                             .on_click(move |_, _window, cx| {
@@ -162,7 +162,7 @@ impl Render for Preferences {
                     .fill()
                     .child(
                         Switch::new("nip4e")
-                            .label("Decoupling Encryption Key")
+                            .label("Decoupled Encryption Key")
                             .description(NIP4E)
                             .checked(nip4e)
                             .on_click(move |_, _window, cx| {
@@ -210,11 +210,10 @@ impl Render for Preferences {
                     )),
             )
             .child(
-                div().text_xs().text_color(cx.theme().text_muted).child(format!(
-                    "Goop {} · Build {}",
-                    env!("CARGO_PKG_VERSION"),
-                    env!("GOOP_BUILD_REVISION"),
-                )),
+                h_flex().flex_wrap().gap_1().text_xs().text_color(cx.theme().text_muted)
+                    .child(crate::build_info::version_link())
+                    .child("·")
+                    .child(crate::build_info::build_link()),
             )
     }
 }

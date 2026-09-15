@@ -129,7 +129,7 @@ impl ContactListPanel {
                 cx.notify();
             }
         } else {
-            self.set_error("Public Key is invalid", window, cx);
+            self.set_error("The public key is invalid.", window, cx);
         }
     }
 
@@ -165,7 +165,7 @@ impl ContactListPanel {
 
     pub fn update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.contacts.is_empty() {
-            self.set_error("You need to add at least 1 contact", window, cx);
+            self.set_error("Add at least one contact.", window, cx);
             return;
         };
 
@@ -272,7 +272,7 @@ impl ContactListPanel {
             .rounded(cx.theme().radius_lg)
             .text_sm()
             .text_align(TextAlign::Center)
-            .child(SharedString::from("Please add some relays."))
+            .child(SharedString::from("Add contacts to get started."))
     }
 }
 

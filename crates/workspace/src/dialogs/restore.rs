@@ -53,11 +53,11 @@ impl RestoreEncryption {
         let content = self.key_input.read(cx).value();
 
         if !content.is_empty() {
-            self.set_error("Secret Key cannot be empty.", cx);
+            self.set_error("The secret key cannot be empty.", cx);
         }
 
         let Ok(secret) = SecretKey::parse(&content) else {
-            self.set_error("Secret Key is invalid.", cx);
+            self.set_error("The secret key is invalid.", cx);
             return;
         };
 

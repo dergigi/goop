@@ -350,7 +350,7 @@ impl DeviceRegistry {
 
             // Compare the public key from the announcement with the one from the database
             if keys.public_key() != device_pubkey {
-                return Err(anyhow!("Encryption Key doesn't match the announcement"));
+                return Err(anyhow!("The encryption key doesn't match the announcement."));
             };
 
             Ok(keys)
@@ -494,7 +494,7 @@ impl DeviceRegistry {
                 .find(|tag| tag.kind() == "P")
                 .and_then(|tag| tag.content())
                 .and_then(|content| PublicKey::parse(content).ok())
-                .context("Invalid event's tags")?;
+                .context("Invalid event tags")?;
 
             let payload = event.content.as_str();
             let decrypted = app_keys.nip44_decrypt_async(&master, payload).await?;
@@ -606,7 +606,7 @@ impl DeviceRegistry {
     /// Build a notification for the encryption request.
     fn notification(&self, event: Event, cx: &Context<Self>) -> Notification {
         const MSG: &str = "You've requested an encryption key from another device. \
-                           Approve to allow Goop to share with it.";
+                           Approve to allow Goop to share the key with that device.";
 
         let request = Announcement::from(&event);
         let persons = PersonRegistry::global(cx);

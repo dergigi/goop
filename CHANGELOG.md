@@ -7,6 +7,27 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-15
+
+### Added
+
+- Link version numbers to their GitHub release and build revisions to their commits in Settings and About.
+
+### Changed
+
+- Update the byline to “A native NIP-17 client for you and your agents.”
+- Align unread badges beside timestamps in chat rows, keeping timestamps vertically centered and hover actions in fixed positions.
+
+### Fixed
+
+- Preserve keyboard focus when collapsing a sidebar, keeping Cmd/Ctrl+B, 1, 2, and other shortcuts responsive.
+- Constrain the center dock to the window so content cannot push the composer or right pane off-screen, and keep chat context-menu identities stable across redraws.
+- Correct UI grammar, relay URL validation text, encryption-key prompts, profile copy, and the empty contact-list message.
+- Use “Write a note to yourself…” as the Note to self composer placeholder.
+- Keep non-square profile photos circular by enforcing square image layout before cropping.
+- Open profiles directly in the right sidepane after dismissing a chat context menu.
+- Simplify the report button label to “Report user”.
+
 ## [2.5.0] - 2026-09-15
 
 ### Added
@@ -225,7 +246,9 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/dergigi/goop/compare/v2.5.0...v2.6.0
+[2.5.0]: https://github.com/dergigi/goop/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/dergigi/goop/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/dergigi/goop/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/dergigi/goop/compare/v2.1.0...v2.2.0

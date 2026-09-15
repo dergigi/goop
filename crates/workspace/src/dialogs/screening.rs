@@ -501,7 +501,7 @@ impl Render for Screening {
                             .child(
                                 Button::new("report")
                                     .tooltip("Report user for impersonation")
-                                    .label("Report user…")
+                                    .label("Report user")
                                     .icon(IconName::Flag)
                                     .small()
                                     .warning()

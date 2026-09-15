@@ -168,7 +168,7 @@ impl RelayListPanel {
         let metadata = self.metadata.read(cx);
 
         if !value.starts_with("ws") {
-            self.set_error("Relay URl is invalid", window, cx);
+            self.set_error("The relay URL is invalid.", window, cx);
             return;
         }
 
@@ -181,7 +181,7 @@ impl RelayListPanel {
                 cx.notify();
             }
         } else {
-            self.set_error("Relay URl is invalid", window, cx);
+            self.set_error("The relay URL is invalid.", window, cx);
         }
     }
 
@@ -235,7 +235,7 @@ impl RelayListPanel {
 
     fn set_relays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.relays.is_empty() {
-            self.set_error("You need to add at least 1 relay", window, cx);
+            self.set_error("Add at least one relay.", window, cx);
             return;
         };
 

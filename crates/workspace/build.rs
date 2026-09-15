@@ -10,6 +10,8 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    println!("cargo:rustc-env=GOOP_BUILD_COMMIT={commit}");
     let revision = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=GOOP_BUILD_REVISION={revision}");
 

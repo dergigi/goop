@@ -67,7 +67,7 @@ impl ProfilePanel {
             InputState::new(window, cx)
                 .multi_line(true)
                 .auto_grow(3, 8)
-                .placeholder("A short introduce about you.")
+                .placeholder("A short introduction about yourself.")
         });
 
         // Get user's profile and update inputs
@@ -362,7 +362,7 @@ impl Render for ProfilePanel {
                         div()
                             .text_sm()
                             .text_color(cx.theme().text_muted)
-                            .child(SharedString::from("A short introduction about you:")),
+                            .child(SharedString::from("A short introduction about yourself:")),
                     )
                     .child(Input::new(&self.bio_input).small()),
             )

@@ -255,6 +255,9 @@ impl RenderOnce for ResizablePanel {
             .flex()
             .flex_grow_1()
             .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
             .relative()
             .when(self.axis.is_vertical(), |this| {
                 this.min_h(size_range.start).max_h(size_range.end)

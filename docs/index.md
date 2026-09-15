@@ -5,7 +5,7 @@ title: Usage guide
 
 # Goop usage guide
 
-A simple NIP-17 client that just works.
+A native NIP-17 client for you and your agents.
 
 Designed for people who love the keyboard.
 This guide covers Goop 2.1.

@@ -12,7 +12,7 @@ use theme::ActiveTheme;
 use ui::avatar::Avatar;
 use ui::dock::ClosePanel;
 use ui::modal::ModalButtonProps;
-use ui::{Icon, IconName, Selectable, Sizable, StyledExt, WindowExtension, h_flex, v_flex};
+use ui::{Icon, IconName, Selectable, Sizable, StyledExt, WindowExtension, h_flex};
 
 use crate::dialogs::screening;
 
@@ -180,15 +180,19 @@ impl RenderOnce for RoomEntry {
                                     .group_hover("chat-row", |style| style.visible())
                                     .child(actions)))
                             .when_some(self.created_at, |this, created_at| this.child(
-                                v_flex().w_12().flex_shrink_0().items_end().child(created_at)
-                                    .when(self.unread_count > 0, |column| column.child(
-                                        h_flex().h_4().min_w_4().px_1().rounded_full()
-                                            .justify_center().items_center()
-                                            .bg(cx.theme().cursor).text_color(gpui::white())
-                                            .text_xs().font_semibold()
-                                            .child(if self.unread_count > 99 { "99+".to_owned() }
-                                                else { self.unread_count.to_string() })
-                                    )))),
+                                h_flex().gap_1p5().flex_shrink_0()
+                                    // Fixed slots keep the time and hover actions aligned,
+                                    // regardless of unread count or timestamp length.
+                                    .child(h_flex().w_6().flex_shrink_0().justify_center()
+                                        .when(self.unread_count > 0, |slot| slot.child(
+                                            h_flex().h_4().min_w_4().px_0p5().rounded_full()
+                                                .justify_center().items_center()
+                                                .bg(cx.theme().cursor).text_color(gpui::white())
+                                                .text_xs().font_semibold()
+                                                .child(if self.unread_count > 99 { "99+".to_owned() }
+                                                    else { self.unread_count.to_string() })
+                                        )))
+                                    .child(div().w_10().flex_shrink_0().text_right().child(created_at)))),
                     ),
             )
             .hover(|this| this.bg(cx.theme().elevated_surface_background))

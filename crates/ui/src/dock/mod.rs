@@ -312,7 +312,7 @@ impl DockItem {
     }
 
     pub(crate) fn focus_tab_panel(&self, window: &mut Window, cx: &mut App) {
-        if let DockItem::Tabs { view, .. } = self {
+        if let Some(view) = self.left_top_tab_panel(cx) {
             window.focus(&view.read(cx).focus_handle(cx), cx);
         }
     }
@@ -657,6 +657,11 @@ impl DockArea {
         };
 
         if let Some(dock) = dock {
+            // Move focus before removing a dock from the rendered focus tree.
+            // Both toolbar clicks and keyboard commands use this path.
+            if dock.read(cx).is_open() {
+                self.items.focus_tab_panel(window, cx);
+            }
             dock.update(cx, |view, cx| {
                 view.toggle_open(window, cx);
             })
@@ -890,9 +895,15 @@ impl Render for DockArea {
                                 div()
                                     .flex()
                                     .flex_1()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .h_full()
+                                    .overflow_hidden()
                                     .flex_col()
-                                    // Top center
-                                    .child(div().flex_1().child(self.render_items(window, cx)))
+                                    // Constrain panel contents to the viewport instead of
+                                    // letting their minimum content size push docks off-screen.
+                                    .child(div().flex_1().min_w_0().min_h_0().overflow_hidden()
+                                        .child(self.render_items(window, cx)))
                                     // Bottom Dock
                                     .when_some(self.bottom_dock.clone(), |this, dock| {
                                         this.child(dock)
@@ -905,5 +916,109 @@ impl Render for DockArea {
                     )
                 }
             })
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod viewport_tests {
+    use super::*;
+    use gpui::{Bounds, FocusHandle, Focusable, Pixels, SharedString, TestAppContext, point, size};
+    use std::sync::Mutex;
+
+    struct TestPanel {
+        id: &'static str,
+        focus: FocusHandle,
+        bounds: Arc<Mutex<Bounds<Pixels>>>,
+    }
+    impl Panel for TestPanel {
+        fn panel_id(&self) -> SharedString { self.id.into() }
+    }
+    impl Focusable for TestPanel {
+        fn focus_handle(&self, _: &App) -> FocusHandle { self.focus.clone() }
+    }
+    impl EventEmitter<PanelEvent> for TestPanel {}
+    impl Render for TestPanel {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let bounds = self.bounds.clone();
+            div().size_full()
+                .on_prepaint(move |value, _, _| *bounds.lock().unwrap() = value)
+                .child(div().w(px(2000.)).h(px(1200.)))
+        }
+    }
+
+    #[gpui::test]
+    fn collapsing_sidebar_preserves_focus_in_nested_center_tabs(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let (dock, center, sidebar) = window.update(|window, cx| {
+            theme::init(cx);
+            crate::init(cx);
+            let dock = cx.new(|cx| DockArea::new(window, cx));
+            let center = cx.new(|cx| TestPanel {
+                id: "center", focus: cx.focus_handle(), bounds: Arc::default(),
+            });
+            let sidebar = cx.new(|cx| TestPanel {
+                id: "sidebar", focus: cx.focus_handle(), bounds: Arc::default(),
+            });
+            let weak = dock.downgrade();
+            let tabs = DockItem::tabs(vec![Arc::new(center.clone())], None, &weak, window, cx);
+            let split = DockItem::split(Axis::Vertical, vec![tabs], &weak, window, cx);
+            dock.update(cx, |dock, cx| {
+                dock.set_center(split, window, cx);
+                dock.add_panel(Arc::new(sidebar.clone()), DockPlacement::Left, window, cx);
+            });
+            (dock, center, sidebar)
+        });
+        for _ in 0..3 {
+            window.draw(point(px(0.), px(0.)), size(px(1000.), px(550.)), |_, _| dock.clone().into_any_element());
+            window.update(|window, cx| {
+                window.focus(&sidebar.read(cx).focus.clone(), cx);
+                dock.update(cx, |dock, cx| dock.toggle_dock(DockPlacement::Left, window, cx));
+                assert!(center.read(cx).focus.is_focused(window));
+                assert!(!dock.read(cx).is_dock_open(DockPlacement::Left, cx));
+            });
+            window.draw(point(px(0.), px(0.)), size(px(1000.), px(550.)), |_, _| dock.clone().into_any_element());
+            window.update(|window, cx| {
+                assert!(center.read(cx).focus.is_focused(window));
+                dock.update(cx, |dock, cx| dock.toggle_dock(DockPlacement::Left, window, cx));
+                assert!(dock.read(cx).is_dock_open(DockPlacement::Left, cx));
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn oversized_center_content_keeps_right_dock_and_panel_bottom_in_view(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let center_bounds = Arc::new(Mutex::new(Bounds::default()));
+        let right_bounds = Arc::new(Mutex::new(Bounds::default()));
+        let dock = window.update(|window, cx| {
+            theme::init(cx);
+            crate::init(cx);
+            let dock = cx.new(|cx| DockArea::new(window, cx));
+            for (id, placement, bounds) in [
+                ("center", DockPlacement::Center, center_bounds.clone()),
+                ("right", DockPlacement::Right, right_bounds.clone()),
+            ] {
+                let panel = cx.new(|cx| TestPanel { id, focus: cx.focus_handle(), bounds });
+                if placement == DockPlacement::Center {
+                    let weak = dock.downgrade();
+                    let tabs = DockItem::tabs(vec![Arc::new(panel)], None, &weak, window, cx);
+                    let center = DockItem::split(Axis::Vertical, vec![tabs], &weak, window, cx);
+                    dock.update(cx, |dock, cx| dock.set_center(center, window, cx));
+                } else {
+                    dock.update(cx, |dock, cx| dock.add_panel(Arc::new(panel), placement, window, cx));
+                }
+            }
+            dock
+        });
+        for height in [800., 350., 550.] {
+            window.draw(point(px(0.), px(0.)), size(px(1000.), px(height)), |_, _| dock.clone().into_any_element());
+            let center = *center_bounds.lock().unwrap();
+            let right = *right_bounds.lock().unwrap();
+            assert!(center.size.height > px(0.));
+            assert!(center.bottom() <= px(height), "center {center:?} exceeds {height}");
+            assert!(right.right() <= px(1000.), "right dock is offscreen: {right:?}");
+            assert!(right.size.width > px(0.));
+            assert!(center.right() <= right.left());
+        }
     }
 }

@@ -128,12 +128,15 @@ impl RenderOnce for Avatar {
             .child(
                 self.image
                     .size(image_size)
+                    .aspect_square()
                     .rounded_full()
                     .object_fit(ObjectFit::Cover)
                     .bg(cx.theme().ghost_element_background)
                     .with_fallback(move || {
                         img("brand/avatar.png")
                             .size(image_size)
+                            .aspect_square()
+                            .object_fit(ObjectFit::Cover)
                             .rounded_full()
                             .into_any_element()
                     }),

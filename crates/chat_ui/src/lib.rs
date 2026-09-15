@@ -133,20 +133,26 @@ impl ChatPanel {
             }
         });
 
-        // Get room id and name
-        let (id, name) = room
+        // Choose the self-chat wording from membership, not the display name.
+        let (id, placeholder) = room
             .read_with(cx, |this, _cx| {
                 let id = this.id.to_string().into();
-                let name = this.display_name(cx);
+                let is_self = NostrRegistry::global(cx).read(cx).current_user()
+                    .is_some_and(|owner| this.members() == [owner]);
+                let placeholder = if is_self {
+                    "Write a note to yourself…".to_owned()
+                } else {
+                    format!("Message {}", this.display_name(cx))
+                };
 
-                (id, name)
+                (id, placeholder)
             })
-            .unwrap_or(("Unknown".into(), "Message...".into()));
+            .unwrap_or(("Unknown".into(), "Message…".into()));
 
         // Define input state
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder(format!("Message {}", name))
+                .placeholder(placeholder)
                 .auto_grow(1, 20)
                 .submit_on_enter(true)
                 .clean_on_escape()
@@ -772,7 +778,7 @@ impl ChatPanel {
                 let is_force_nip4e = *kind == SignerKind::Encryption || *kind == SignerKind::Auto;
 
                 if !is_nip4e_enabled && is_force_nip4e {
-                    window.push_notification("Decoupling Encryption Key is not enabled", cx);
+                    window.push_notification("The decoupled encryption key is not enabled.", cx);
                     return;
                 }
 
@@ -838,7 +844,7 @@ impl ChatPanel {
                                 .text_sm()
                                 .bg(cx.theme().elevated_surface_background)
                                 .rounded(cx.theme().radius)
-                                .child("Message isn't traced yet"),
+                                .child("This message hasn't been traced yet."),
                         )
                     })
                     .when_some(seen_on.as_ref(), |this, relays| {

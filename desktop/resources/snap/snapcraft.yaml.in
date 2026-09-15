@@ -6,7 +6,7 @@ name: goop
 title: Goop
 base: core24
 version: "$RELEASE_VERSION"
-summary: A simple NIP-17 client that just works.
+summary: A native NIP-17 client for you and your agents.
 description: |
   Chat freely without sharing phone numbers or emails.
   Your messages are encrypted, and your privacy stays protected.
