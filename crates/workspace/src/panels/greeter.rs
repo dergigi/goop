@@ -7,6 +7,7 @@ use gpui::{
 };
 use theme::ActiveTheme;
 use ui::dock::{Panel, PanelEvent};
+use ui::scroll::ScrollableElement;
 use ui::{Icon, IconName, Kbd, Sizable, StyledExt, h_flex, v_flex};
 
 pub fn init(_window: &mut Window, cx: &mut App) -> Entity<GreeterPanel> {
@@ -40,11 +41,14 @@ impl Render for GreeterPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
+            .min_h_0()
+            .overflow_y_scrollbar()
             .items_center()
-            .justify_center()
             .p_4()
             .child(
                 v_flex()
+                    .flex_shrink_0()
+                    .my_auto()
                     .w_full()
                     .max_w(gpui::px(420.))
                     .gap_6()

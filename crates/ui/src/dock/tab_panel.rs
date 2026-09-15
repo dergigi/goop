@@ -820,6 +820,7 @@ impl TabPanel {
 
         v_flex()
             .id("tab-content")
+            .min_h_0()
             .group("")
             .overflow_hidden()
             .flex_1()
@@ -832,7 +833,7 @@ impl TabPanel {
                     .child(
                         active_panel
                             .view()
-                            .cached(gpui::StyleRefinement::default().v_flex().size_full()),
+                            .cached(gpui::StyleRefinement::default().v_flex().size_full().min_h_0()),
                     ),
             )
             .when(state.droppable, |this| {

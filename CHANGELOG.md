@@ -25,6 +25,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Center Welcome in the available tab height and allow scrolling when its contents cannot fit.
 - Keep the composer visible in short windows by letting message history shrink and scroll; limit draft growth to the available window height.
 
 ## [2.4.0] - 2026-09-15
