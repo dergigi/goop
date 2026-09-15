@@ -467,6 +467,17 @@ impl InputState {
         self
     }
 
+    /// Limit a growing editor to the available space without discarding its text.
+    pub fn set_auto_grow_max_rows(&mut self, max_rows: usize, cx: &mut Context<Self>) {
+        if let InputMode::AutoGrow { min_rows, max_rows: current, .. } = &mut self.mode {
+            let max_rows = max_rows.max(*min_rows);
+            if *current == max_rows { return; }
+            *current = max_rows;
+            self.mode.update_auto_grow(&self.display_map);
+            cx.notify();
+        }
+    }
+
     /// Set whether search UI allows replacement, default is true.
     pub fn replaceable(mut self, allow: bool) -> Self {
         self.replaceable = allow;

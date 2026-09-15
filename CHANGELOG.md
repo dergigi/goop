@@ -23,6 +23,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 - Put profile public keys on their own full-width row with a dedicated copy button.
 - Give the message composer a distinct rounded background and roomier padding. It grows with new lines and wrapped text, keeping its controls aligned to the bottom.
 
+### Fixed
+
+- Keep the composer visible in short windows by letting message history shrink and scroll; limit draft growth to the available window height.
+
 ## [2.4.0] - 2026-09-15
 
 Goop 2.4 adds Note to self, Amethyst-compatible pinned chats, and local unread counts, with smoother keyboard navigation and a quieter sidebar. Pin compatibility is checked against Amethyst's source and relay fixtures; live cross-client testing remains pending.

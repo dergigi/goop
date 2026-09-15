@@ -1845,6 +1845,10 @@ impl Render for ChatPanel {
         if self.find.open && self.find.dirty {
             self.refresh_find(false, cx);
         }
+        // Reserve most of a short window for history and controls; long drafts
+        // continue scrolling inside the editor once they reach this limit.
+        let composer_rows = ((window.viewport_size().height / window.rem_size()) / 4.) as usize;
+        self.input.update(cx, |input, cx| input.set_auto_grow_max_rows(composer_rows.clamp(1, 20), cx));
         v_flex()
             .image_cache(goop_cache(self.id.clone(), 100))
             .relative()
@@ -1853,6 +1857,8 @@ impl Render for ChatPanel {
             .on_action(cx.listener(Self::on_command))
             .on_action(cx.listener(Self::escape_find))
             .size_full()
+            .min_h_0()
+            .overflow_hidden()
             .when(self.find.open, |view| view.child(self.render_find(cx)))
             .when(*self.history_bar.read(cx), |view| {
                 view.child(self.render_history_controls(cx))
@@ -1882,6 +1888,8 @@ impl Render for ChatPanel {
             .child(
                 v_flex()
                     .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
                     .relative()
                     .map(|this| {
                         if self.messages.is_empty() {
