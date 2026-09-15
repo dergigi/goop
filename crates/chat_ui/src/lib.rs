@@ -138,7 +138,7 @@ impl ChatPanel {
             }
         });
 
-        // Choose the self-chat wording from membership, not the display name.
+        // Choose special chat wording from membership, not the display name.
         let (id, placeholder) = room
             .read_with(cx, |this, _cx| {
                 let id = this.id.to_string().into();
@@ -146,6 +146,10 @@ impl ChatPanel {
                     .is_some_and(|owner| this.members() == [owner]);
                 let placeholder = if is_self {
                     "Write a note to your future self".to_owned()
+                } else if PublicKey::parse(state::GOOP_NPUB)
+                    .is_ok_and(|goop| this.members() == [goop])
+                {
+                    "Message Goop to suggest a feature, report a bug, or just to say hi".to_owned()
                 } else {
                     format!("Message {}", this.display_name(cx))
                 };
