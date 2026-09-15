@@ -24,6 +24,7 @@ flume.workspace = true
 futures.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2 = "0.10"
 async-utility = "0.3.2"
 fuzzy-matcher = "0.3.7"
 tempfile = "3.10"

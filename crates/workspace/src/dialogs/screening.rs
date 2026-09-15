@@ -286,6 +286,27 @@ impl Screening {
         cx.open_url(&format!("https://njump.to/{bech32}"));
     }
 
+    fn confirm_report(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        let name = self.profile(cx).name();
+        let public_key = self.public_key.to_bech32().unwrap();
+        window.open_modal(cx, move |modal, _, _| {
+            let view = view.clone();
+            modal.confirm()
+                .title("Report user?")
+                .button_props(ui::modal::ModalButtonProps::default()
+                    .ok_text("Send public report").cancel_text("Cancel"))
+                .child(v_flex().gap_2().text_sm()
+                    .child(format!("Report {name} for impersonation?"))
+                    .child(public_key.clone())
+                    .child("This publishes a public report signed by your account. Other clients may use it to filter this person."))
+                .on_ok(move |_, window, cx| {
+                    view.update(cx, |view, cx| view.report(window, cx)).ok();
+                    true
+                })
+        });
+    }
+
     fn report(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();
@@ -487,13 +508,14 @@ impl Render for Screening {
                             )
                             .child(
                                 Button::new("report")
-                                    .tooltip("Report as a scam or impostor")
-                                    .icon(IconName::Warning)
+                                    .tooltip("Report user for impersonation")
+                                    .label("Report user…")
+                                    .icon(IconName::Flag)
                                     .small()
                                     .warning()
                                     .rounded()
                                     .on_click(cx.listener(move |this, _e, window, cx| {
-                                        this.report(window, cx);
+                                        this.confirm_report(window, cx);
                                     })),
                             ),
                     ),

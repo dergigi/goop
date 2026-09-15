@@ -177,6 +177,7 @@ pub(super) struct OutgoingQueue {
     encryption: Arc<RwLock<Option<UniversalSigner>>>,
     active: Arc<AtomicBool>,
     resume_requested: Arc<AtomicBool>,
+    rebroadcast_requested: Arc<RwLock<BTreeSet<EventId>>>,
 }
 
 impl OutgoingQueue {
@@ -196,6 +197,7 @@ impl OutgoingQueue {
                 encryption: Arc::new(RwLock::new(encryption.map(|signer| signer.snapshot()))),
                 active: Arc::new(AtomicBool::new(true)),
                 resume_requested: Arc::default(),
+                rebroadcast_requested: Arc::default(),
             },
             receiver,
         )
@@ -240,6 +242,20 @@ impl OutgoingQueue {
     pub fn retry(&self) {
         self.resume_requested.store(true, Ordering::SeqCst);
         self.wake();
+    }
+
+    pub async fn rebroadcast(&self, id: EventId) -> Result<()> {
+        self.ensure_active()?;
+        let message = load(&self.root, self.owner).await?.into_iter()
+            .find(|message| message.id() == id)
+            .ok_or_else(|| anyhow::anyhow!("Original outgoing message is unavailable on this device"))?;
+        if message.destinations.iter().any(|destination| destination.wrap.is_none()) {
+            bail!("Message is still being prepared; retry it from Delivery status first");
+        }
+        self.ensure_active()?;
+        self.rebroadcast_requested.write().unwrap().insert(id);
+        self.wake();
+        Ok(())
     }
 
     fn wake(&self) {
@@ -305,6 +321,17 @@ impl OutgoingQueue {
         self.ensure_active()?;
         let resume = self.resume_requested.swap(false, Ordering::SeqCst);
         for mut message in load(&self.root, self.owner).await? {
+            if self.rebroadcast_requested.write().unwrap().remove(&message.id()) {
+                // Only the worker mutates persisted jobs. Keep the original
+                // rumors and signed wraps; requeue exactly this message.
+                for destination in &mut message.destinations {
+                    destination.accepted.clear();
+                    destination.failed.clear();
+                    destination.error = None;
+                }
+                message.paused = false;
+                save(&self.root, &mut message).await?;
+            }
             if resume && message.paused {
                 message.paused = false;
                 save(&self.root, &mut message).await?;
@@ -693,6 +720,19 @@ mod tests {
                 4,
                 "completed messages must not resend"
             );
+            let previous_revision = restored.revision;
+            second.rebroadcast(rumor_id).await.unwrap();
+            second.process(&UniversalSigner::new(UnavailableSigner(Keys::generate())),
+                &signals, &mut announced).await.unwrap();
+            let rebroadcast = load(dir.path(), saved.owner).await.unwrap().remove(0);
+            assert!(rebroadcast.complete());
+            assert!(rebroadcast.revision > previous_revision);
+            assert_eq!(rebroadcast.rumor, restored.rumor);
+            assert_eq!(rebroadcast.destinations.iter().map(|d| d.wrap.clone()).collect::<Vec<_>>(),
+                restored.destinations.iter().map(|d| d.wrap.clone()).collect::<Vec<_>>());
+            assert!(second.rebroadcast(EventId::from_byte_array([0; 32])).await.is_err());
+            second.stop();
+            assert!(second.rebroadcast(rumor_id).await.is_err());
             second_client.shutdown().await;
             good.shutdown();
             bad.shutdown();

@@ -7,6 +7,23 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-15
+
+Goop 2.3 adds interoperable chat archiving, local group leave/rejoin, clearer delivery indicators and safer reporting. Archive compatibility is tested against Nospeak’s source format and local relay fixtures; live cross-app testing remains pending.
+
+### Added
+
+- Archive and unarchive chats using Nospeak-compatible, self-encrypted `kind:30000` / `dm-archive` lists, with an Archived view and retryable cross-device sync.
+- Leave group chats locally after confirmation, preserving history and suppressing notifications on this device. Rejoin from Archived; other clients may still send messages.
+- Group conversations by Today, Yesterday, Last 7 Days, and Older using the local calendar date of their latest message.
+- Show single and double checkmarks for relay delivery, following Amethyst's per-recipient acknowledgement semantics. These are not read receipts.
+- Add Rebroadcast to sent messages, reusing their original stored signed gift wraps without creating new messages.
+
+### Fixed
+
+- Reload open messaging and gossip relay panels after signer connection, with loading states and protection for unsaved edits.
+- Label the report action with a flag icon and require confirmation identifying the person, reason, and public nature of the report.
+
 ## [2.2.0] - 2026-09-14
 
 Goop 2.2 encrypts new chat attachments before uploading them and adds message-content search, drag-and-drop attachments, and notification copying.
@@ -161,7 +178,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/dergigi/goop/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/dergigi/goop/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/dergigi/goop/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/dergigi/goop/compare/v1.1.0...v2.0.0

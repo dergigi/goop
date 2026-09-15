@@ -107,6 +107,8 @@ pub enum RoomKind {
     #[default]
     Request,
     Ongoing,
+    /// View filter only; does not replace the request/inbox classification.
+    Archived,
 }
 
 #[derive(Debug, Clone)]
@@ -497,7 +499,11 @@ impl Room {
     ) -> Option<Task<Result<Vec<SendReport>, Error>>> {
         let nostr = NostrRegistry::global(cx);
         let owner = nostr.read(cx).current_user()?;
-        let queue = crate::ChatRegistry::global(cx).read(cx).outgoing_queue()?;
+        let chat = crate::ChatRegistry::global(cx).read(cx);
+        if chat.has_left(self) {
+            return Some(cx.background_spawn(async { Err(anyhow::anyhow!("Rejoin this group before sending messages")) }));
+        }
+        let queue = chat.outgoing_queue()?;
         let persons = PersonRegistry::global(cx);
         let destinations = self
             .members

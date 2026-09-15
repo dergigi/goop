@@ -24,6 +24,7 @@ use cache::RumorCache;
 mod decryption;
 mod history;
 mod inbox;
+mod archive;
 mod outgoing;
 #[cfg(test)]
 mod test_signer;
@@ -104,6 +105,9 @@ pub struct ChatRegistry {
     retry_task: Option<Task<Result<(), Error>>>,
     outgoing_task: Option<Task<Result<(), Error>>>,
     outgoing: Option<OutgoingQueue>,
+    archives: Option<archive::ArchiveStore>,
+    archive_task: Option<Task<()>>,
+    pub archive_error: Option<String>,
     incoming: Option<RumorCache>,
     inbox: Option<inbox::Inbox>,
     contacts: HashSet<PublicKey>,
@@ -175,6 +179,7 @@ impl ChatRegistry {
                 if event.signer_changed() {
                     this.reset(cx);
                     this.handle_notifications(cx);
+                    this.start_archives(cx);
                     this.get_metadata(cx);
                     this.get_rooms(cx);
                 } else if matches!(event, StateEvent::NoSigner) {
@@ -193,6 +198,7 @@ impl ChatRegistry {
         // Run at the end of the current cycle
         cx.defer_in(window, |this, _window, cx| {
             this.get_rooms(cx);
+            if this.archives.is_none() { this.start_archives(cx); }
         });
 
         Self {
@@ -212,6 +218,9 @@ impl ChatRegistry {
             retry_task: None,
             outgoing_task: None,
             outgoing: None,
+            archives: None,
+            archive_task: None,
+            archive_error: None,
             incoming: None,
             inbox: None,
             contacts: HashSet::new(),
@@ -371,6 +380,76 @@ impl ChatRegistry {
 
     pub fn outgoing_reports(&self, id: &EventId) -> Option<Vec<SendReport>> {
         self.outgoing_reports.get(id).cloned()
+    }
+
+    fn start_archives(&mut self, cx: &mut Context<Self>) {
+        let nostr = NostrRegistry::global(cx).read(cx);
+        let Some(owner) = nostr.current_user() else { return; };
+        let client = nostr.client();
+        let signer = nostr.signer().snapshot();
+        let (store, wake) = match archive::ArchiveStore::open(&common::config_dir(), owner) {
+            Ok(value) => value,
+            Err(error) => { self.archive_error = Some(error.to_string()); return; }
+        };
+        self.archives = Some(store.clone());
+        self.archive_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                if !store.paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    let (sync_store, client, signer) = (store.clone(), client.clone(), signer.clone());
+                    let result = cx.background_spawn(async move { sync_store.sync(&client, &signer).await }).await;
+                    if let Err(error) = &result {
+                        if state::SignerFailure::classify(error.as_ref()).requires_retry() {
+                            store.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    if this.update(cx, |this, cx| {
+                        this.archive_error = result.err().map(|error| error.to_string());
+                        cx.notify();
+                    }).is_err() { break; }
+                }
+                use futures::{FutureExt, select_biased};
+                let request = wake.recv_async().fuse();
+                let timer = cx.background_executor().timer(std::time::Duration::from_secs(30)).fuse();
+                futures::pin_mut!(request, timer);
+                select_biased! { _ = request => {}, _ = timer => {} }
+            }
+        }));
+        cx.notify();
+    }
+    pub fn retry_archives(&mut self, cx: &mut Context<Self>) {
+        if let Some(store) = &self.archives { store.retry(); } else { self.start_archives(cx); }
+    }
+    pub fn is_archived(&self, room: &Room) -> bool {
+        self.archives.as_ref().is_some_and(|store| store.contains(room.members()) || store.has_left(room.members()))
+    }
+    pub fn notifications_muted(&self, members: &[PublicKey]) -> bool {
+        self.archives.as_ref().is_some_and(|store| store.has_left(members))
+    }
+    pub fn has_left(&self, room: &Room) -> bool {
+        self.archives.as_ref().is_some_and(|store| store.has_left(room.members()))
+    }
+    pub fn set_archived(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
+        let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before archiving"))?;
+        store.set(room.members(), archived)?;
+        cx.notify();
+        Ok(())
+    }
+    pub fn leave_locally(&mut self, id: u64, left: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
+        anyhow::ensure!(room.is_group(), "Leave locally is available for group chats");
+        let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before leaving"))?;
+        store.leave(room.members(), left)?;
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn rebroadcast(&self, id: EventId, cx: &App) -> Task<Result<(), anyhow::Error>> {
+        let queue = self.outgoing.clone();
+        cx.background_spawn(async move {
+            let queue = queue.ok_or_else(|| anyhow::anyhow!("Connect your signer before rebroadcasting"))?;
+            queue.rebroadcast(id).await
+        })
     }
 
     pub fn retry_outgoing(&self) {
@@ -648,7 +727,11 @@ impl ChatRegistry {
         self.rooms
             .iter()
             .filter(|_| *filter != RoomKind::Request || self.classification_ready)
-            .filter(|room| &room.read(cx).kind == filter)
+            .filter(|room| {
+                let room = room.read(cx);
+                if *filter == RoomKind::Archived { self.is_archived(room) }
+                else { &room.kind == filter && !self.is_archived(room) }
+            })
             .cloned()
             .collect()
     }
@@ -658,7 +741,11 @@ impl ChatRegistry {
         self.rooms
             .iter()
             .filter(|_| *filter != RoomKind::Request || self.classification_ready)
-            .filter(|room| &room.read(cx).kind == filter)
+            .filter(|room| {
+                let room = room.read(cx);
+                if *filter == RoomKind::Archived { self.is_archived(room) }
+                else { &room.kind == filter && !self.is_archived(room) }
+            })
             .count()
     }
 
@@ -747,7 +834,7 @@ impl ChatRegistry {
         self.room_index.insert(room_id, entity.clone());
         self.rooms.insert(0, entity);
 
-        cx.emit(ChatEvent::Ping);
+        if !self.room_index.get(&room_id).is_some_and(|room| self.has_left(room.read(cx))) { cx.emit(ChatEvent::Ping); }
         cx.notify();
     }
 
@@ -825,6 +912,9 @@ impl ChatRegistry {
         }
         self.outgoing_task = None;
         self.outgoing = None;
+        if let Some(store) = self.archives.take() { store.stop(); }
+        self.archive_task = None;
+        self.archive_error = None;
         self.incoming = None;
         self.inbox = None;
         self.contacts.clear();

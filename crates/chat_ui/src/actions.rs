@@ -15,4 +15,5 @@ pub enum Command {
     Relays(PublicKey),
     Njump(PublicKey),
     Trace(EventId),
+    Rebroadcast(EventId),
 }

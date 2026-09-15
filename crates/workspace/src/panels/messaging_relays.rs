@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use anyhow::{Error, anyhow};
+use anyhow::Error;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -10,7 +10,7 @@ use gpui::{
 use instant::Duration;
 use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
-use state::NostrRegistry;
+use state::{NostrRegistry, StateEvent};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
@@ -34,6 +34,9 @@ pub struct MessagingRelayPanel {
 
     /// Whether the panel is updating
     updating: bool,
+    loading: bool,
+    dirty: bool,
+    owner: Option<PublicKey>,
 
     /// Error message
     error: Option<SharedString>,
@@ -62,6 +65,24 @@ impl MessagingRelayPanel {
             }),
         );
 
+        subscriptions.push(cx.subscribe_in(&NostrRegistry::global(cx), window,
+            |this, _, event, window, cx| {
+                if matches!(event, StateEvent::SignerChanged | StateEvent::NoSigner) {
+                    let owner = NostrRegistry::global(cx).read(cx).current_user();
+                    if owner != this.owner {
+                        this.tasks.clear();
+                        this.relays.clear();
+                        this.dirty = false;
+                        this.updating = false;
+                        this.loading = false;
+                        this.error = None;
+                        this.owner = owner;
+                    }
+                    this.load(window, cx);
+                    cx.notify();
+                }
+            }));
+
         // Run at the end of current cycle
         cx.defer_in(window, |this, window, cx| {
             this.load(window, cx);
@@ -72,6 +93,9 @@ impl MessagingRelayPanel {
             focus_handle: cx.focus_handle(),
             input,
             updating: false,
+            loading: false,
+            dirty: false,
+            owner: None,
             relays: HashSet::new(),
             error: None,
             _subscriptions: subscriptions,
@@ -87,28 +111,37 @@ impl MessagingRelayPanel {
             return;
         };
 
+        self.owner = Some(public_key);
+        if self.dirty || self.loading { return; }
+        self.loading = true;
+        cx.notify();
         let task: Task<Result<Vec<RelayUrl>, Error>> = cx.background_spawn(async move {
-            let filter = Filter::new()
-                .kind(Kind::InboxRelays)
-                .author(public_key)
-                .limit(1);
-
-            if let Some(event) = client.database().query(filter).await?.into_iter().next() {
-                Ok(nip17::extract_relay_list(&event).collect())
-            } else {
-                Err(anyhow!("Not found."))
+            let filter = Filter::new().kind(Kind::InboxRelays).author(public_key).limit(1);
+            let mut newest = client.database().query(filter.clone()).await?
+                .into_iter().next();
+            if let Ok(events) = client.fetch_events(filter).timeout(Duration::from_secs(10)).await {
+                for event in events {
+                    if newest.as_ref().is_none_or(|old| event.created_at > old.created_at
+                        || (event.created_at == old.created_at && event.id < old.id)) {
+                        newest = Some(event);
+                    }
+                }
             }
+            Ok(newest.map(|event| nip17::extract_relay_list(&event).collect()).unwrap_or_default())
         });
-
         self.tasks.push(cx.spawn_in(window, async move |this, cx| {
-            let relays = task.await?;
-
-            // Update state
+            let result = task.await;
             this.update(cx, |this, cx| {
-                this.relays.extend(relays);
+                if this.owner != Some(public_key)
+                    || NostrRegistry::global(cx).read(cx).current_user() != Some(public_key) { return; }
+                this.loading = false;
+                match result {
+                    Ok(relays) if !this.dirty => this.relays = relays.into_iter().collect(),
+                    Err(error) => this.error = Some(error.to_string().into()),
+                    _ => {}
+                }
                 cx.notify();
             })?;
-
             Ok(())
         }));
     }
@@ -123,6 +156,7 @@ impl MessagingRelayPanel {
 
         if let Ok(url) = RelayUrl::parse(&value) {
             if self.relays.insert(url) {
+                self.dirty = true;
                 self.input.update(cx, |this, cx| {
                     this.set_value("", window, cx);
                 });
@@ -134,6 +168,7 @@ impl MessagingRelayPanel {
     }
 
     fn remove(&mut self, url: &RelayUrl, cx: &mut Context<Self>) {
+        self.dirty = true;
         self.relays.remove(url);
         cx.notify();
     }
@@ -201,6 +236,7 @@ impl MessagingRelayPanel {
                 Ok(_) => {
                     this.update_in(cx, |this, window, cx| {
                         this.set_updating(false, cx);
+                        this.dirty = false;
                         this.load(window, cx);
 
                         window.push_notification("Update successful", cx);
@@ -265,7 +301,11 @@ impl MessagingRelayPanel {
             .rounded(cx.theme().radius_lg)
             .text_sm()
             .text_align(TextAlign::Center)
-            .child(SharedString::from("Please add some relays."))
+            .child(if NostrRegistry::global(cx).read(cx).identity_loading() {
+                "Connecting to signer…"
+            } else if self.loading {
+                "Loading relays…"
+            } else { "Please add some relays." })
     }
 }
 
@@ -362,7 +402,7 @@ impl Render for MessagingRelayPanel {
                             .primary()
                             .font_semibold()
                             .loading(self.updating)
-                            .disabled(self.updating)
+                            .disabled(self.updating || self.loading || NostrRegistry::global(cx).read(cx).current_user().is_none())
                             .on_click(cx.listener(move |this, _ev, window, cx| {
                                 this.set_relays(window, cx);
                             })),

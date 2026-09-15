@@ -23,6 +23,7 @@ nostr-connect.workspace = true
 browser-signer-proxy = { path = "../browser-signer-proxy" }
 
 anyhow.workspace = true
+chrono.workspace = true
 serde.workspace = true
 log.workspace = true
 smallvec.workspace = true

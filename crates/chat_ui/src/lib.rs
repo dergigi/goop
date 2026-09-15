@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 pub use actions::*;
 use anyhow::Error;
 use chat::{ChatRegistry, Message, Room, RoomEvent, SendReport};
-use common::{TimestampExt, goop_cache};
+use common::{EventExt, TimestampExt, goop_cache};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
@@ -260,7 +260,8 @@ impl ChatPanel {
                         } else {
                             this.insert_message(message, false, cx);
 
-                            if !message.historical && !window.is_window_active() {
+                            if !message.historical && !window.is_window_active()
+                                && !ChatRegistry::global(cx).read(cx).notifications_muted(&message.rumor.extract_public_keys()) {
                                 cx.show_system_notification(SystemNotification {
                                     tag: "message".into(),
                                     title: "New Message".into(),
@@ -672,6 +673,10 @@ impl ChatPanel {
     }
 
     fn upload_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.room.upgrade().is_some_and(|room| ChatRegistry::global(cx).read(cx).has_left(room.read(cx))) {
+            window.push_notification("Rejoin this group before attaching files", cx);
+            return;
+        }
         self.pending_uploads.extend(paths);
         cx.notify();
         if self.uploading || self.pending_uploads.is_empty() {
@@ -792,6 +797,16 @@ impl ChatPanel {
             }
             Command::Njump(public_key) => {
                 self.open_njump(public_key, cx);
+            }
+            Command::Rebroadcast(id) => {
+                let task = ChatRegistry::global(cx).read(cx).rebroadcast(*id, cx);
+                cx.spawn_in(window, async move |_, cx| {
+                    let result = task.await;
+                    cx.update(|window, cx| match result {
+                        Ok(()) => window.push_notification("Message queued for rebroadcast", cx),
+                        Err(error) => window.push_notification(Notification::error(error.to_string()), cx),
+                    }).ok();
+                }).detach();
             }
             Command::Trace(id) => {
                 self.open_trace(id, window, cx);
@@ -1295,14 +1310,17 @@ impl ChatPanel {
         let paused = reports
             .as_ref()
             .is_some_and(|reports| reports.iter().any(|r| r.paused));
-        let label = if paused && success {
-            SharedString::from("• Partially sent · paused")
+        let checks = reports.as_ref().map(|reports| delivery_status::delivery_checks(reports)).unwrap_or(0);
+        let label = if checks == 2 {
+            SharedString::from("✓✓")
+        } else if paused && success {
+            SharedString::from("✓ · paused")
         } else if paused {
             SharedString::from("• Paused · retry when ready")
         } else if success && pending {
-            SharedString::from("• Partially sent · queued")
+            SharedString::from("✓ · queued")
         } else if success {
-            SharedString::from("• Sent")
+            SharedString::from("✓")
         } else if failed && pending {
             SharedString::from("• Queued for retry")
         } else if failed {
@@ -1345,7 +1363,9 @@ impl ChatPanel {
                                                 })]
                                         })
                                     })
-                                    .child(v_flex().gap_4().children(
+                                    .child(v_flex().gap_4()
+                                        .child(div().text_sm().child("✓ A relay accepted a copy. ✓✓ Every recipient’s copy was accepted by a relay. These are not read receipts."))
+                                        .children(
                                         reports.iter().map(|report| Self::render_report(report, cx)),
                                     ))
                             }, window, cx);
@@ -1543,9 +1563,12 @@ impl ChatPanel {
                     .dropdown_menu({
                         let public_key = *public_key;
                         let id = *id;
-                        move |this, _window, _cx| {
+                        move |this, _window, cx| {
                             this.menu("Copy author", Box::new(Command::Copy(public_key)))
                                 .menu("Seen on", Box::new(Command::Trace(id)))
+                                .when(NostrRegistry::global(cx).read(cx).current_user() == Some(public_key), |menu| {
+                                    menu.separator().menu("Rebroadcast", Box::new(Command::Rebroadcast(id)))
+                                })
                         }
                     }),
             )
@@ -1786,6 +1809,10 @@ impl Focusable for ChatPanel {
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let show_hints = window.is_window_active() && window.modifiers().secondary();
+        let left_room = self.room.upgrade().and_then(|room| {
+            let room = room.read(cx);
+            ChatRegistry::global(cx).read(cx).has_left(room).then_some(room.id)
+        });
         if self.find.open && self.find.dirty {
             self.refresh_find(false, cx);
         }
@@ -1816,7 +1843,7 @@ impl Render for ChatPanel {
                                 .icon(IconName::CheckCircle)
                                 .label("Change")
                                 .secondary()
-                                .disabled(self.uploading)
+                                .disabled(self.uploading || left_room.is_some())
                                 .on_click(cx.listener(move |this, _ev, window, cx| {
                                     this.change_subject(window, cx);
                                 })),
@@ -1862,6 +1889,15 @@ impl Render for ChatPanel {
                     .p_2()
                     .w_full()
                     .gap_1p5()
+                    .when_some(left_room, |view, id| {
+                        view.child(h_flex().gap_2().child("You left this group locally. Notifications are off.")
+                            .child(Button::new("rejoin-group").label("Rejoin").small().secondary()
+                                .on_click(move |_, window, cx| {
+                                    if let Err(error) = ChatRegistry::global(cx).update(cx, |chat, cx| chat.leave_locally(id, false, cx)) {
+                                        window.push_notification(Notification::error(error.to_string()), cx);
+                                    }
+                                })))
+                    })
                     .when(self.uploading, |view| {
                         let filename = self.current_upload.as_ref()
                             .and_then(|path| path.file_name())
@@ -1888,14 +1924,14 @@ impl Render for ChatPanel {
                                     .icon(IconName::Plus)
                                     .tooltip("Upload media")
                                     .loading(self.uploading)
-                                    .disabled(self.uploading)
+                                    .disabled(self.uploading || left_room.is_some())
                                     .ghost()
                                     .large()
                                     .on_click(cx.listener(move |this, _ev, window, cx| {
                                         this.upload(window, cx);
                                     })),
                             )
-                            .child(Input::new(&self.input).appearance(false).flex_1())
+                            .child(Input::new(&self.input).appearance(false).disabled(left_room.is_some()).flex_1())
                             .child(
                                 h_flex()
                                     .pl_1()
@@ -1905,7 +1941,7 @@ impl Render for ChatPanel {
                                     .child(
                                         Button::new("send")
                                             .icon(IconName::PaperPlaneFill)
-                                            .disabled(self.uploading)
+                                            .disabled(self.uploading || left_room.is_some())
                                             .ghost()
                                             .large()
                                             .on_click(cx.listener(move |this, _ev, window, cx| {

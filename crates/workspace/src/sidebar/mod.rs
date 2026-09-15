@@ -1,4 +1,5 @@
-use chat::{ChatEvent, ChatRegistry, RoomKind};
+use chat::{ChatEvent, ChatRegistry, Room, RoomKind};
+use chrono::{DateTime, Local, NaiveDate};
 use common::{TimestampExt, goop_cache};
 use entry::RoomEntry;
 use gpui::prelude::FluentBuilder;
@@ -14,8 +15,30 @@ use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::scroll::Scrollbar;
 use ui::menu::DropdownMenu;
-use ui::{IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
+use ui::{WindowExtension, IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
 pub(crate) mod entry;
+
+#[derive(gpui::Action, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[action(namespace = sidebar, no_json)]
+enum ChatAction { Archive(u64, bool), Leave(u64, bool) }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DateGroup { Today, Yesterday, LastWeek, Older }
+impl DateGroup {
+    fn label(self) -> &'static str {
+        match self { Self::Today => "Today", Self::Yesterday => "Yesterday",
+            Self::LastWeek => "Last 7 Days", Self::Older => "Older" }
+    }
+}
+fn date_group(date: NaiveDate, today: NaiveDate) -> DateGroup {
+    match today.signed_duration_since(date).num_days() {
+        ..=0 => DateGroup::Today,
+        1 => DateGroup::Yesterday,
+        2..=6 => DateGroup::LastWeek,
+        _ => DateGroup::Older,
+    }
+}
+enum SidebarRow { Heading(DateGroup), Chat(Entity<Room>) }
 
 pub struct Sidebar {
     focus_handle: FocusHandle,
@@ -23,6 +46,7 @@ pub struct Sidebar {
     filter: Entity<RoomKind>,
     new_requests: bool,
     _subscriptions: Vec<Subscription>,
+    _date_refresh: gpui::Task<()>,
 }
 impl Sidebar {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -43,6 +67,12 @@ impl Sidebar {
             filter: cx.new(|_| RoomKind::Ongoing),
             new_requests: false,
             _subscriptions: subscriptions,
+            _date_refresh: cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(std::time::Duration::from_secs(60)).await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() { break; }
+                }
+            }),
         }
     }
     pub fn set_filter(&mut self, kind: RoomKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -53,6 +83,26 @@ impl Sidebar {
     }
     fn current_filter(&self, kind: &RoomKind, cx: &Context<Self>) -> bool {
         self.filter.read(cx) == kind
+    }
+
+    fn chat_action(&mut self, action: &ChatAction, window: &mut Window, cx: &mut Context<Self>) {
+        let action = action.clone();
+        let apply = move |window: &mut Window, cx: &mut App| {
+            let result = ChatRegistry::global(cx).update(cx, |chat, cx| match action {
+                ChatAction::Archive(id, value) => chat.set_archived(id, value, cx),
+                ChatAction::Leave(id, value) => chat.leave_locally(id, value, cx),
+            });
+            if let Err(error) = result { window.push_notification(ui::notification::Notification::error(error.to_string()), cx); }
+        };
+        if matches!(action, ChatAction::Leave(_, true)) {
+            window.open_modal(cx, move |modal, _, _| {
+                let apply = apply.clone();
+                modal.confirm().title("Leave this group locally?")
+                    .button_props(ui::modal::ModalButtonProps::default().ok_text("Leave locally").cancel_text("Cancel"))
+                    .child("Goop will hide this group and silence its notifications on this device. Other participants can still send messages. History is kept; use Rejoin in Archived to return.")
+                    .on_ok(move |_, window, cx| { apply(window, cx); true })
+            });
+        } else { apply(window, cx); }
     }
 
     fn render_footer(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -105,20 +155,41 @@ impl Sidebar {
             )
     }
 
+    fn grouped_rows(&self, cx: &Context<Self>) -> Vec<SidebarRow> {
+        let chat = ChatRegistry::global(cx);
+        let today = Local::now().date_naive();
+        let mut rows = Vec::new();
+        let mut previous = None;
+        for room in chat.read(cx).rooms(self.filter.read(cx), cx) {
+            let date = i64::try_from(room.read(cx).created_at.as_secs()).ok()
+                .and_then(|secs| DateTime::from_timestamp(secs, 0))
+                .map(|date| date.with_timezone(&Local).date_naive());
+            let group = date.map(|date| date_group(date, today)).unwrap_or(DateGroup::Older);
+            if previous != Some(group) { rows.push(SidebarRow::Heading(group)); previous = Some(group); }
+            rows.push(SidebarRow::Chat(room));
+        }
+        rows
+    }
+
     fn render_list_items(
         &self,
         range: Range<usize>,
         cx: &Context<Self>,
     ) -> Vec<impl IntoElement + use<>> {
-        let chat = ChatRegistry::global(cx);
-        let rooms = chat.read(cx).rooms(self.filter.read(cx), cx);
+        let rows = self.grouped_rows(cx);
 
-        rooms
+        rows
             .get(range.clone())
             .into_iter()
             .flatten()
             .enumerate()
-            .map(|(ix, item)| {
+            .map(|(ix, row)| {
+                let item = match row {
+                    SidebarRow::Heading(group) => return h_flex().h_9().px_2()
+                        .text_sm().text_color(cx.theme().text_muted)
+                        .child(group.label()).into_any_element(),
+                    SidebarRow::Chat(item) => item,
+                };
                 let room = item.read(cx);
                 let room_clone = item.clone();
                 let public_key = room.display_member(cx).public_key();
@@ -128,14 +199,26 @@ impl Sidebar {
                     });
                 });
 
-                RoomEntry::new(range.start + ix)
+                let id = room.id;
+                let archived = chat::ChatRegistry::global(cx).read(cx).is_archived(room);
+                let left = chat::ChatRegistry::global(cx).read(cx).has_left(room);
+                let group = room.is_group();
+                let entry = RoomEntry::new(range.start + ix)
                     .room_id(room.id)
                     .name(room.display_name(cx))
                     .avatar(room.display_image(cx))
                     .public_key(public_key)
                     .kind(room.kind)
                     .created_at(room.created_at.to_ago())
-                    .on_click(handler)
+                    .on_click(handler);
+                h_flex().h_9().w_full()
+                    .child(div().flex_1().min_w_0().child(entry))
+                    .child(Button::new(("chat-menu", id)).icon(IconName::Ellipsis).xsmall().ghost()
+                        .tooltip("Chat actions")
+                        .dropdown_menu(move |menu, _, _| {
+                            menu.when(!left, |menu| menu.menu(if archived { "Unarchive" } else { "Archive" }, Box::new(ChatAction::Archive(id, !archived))))
+                                .when(group, |menu| menu.menu(if left { "Rejoin" } else { "Leave locally…" }, Box::new(ChatAction::Leave(id, !left))))
+                        }))
                     .into_any_element()
             })
             .collect()
@@ -168,6 +251,7 @@ impl Render for Sidebar {
 
         v_flex()
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::chat_action))
             .image_cache(goop_cache("sidebar", IMAGE_CACHE_SIZE))
             .size_full()
             .gap_2()
@@ -257,7 +341,7 @@ impl Render for Sidebar {
                             .ghost_alt()
                             .font_semibold()
                             .w_full()
-                            .selected(!self.current_filter(&RoomKind::Ongoing, cx))
+                            .selected(self.current_filter(&RoomKind::Request, cx))
                             .when(self.new_requests, |this| {
                                 this.child(div().size_1().rounded_full().bg(cx.theme().cursor))
                             })
@@ -270,6 +354,15 @@ impl Render for Sidebar {
                         })
                     })),
             )
+            .child(h_flex().px_2().gap_1()
+                .child(Button::new("archived").label("Archived").small().ghost()
+                    .selected(self.current_filter(&RoomKind::Archived, cx))
+                    .on_click(cx.listener(|this, _, window, cx| this.set_filter(RoomKind::Archived, window, cx))))
+                .when_some(chat.read(cx).archive_error.as_ref(), |row, error| {
+                    row.child(Button::new("retry-archives").label("Retry sync").small().ghost()
+                        .tooltip(error.clone())
+                        .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_archives(cx))))
+                }))
             .when(!loading && total_rooms == 0, |this| {
                 this.child(
                     div().w_full().px_2().child(
@@ -298,7 +391,7 @@ impl Render for Sidebar {
                 this.child(
                     uniform_list(
                         "rooms",
-                        total_rooms,
+                        self.grouped_rows(cx).len(),
                         cx.processor(|this, range, _window, cx| this.render_list_items(range, cx)),
                     )
                     .track_scroll(&self.scroll_handle)
@@ -309,5 +402,19 @@ impl Render for Sidebar {
                 .child(Scrollbar::vertical(&self.scroll_handle))
             }))
             .child(self.render_footer(cx))
+    }
+}
+
+#[cfg(test)]
+mod date_tests {
+    use super::*;
+    #[test]
+    fn groups_use_calendar_dates_and_non_overlapping_week_boundaries() {
+        let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        for (days, expected) in [(0, DateGroup::Today), (1, DateGroup::Yesterday),
+            (2, DateGroup::LastWeek), (6, DateGroup::LastWeek), (7, DateGroup::Older),
+            (40, DateGroup::Older), (-1, DateGroup::Today)] {
+            assert!(date_group(today - chrono::Duration::days(days), today) == expected);
+        }
     }
 }
