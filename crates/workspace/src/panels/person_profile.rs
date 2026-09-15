@@ -6,8 +6,10 @@ use gpui::{
     IntoElement, ParentElement, Render, SharedString, Styled, Window,
 };
 use nostr_sdk::prelude::PublicKey;
+use person::PersonRegistry;
 use state::NostrRegistry;
 use theme::ActiveTheme;
+use ui::avatar::Avatar;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::scroll::ScrollableElement;
@@ -35,8 +37,13 @@ impl Panel for PersonProfile {
     fn panel_id(&self) -> SharedString {
         format!("profile-{}", self.key.to_hex()).into()
     }
-    fn title(&self, _: &App) -> AnyElement {
-        "Profile".into_any_element()
+    fn title(&self, cx: &App) -> AnyElement {
+        let profile = PersonRegistry::global(cx).read(cx).get(&self.key, cx);
+        h_flex()
+            .gap_1p5()
+            .child(Avatar::new(profile.avatar()).xsmall())
+            .child(profile.name())
+            .into_any_element()
     }
 }
 impl EventEmitter<PanelEvent> for PersonProfile {}
