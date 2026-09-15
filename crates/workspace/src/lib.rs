@@ -501,7 +501,10 @@ impl Workspace {
                 chat.update(cx, |chat, cx| chat.emit_room(&room, window, cx));
             }
             Command::ShowBlockedUsers => {
-                self.dock.update(cx, |dock,cx| dock.add_panel(Arc::new(panels::blocked_users::init(cx)), DockPlacement::Right, window, cx));
+                if !self.dock.read(cx).is_dock_open(DockPlacement::Left, cx) {
+                    self.dock.update(cx, |dock, cx| dock.toggle_dock(DockPlacement::Left, window, cx));
+                }
+                self.sidebar.update(cx, |sidebar, cx| sidebar.show_blocked(window, cx));
             }
             Command::OpenProfile(public_key) => {
                 self.dock.update(cx, |dock, cx| {

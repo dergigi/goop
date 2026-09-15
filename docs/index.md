@@ -131,7 +131,7 @@ The top-right controls are **Relays**, **Connection Status** (pulse icon), and *
 
 ## Connection status and recovery
 
-Click the live status beside your avatar or the connection-status icon immediately left of Message History in the top-right corner, press **Cmd/Ctrl+Shift+D**, or choose **Connection status** from the account menu. Hover over the icon for a live summary. Relay cards show connection and authentication badges, with explanatory text for errors. The sidepane refreshes automatically and separates signer connection, messaging relays, history/decryption, and outgoing messages.
+Click the live status beside your avatar or the connection-status icon immediately left of Message History in the top-right corner, press **Cmd/Ctrl+Shift+D**, or choose **Connection status** from the account menu. Hover over the icon for a live summary. Relays appear as compact rows: a green dot means connected, a shield means authenticated, and a yellow warning triangle opens the full error with a Copy error button. Hover over a row for connection and history details. The sidepane refreshes automatically and separates signer connection, messaging relays, history/decryption, and outgoing messages.
 
 - **Signer unavailable:** open your signer, check pending requests, and use **Reconnect signer** if needed.
 - **Relay disconnected or authentication failed:** check the named relay and signer. **Reconnect messaging relays** retries connections; **Manage messaging relays** opens your relay configuration.
@@ -157,7 +157,7 @@ The profile pane keeps three red actions at the bottom, with profile details and
 - **Block:** after confirmation, hide their direct chats from Inbox, Requests, and Archived. Their messages and reactions in shared groups are hidden, and their messages do not trigger notifications or unread counts. Shared groups remain available. Direct messaging is disabled until you unblock them; existing history is preserved.
 - **Report:** publish a signed report with a reason and optional public explanation. By default, Goop also blocks the person after the report is accepted. Disable **Automatically block reported users** in Settings → General to report without blocking.
 
-The **Blocked users** button beside Archive in the sidebar footer opens the list. Open a profile or choose **Unblock** to restore visibility. The list includes users blocked in compatible clients, even if you have never chatted with them in Goop.
+The **Blocked users** button beside Archive in the sidebar footer shows blocked users in the left sidebar, just like Archive. The Account menu opens the same list. Open a profile or choose **Unblock** to restore visibility. The list includes users blocked in compatible clients, even if you have never chatted with them in Goop.
 
 Blocks use private NIP-44-encrypted `p` entries in the standard NIP-51 kind-10000 list, as Amethyst does. Existing public/private entries and unrelated list tags are preserved. Local changes take effect immediately; the Blocked users view shows pending sync, errors, **Copy error**, and **Retry sync**. Declined or timed-out signer requests wait for an explicit retry. Muting is device-local and expires automatically.
 

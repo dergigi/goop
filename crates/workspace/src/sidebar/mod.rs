@@ -58,6 +58,8 @@ pub struct Sidebar {
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     filter: Entity<RoomKind>,
+    show_blocked: bool,
+    blocked_users: Entity<crate::panels::blocked_users::BlockedUsers>,
     request_badge: RequestBadge,
     _subscriptions: Vec<Subscription>,
     _date_refresh: gpui::Task<()>,
@@ -73,6 +75,8 @@ impl Sidebar {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
             filter: cx.new(|_| RoomKind::Ongoing),
+            show_blocked: false,
+            blocked_users: crate::panels::blocked_users::init(cx),
             request_badge: RequestBadge::default(),
             _subscriptions: subscriptions,
             _date_refresh: cx.spawn(async move |this, cx| {
@@ -84,12 +88,18 @@ impl Sidebar {
         }
     }
     pub fn set_filter(&mut self, kind: RoomKind, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_blocked = false;
         self.filter.update(cx, |filter, _| *filter = kind);
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
+    pub fn show_blocked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_blocked = true;
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
     fn current_filter(&self, kind: &RoomKind, cx: &Context<Self>) -> bool {
-        self.filter.read(cx) == kind
+        !self.show_blocked && self.filter.read(cx) == kind
     }
 
     pub(crate) fn chat_action(&mut self, action: &ChatAction, window: &mut Window, cx: &mut Context<Self>) {
@@ -146,7 +156,7 @@ impl Sidebar {
                                 this.set_filter(RoomKind::Archived, window, cx)
                             })),
                     )
-                    .child(Button::new("sidebar-blocked").icon(IconName::Block).small().ghost().tooltip("Blocked users")
+                    .child(Button::new("sidebar-blocked").icon(IconName::Block).small().ghost().tooltip("Blocked users").selected(self.show_blocked)
                         .on_click(cx.listener(|this,_,window,cx| { this.focus_handle.focus(window,cx); window.dispatch_action(Box::new(crate::Command::ShowBlockedUsers),cx); })))
                     .child(
                         Button::new("sidebar-help")
@@ -437,13 +447,13 @@ impl Render for Sidebar {
                         })
                     })),
             )
-            .when_some(chat.read(cx).archive_error.as_ref(), |view, error| {
+            .when_some(chat.read(cx).archive_error.as_ref().filter(|_| !self.show_blocked), |view, error| {
                 view.child(h_flex().px_2().gap_1()
                     .child(Button::new("retry-archives").label("Retry sync").small().ghost()
                         .tooltip(error.clone())
                         .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_archives(cx)))))
             })
-            .when(!loading && total_rooms == 0, |this| {
+            .when(!self.show_blocked && !loading && total_rooms == 0, |this| {
                 this.child(
                     div().w_full().px_2().child(
                         v_flex()
@@ -468,6 +478,9 @@ impl Render for Sidebar {
                 )
             })
             .child(v_flex().w_full().flex_1().min_h_0().gap_1().map(|this| {
+                if self.show_blocked {
+                    return this.child(self.blocked_users.clone());
+                }
                 this.child(
                     uniform_list(
                         "rooms",

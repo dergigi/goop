@@ -7,7 +7,14 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-09-15
+
 ### Added
+
+- Log out from the account menu after confirmation. Forget the saved signer connection, stop account work, and return to login while preserving local history and encryption keys.
+- Add native Chats and Account menus, including active-chat pin/archive/read actions, group Leave confirmation, Note to Self, blocked users, and connection controls.
+- Open Connection Status with Cmd/Ctrl+Shift+D. Keep the live status beside the profile menu and add top-right Relays, Connection Status, and Message History controls.
+- Show profile homepage links with readable URL labels, ellipsis for long addresses, and the full destination on hover.
 
 - Scan a signer’s bunker QR code with a built-in or external camera on the desktop sign-in screen. Add a local preview, camera selector, permission/error handling, and explicit Continue after scanning. Release camera access on cancellation, success, timeout, or app exit.
 
@@ -19,8 +26,17 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 - Add a live Connection status sidepane, opened from the title bar or account menu, showing signer connection, messaging relay connectivity and observed authentication, history/decryption progress, and outgoing delivery problems. Copy diagnostics or reconnect the signer/relays, resume history from checkpoints, and explicitly retry decryption or pending sends.
 
+### Changed
+
+- Replace verbose relay cards with compact rows: green connection dots, authentication shields, and clickable warning icons showing full errors with a copy button.
+- Show Blocked Users in the left sidebar, like Archive, with profiles, Unblock, and sync recovery. Move relay configuration out of the sidebar footer into the top-right controls.
+- Keep Mute, Block, and Report at the bottom of the profile pane. Label profile tabs with the person's name and avatar.
+- Simplify Message History to history actions; keep detailed diagnostics and recovery in Connection Status.
+
 ### Fixed
 
+- Prevent disabled experimental key sharing from reacting to relay events, and avoid offering key approval when no key is available to share.
+- Render icons in custom menu items, including the red Log out icon.
 - Replace the message-avatar left-click menu with a right-click message menu. View profile opens the author in the right sidepane; the menu also provides reply, copy, relay details, and rebroadcast for your own messages.
 
 - Show archived chats under a single Archive heading, without date or pinned sections.
@@ -268,7 +284,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/dergigi/goop/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/dergigi/goop/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/dergigi/goop/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/dergigi/goop/compare/v2.3.0...v2.4.0

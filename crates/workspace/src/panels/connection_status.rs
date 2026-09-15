@@ -7,7 +7,7 @@ use futures::{FutureExt, StreamExt, stream::BoxStream};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
+    Focusable, InteractiveElement, StatefulInteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
     Window,
 };
 use nostr_sdk::prelude::*;
@@ -468,7 +468,7 @@ impl Render for ConnectionStatus {
             .map(|relay| relay.url.to_string()).collect();
         let mut details = details.into_iter();
         let signer_detail = details.next().map(|(_, text)| text).unwrap_or_default();
-        let details: Vec<_> = details.filter(|(heading, _)| !relay_urls.contains(heading)).collect();
+        let details: Vec<_> = details.filter(|(heading, _)| !relay_urls.contains(heading) && !heading.strip_prefix("History: ").is_some_and(|url| relay_urls.contains(url))).collect();
         let signed_in = self.owner.is_some();
         let nostr = NostrRegistry::global(cx);
         let signer_needs_retry = nostr.read(cx).identity_loading()
@@ -497,10 +497,10 @@ impl Render for ConnectionStatus {
             .when(signed_in && !relay_urls.is_empty(), |view| view.child(
                 v_flex().gap_2()
                     .child(h_flex().gap_2().child(Icon::new(IconName::Relay).small()).child("Messaging relays"))
-                    .children(self.relays.as_ref().into_iter().flatten().map(|relay| relay_card(relay, chat.history_relays().get(&relay.url).map(|progress| {
+                    .children(self.relays.as_ref().into_iter().flatten().map(|relay| relay_row(relay, chat.history_relays().get(&relay.url).map(|progress| {
                         format!("{} messages received · {}", progress.received,
                             if progress.error.is_some() { "Scan incomplete" } else if progress.done { "History checked" } else { "Loading history…" })
-                    }), cx)))
+                    }), chat.history_relays().get(&relay.url).and_then(|progress| progress.error.clone()), cx)))
             ))
             .children(details.into_iter().map(|(heading, detail)| v_flex().gap_1().child(heading)
                 .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(detail))))
@@ -546,44 +546,92 @@ impl Render for ConnectionStatus {
     }
 }
 
-fn relay_card(relay: &RelayState, history: Option<String>, cx: &App) -> impl IntoElement {
-    let (icon, label, color) = match relay.status {
-        Some(RelayStatus::Connected) => (IconName::CheckCircle, "Connected", cx.theme().text_accent),
+fn relay_errors(relay: &RelayState, history_error: Option<&str>) -> Vec<String> {
+    let mut errors = Vec::new();
+    if relay.auth == Some("Authentication failed") {
+        errors.push("Relay authentication failed.".to_owned());
+    }
+    if let Some(error) = &relay.closed {
+        errors.push(error.clone());
+    }
+    if let Some(error) = history_error {
+        if !errors.iter().any(|existing| existing == error) {
+            errors.push(error.to_owned());
+        }
+    }
+    errors
+}
+
+fn relay_row(relay: &RelayState, history: Option<String>, history_error: Option<String>, cx: &App) -> impl IntoElement {
+    let (connection, color) = match relay.status {
+        Some(RelayStatus::Connected) => ("Connected", gpui::rgb(0x22a34a).into()),
         Some(RelayStatus::Initialized | RelayStatus::Pending | RelayStatus::Connecting) =>
-            (IconName::Loader, "Connecting", cx.theme().text_warning),
-        Some(RelayStatus::Sleeping) => (IconName::Moon, "Sleeping", cx.theme().text_muted),
-        Some(RelayStatus::Banned) => (IconName::Block, "Disabled", cx.theme().text_danger),
-        Some(RelayStatus::Shutdown) => (IconName::CloseCircle, "Shut down", cx.theme().text_muted),
-        _ => (IconName::CloseCircle, "Disconnected", cx.theme().text_warning),
+            ("Connecting…", cx.theme().text_warning),
+        Some(RelayStatus::Sleeping) => ("Sleeping", cx.theme().icon_muted),
+        Some(RelayStatus::Banned) => ("Disabled", cx.theme().icon_muted),
+        Some(RelayStatus::Shutdown) => ("Shut down", cx.theme().icon_muted),
+        _ => ("Disconnected", cx.theme().icon_muted),
     };
-    let auth = match relay.auth {
-        Some("Authenticated") => Some((IconName::Shield, "Authenticated", cx.theme().text_accent)),
-        Some("Authentication failed") => Some((IconName::Warning, "Auth failed", cx.theme().text_danger)),
-        Some("Waiting for signer authentication") => Some((IconName::UserKey, "Awaiting signer", cx.theme().text_warning)),
-        _ => None,
-    };
-    let badge = |icon: IconName, label: &'static str, color| h_flex()
-        .gap_1().px_2().py_1().rounded_full().text_xs().text_color(color)
-        .bg(cx.theme().surface_background)
-        .child(Icon::new(icon).xsmall()).child(label);
-    v_flex().w_full().min_w_0().flex_shrink_0().p_3().gap_2()
-        .rounded(cx.theme().radius).bg(cx.theme().elevated_surface_background)
-        .child(gpui::div().min_w_0().truncate().text_sm()
-            .child(relay.url.as_str().trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/').to_owned()))
-        .child(h_flex().gap_2().flex_wrap()
-            .child(badge(icon, label, color))
-            .when_some(auth, |row, (icon, label, color)| row.child(badge(icon, label, color))))
-        .when_some(history, |card, progress| card.child(
-            gpui::div().text_xs().text_color(cx.theme().text_muted).child(progress)))
-        .when_some(relay.closed.clone(), |card, reason| card.child(
-            h_flex().items_start().gap_2().text_sm().text_color(cx.theme().text_danger)
-                .child(Icon::new(IconName::Warning).small())
-                .child(gpui::div().min_w_0().child(reason))))
+    let errors = relay_errors(relay, history_error.as_deref());
+    let error = (!errors.is_empty()).then(|| errors.join("\n\n"));
+    let url = relay.url.to_string();
+    let tooltip = format!("{url}\n{connection}{}{}",
+        relay.auth.map(|auth| format!(" · {auth}")).unwrap_or_default(),
+        history.map(|history| format!("\n{history}")).unwrap_or_default());
+    h_flex().id(SharedString::from(format!("relay-status-{url}")))
+        .w_full().min_w_0().flex_shrink_0().min_h(gpui::px(28.)).py_1().gap_2()
+        .tooltip(move |window, cx| ui::tooltip::Tooltip::new(tooltip.clone(), window, cx).into())
+        .child(gpui::div().size(gpui::px(6.)).flex_shrink_0().rounded_full().bg(color))
+        .child(gpui::div().flex_1().min_w_0().truncate().text_sm()
+            .child(url.trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/').to_owned()))
+        .when(relay.auth == Some("Authenticated"), |row| row.child(
+            gpui::div().id("authenticated").flex_shrink_0()
+                .tooltip(|window, cx| ui::tooltip::Tooltip::new("Authenticated", window, cx).into())
+                .child(Icon::new(IconName::Shield).xsmall().text_color(cx.theme().icon_muted))))
+        .when(relay.auth == Some("Waiting for signer authentication"), |row| row.child(
+            gpui::div().id("auth-pending").flex_shrink_0()
+                .tooltip(|window, cx| ui::tooltip::Tooltip::new("Waiting for signer authentication", window, cx).into())
+                .child(Icon::new(IconName::UserKey).xsmall().text_color(cx.theme().text_warning))))
+        .when_some(error, |row, error| row.child(
+            Button::new("relay-error")
+                .icon(Icon::new(IconName::Warning).text_color(cx.theme().text_warning))
+                .xsmall().ghost().tooltip("Show relay error")
+                .on_click(move |_, window, cx| {
+                    let error = error.clone();
+                    let url = url.clone();
+                    window.open_modal(cx, move |modal, _, _| {
+                        let copy = format!("{url}\n\n{error}");
+                        modal.title("Relay error").show_close(true).width(gpui::px(520.))
+                            .child(v_flex().gap_3()
+                                .child(gpui::div().text_sm().child(url.clone()))
+                                .child(v_flex().max_h(gpui::px(320.)).overflow_y_scrollbar()
+                                    .child(gpui::div().text_sm().child(error.clone())))
+                                .child(Button::new("copy-relay-error").icon(IconName::Copy).label("Copy error").small().ghost()
+                                    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))))
+                    });
+                })))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn relay_error_details_preserve_full_reasons_without_duplicate_history_errors() {
+        let reason = "ERROR: auth-required: requested filter requires authentication\nOpen your signer to approve.";
+        let relay = RelayState {
+            url: RelayUrl::parse("wss://example.com").unwrap(),
+            status: Some(RelayStatus::Connected),
+            auth: Some("Authentication failed"),
+            closed: Some(reason.into()),
+        };
+        assert_eq!(relay_errors(&relay, Some(reason)), vec!["Relay authentication failed.", reason]);
+        let mut healthy = relay.clone();
+        healthy.auth = Some("Authenticated");
+        healthy.closed = None;
+        assert!(relay_errors(&healthy, None).is_empty());
+        assert_eq!(relay_errors(&healthy, Some("History connection timed out")), vec!["History connection timed out"]);
+    }
+
     #[test]
     fn signer_and_account_state_take_priority_over_old_relay_data() {
         let old = [RelayState {
