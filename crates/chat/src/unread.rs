@@ -8,6 +8,8 @@ use std::{collections::{BTreeMap, BTreeSet}, io::Write, path::{Path, PathBuf}};
 pub struct ReadPosition {
     timestamp: Timestamp,
     ids: BTreeSet<EventId>,
+    #[serde(default)]
+    marked_unread: bool,
 }
 impl ReadPosition {
     pub fn note(&mut self, timestamp: Timestamp, id: EventId) {
@@ -40,19 +42,37 @@ impl ReadStore {
     pub fn count(&self, room: u64, incoming: &BTreeSet<(Timestamp, EventId)>) -> usize {
         let default = ReadPosition::default();
         let read = self.positions.get(&room).unwrap_or(&default);
-        incoming.range((read.timestamp, EventId::from_slice(&[0; 32]).unwrap())..)
-            .filter(|(time, id)| *time > read.timestamp || !read.ids.contains(id)).count()
+        let count = incoming.range((read.timestamp, EventId::from_slice(&[0; 32]).unwrap())..)
+            .filter(|(time, id)| *time > read.timestamp || !read.ids.contains(id)).count();
+        count.max(usize::from(read.marked_unread))
     }
     #[cfg(test)]
     pub fn has_unread(&self, room: u64, incoming: &ReadPosition) -> bool {
         incoming.has_unread(self.positions.get(&room).unwrap_or(&ReadPosition::default()))
     }
     pub fn mark(&mut self, room: u64, position: &ReadPosition) -> Result<bool> {
-        if !position.has_unread(self.positions.get(&room).unwrap_or(&ReadPosition::default())) {
+        self.mark_many(&[(room, position.clone())])
+    }
+    pub fn mark_many(&mut self, positions: &[(u64, ReadPosition)]) -> Result<bool> {
+        if !positions.iter().any(|(room, position)|
+            self.positions.get(room).is_some_and(|read| read.marked_unread)
+                || position.has_unread(self.positions.get(room).unwrap_or(&ReadPosition::default()))) {
             return Ok(false);
         }
         let mut updated = self.positions.clone();
-        updated.entry(room).or_default().merge(position);
+        for (room, position) in positions {
+            let read = updated.entry(*room).or_default();
+            read.merge(position);
+            read.marked_unread = false;
+        }
+        self.persist(updated)
+    }
+    pub fn mark_unread(&mut self, room: u64) -> Result<bool> {
+        let mut updated = self.positions.clone();
+        updated.entry(room).or_default().marked_unread = true;
+        self.persist(updated)
+    }
+    fn persist(&mut self, updated: BTreeMap<u64, ReadPosition>) -> Result<bool> {
         if updated == self.positions { return Ok(false); }
         let dir = self.path.parent().unwrap();
         std::fs::create_dir_all(dir)?;
@@ -68,6 +88,39 @@ impl ReadStore {
 mod tests {
     use super::*;
     fn id(n: u8) -> EventId { EventId::from_slice(&[n; 32]).unwrap() }
+    #[test]
+    fn manual_unread_survives_restart_and_clears_for_self_chats_too() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = Keys::generate().public_key();
+        let mut store = ReadStore::open(root.path(), owner).unwrap();
+        assert!(store.mark_unread(1).unwrap());
+        let mut store = ReadStore::open(root.path(), owner).unwrap();
+        assert_eq!(store.count(1, &BTreeSet::new()), 1);
+        store.mark_many(&[(1, ReadPosition::default())]).unwrap();
+        assert_eq!(store.count(1, &BTreeSet::new()), 0);
+        let messages = BTreeSet::from([(Timestamp::from(10), id(1)), (Timestamp::from(11), id(2))]);
+        store.mark_unread(1).unwrap();
+        assert_eq!(store.count(1, &messages), 2);
+        let legacy: ReadPosition = serde_json::from_value(serde_json::json!({"timestamp": 0, "ids": []})).unwrap();
+        assert!(!legacy.marked_unread);
+    }
+
+    #[test]
+    fn marking_a_list_read_persists_without_touching_other_rooms_or_future_messages() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = Keys::generate().public_key();
+        let mut store = ReadStore::open(root.path(), owner).unwrap();
+        let mut position = ReadPosition::default(); position.note(Timestamp::from(10), id(1));
+        assert!(store.mark_many(&[(1, position.clone()), (2, position.clone())]).unwrap());
+        let mut store = ReadStore::open(root.path(), owner).unwrap();
+        assert!(!store.has_unread(1, &position));
+        assert!(!store.has_unread(2, &position));
+        assert!(store.has_unread(3, &position));
+        assert!(!store.mark_many(&[(1, position.clone()), (2, position.clone())]).unwrap());
+        position.note(Timestamp::from(10), id(2));
+        assert!(store.has_unread(1, &position));
+    }
+
     #[test]
     fn unread_counts_deduplicate_and_clear_at_the_read_position() {
         let root = tempfile::tempdir().unwrap();

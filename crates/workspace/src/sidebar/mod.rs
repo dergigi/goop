@@ -20,7 +20,7 @@ pub(crate) mod entry;
 
 #[derive(gpui::Action, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = sidebar, no_json)]
-enum ChatAction { Pin(u64, bool), Archive(u64, bool), Leave(u64, bool) }
+enum ChatAction { MarkAllRead, SetRead(u64, bool), Pin(u64, bool), Archive(u64, bool), Leave(u64, bool) }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DateGroup { Pinned, Today, Yesterday, LastWeek, Older }
@@ -94,8 +94,11 @@ impl Sidebar {
 
     fn chat_action(&mut self, action: &ChatAction, window: &mut Window, cx: &mut Context<Self>) {
         let action = action.clone();
+        let filter = self.filter.read(cx).clone();
         let apply = move |window: &mut Window, cx: &mut App| {
             let result = ChatRegistry::global(cx).update(cx, |chat, cx| match action {
+                ChatAction::SetRead(id, value) => chat.set_room_read(id, value, cx),
+                ChatAction::MarkAllRead => chat.mark_list_read(&filter, cx),
                 ChatAction::Pin(id, value) => chat.set_pinned(id, value, cx),
                 ChatAction::Archive(id, value) => chat.set_archived(id, value, cx),
                 ChatAction::Leave(id, value) => chat.leave_locally(id, value, cx),
@@ -205,9 +208,20 @@ impl Sidebar {
             .enumerate()
             .map(|(ix, row)| {
                 let item = match row {
-                    SidebarRow::Heading(group) => return h_flex().h_9().px_2()
-                        .text_sm().text_color(cx.theme().text_muted)
-                        .child(group.label()).into_any_element(),
+                    SidebarRow::Heading(group) => {
+                        let focus_handle = self.focus_handle.clone();
+                        return h_flex().h_9().w_full().px_2().justify_between()
+                            .text_sm().text_color(cx.theme().text_muted)
+                            .child(group.label())
+                            .when(range.start + ix == 0, |heading| heading.child(
+                                Button::new("chat-list-menu").icon(IconName::Ellipsis)
+                                    .xsmall().ghost().tooltip("Chat list actions")
+                                    .dropdown_menu(move |menu, _, _| {
+                                        menu.action_context(focus_handle.clone())
+                                            .menu("Mark all as read", Box::new(ChatAction::MarkAllRead))
+                                    })
+                            )).into_any_element();
+                    },
                     SidebarRow::Chat(item) => item,
                 };
                 let room = item.read(cx);
@@ -248,12 +262,19 @@ impl Sidebar {
                             this.chat_action(&ChatAction::Archive(id, !archived), window, cx);
                         }))));
                 let entry = entry.actions(actions);
-                if group {
-                    div().child(entry).context_menu(move |menu, _, _| {
-                        menu.menu(if left { "Rejoin" } else { "Leave locally…" },
-                            Box::new(ChatAction::Leave(id, !left)))
-                    }).into_any_element()
-                } else { entry.into_any_element() }
+                let unread = ChatRegistry::global(cx).read(cx).has_unread(id);
+                let focus_handle = self.focus_handle.clone();
+                div().child(entry).context_menu(move |menu, _, _| {
+                    menu.action_context(focus_handle.clone())
+                        .menu(if pinned { "Unpin" } else { "Pin" }, Box::new(ChatAction::Pin(id, !pinned)))
+                        .when(!left, |menu| menu.menu(if archived { "Unarchive" } else { "Archive" },
+                            Box::new(ChatAction::Archive(id, !archived))))
+                        .separator()
+                        .menu(if unread { "Mark as read" } else { "Mark as unread" },
+                            Box::new(ChatAction::SetRead(id, unread)))
+                        .when(group, |menu| menu.separator().menu(if left { "Rejoin" } else { "Leave locally…" },
+                            Box::new(ChatAction::Leave(id, !left))))
+                }).into_any_element()
             })
             .collect()
     }

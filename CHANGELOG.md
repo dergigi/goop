@@ -7,6 +7,17 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-09-15
+
+### Added
+
+- Add a menu on the first chat-list heading with “Mark all as read” for the current list.
+- Add right-click Pin/Unpin, Archive/Unarchive, and Mark as read/Mark as unread actions to chat rows. Manual unread marks persist on this device and remain visible on an open chat until it is refocused or displays new incoming messages.
+
+### Changed
+
+- Give the message composer a distinct rounded background and roomier padding. It grows with new lines and wrapped text, keeping its controls aligned to the bottom.
+
 ## [2.4.0] - 2026-09-15
 
 Goop 2.4 adds Note to self, Amethyst-compatible pinned chats, and local unread counts, with smoother keyboard navigation and a quieter sidebar. Pin compatibility is checked against Amethyst's source and relay fixtures; live cross-client testing remains pending.

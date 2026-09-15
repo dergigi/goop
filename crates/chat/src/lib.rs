@@ -389,6 +389,23 @@ impl ChatRegistry {
             _ => 0,
         }
     }
+    pub fn set_room_read(&mut self, room: u64, read: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(self.room_index.contains_key(&room), "Conversation not found");
+        let cache = self.incoming.as_ref().ok_or_else(|| anyhow!("Connect your account before changing read state"))?;
+        let reads = self.reads.as_mut().ok_or_else(|| anyhow!("Read state is unavailable"))?;
+        let changed = if read { reads.mark_many(&cache.read_positions(&[room]))? }
+            else { reads.mark_unread(room)? };
+        if changed { cx.notify(); }
+        Ok(())
+    }
+    pub fn mark_list_read(&mut self, filter: &RoomKind, cx: &mut Context<Self>) -> Result<(), Error> {
+        let rooms: Vec<_> = self.rooms(filter, cx).iter().map(|room| room.read(cx).id).collect();
+        let cache = self.incoming.as_ref().ok_or_else(|| anyhow!("Connect your account before marking chats read"))?;
+        let positions = cache.read_positions(&rooms);
+        let reads = self.reads.as_mut().ok_or_else(|| anyhow!("Read state is unavailable"))?;
+        if reads.mark_many(&positions)? { cx.notify(); }
+        Ok(())
+    }
     pub fn mark_read(&mut self, owner: PublicKey, room: u64, position: &ReadPosition, cx: &mut Context<Self>) {
         if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return; }
         if let Some(reads) = &mut self.reads {

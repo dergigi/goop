@@ -107,9 +107,23 @@ impl RumorCache {
         }
     }
 
+    pub fn read_positions(&self, rooms: &[u64]) -> Vec<(u64, crate::ReadPosition)> {
+        let incoming = self.incoming_positions.read().unwrap();
+        rooms.iter().map(|room| {
+            let mut position = crate::ReadPosition::default();
+            if let Some(messages) = incoming.get(room)
+                && let Some((latest, _)) = messages.last() {
+                for (time, id) in messages.iter().rev().take_while(|(time, _)| time == latest) {
+                    position.note(*time, *id);
+                }
+            }
+            (*room, position)
+        }).collect()
+    }
+
     pub fn unread_count(&self, room: u64, reads: &crate::unread::ReadStore) -> usize {
-        self.incoming_positions.read().unwrap().get(&room)
-            .map(|messages| reads.count(room, messages)).unwrap_or(0)
+        let incoming = self.incoming_positions.read().unwrap();
+        reads.count(room, incoming.get(&room).unwrap_or(&BTreeSet::new()))
     }
 
     pub fn search_messages(&self, room: u64) -> Vec<Arc<crate::SearchMessage>> {

@@ -67,6 +67,7 @@ pub struct ChatPanel {
 
     /// All messages (sorted by created_at)
     messages: Vec<Message>,
+    last_read_position: Option<(PublicKey, chat::ReadPosition)>,
 
     /// O(1) message lookup by EventId
     message_index: HashMap<EventId, usize>,
@@ -160,11 +161,18 @@ impl ChatPanel {
         // Define subscriptions
         let mut subscriptions = smallvec![];
         subscriptions.push(cx.observe(&ChatRegistry::global(cx), |_, _, cx| cx.notify()));
-        subscriptions.push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_window_activation(window, |this, _, cx| {
+            this.last_read_position = None;
+            cx.notify();
+        }));
 
         subscriptions.push(
             // Subscribe the chat input event
             cx.subscribe_in(&input, window, move |this, _input, event, window, cx| {
+                if matches!(event, InputEvent::Focus) {
+                    this.last_read_position = None;
+                    cx.notify();
+                }
                 if let InputEvent::PressEnter { shift: false, .. } = event {
                     this.send_text_message(window, cx);
                 };
@@ -210,6 +218,7 @@ impl ChatPanel {
         Self {
             id,
             messages,
+            last_read_position: None,
             message_index: HashMap::new(),
             reactions: BTreeMap::new(),
             room,
@@ -1819,11 +1828,14 @@ impl Render for ChatPanel {
             }
             // Only rendered chat panels advance their read position; background
             // tabs and inactive windows leave incoming messages unread.
-            cx.defer_in(window, move |_, window, cx| {
-                if window.is_window_active() {
-                    ChatRegistry::global(cx).update(cx, |chat, cx| chat.mark_read(owner, room_id, &position, cx));
-                }
-            });
+            if self.last_read_position.as_ref() != Some(&(owner, position.clone())) {
+                self.last_read_position = Some((owner, position.clone()));
+                cx.defer_in(window, move |_, window, cx| {
+                    if window.is_window_active() {
+                        ChatRegistry::global(cx).update(cx, |chat, cx| chat.mark_read(owner, room_id, &position, cx));
+                    }
+                });
+            }
         }
         let show_hints = window.is_window_active() && window.modifiers().secondary();
         let left_room = self.room.upgrade().and_then(|room| {
@@ -1936,6 +1948,7 @@ impl Render for ChatPanel {
                     .child(
                         h_flex()
                             .items_end()
+                            .gap_2()
                             .child(
                                 Button::new("upload")
                                     .icon(IconName::Plus)
@@ -1948,7 +1961,17 @@ impl Render for ChatPanel {
                                         this.upload(window, cx);
                                     })),
                             )
-                            .child(Input::new(&self.input).appearance(false).disabled(left_room.is_some()).flex_1())
+                            .child(
+                                Input::new(&self.input)
+                                    .appearance(false)
+                                    .disabled(left_room.is_some())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .bg(cx.theme().text.opacity(0.10))
+                                    .rounded(px(22.))
+                                    .px_4()
+                                    .py_3(),
+                            )
                             .child(
                                 h_flex()
                                     .pl_1()
