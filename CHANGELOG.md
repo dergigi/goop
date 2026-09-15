@@ -16,6 +16,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 - Add “View profile” to one-to-one chat context menus, opening the profile in the right sidepane.
 
+- Add Chat and Search buttons at the bottom of profiles; Search opens the conversation and focuses find-in-chat.
+
 ### Changed
 
 - Put profile public keys on their own full-width row with a dedicated copy button.

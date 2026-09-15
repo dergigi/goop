@@ -117,6 +117,7 @@ pub enum Command {
     ShowMessaging,
     ShowProfile,
     OpenProfile(PublicKey),
+    OpenProfileChat(PublicKey, bool),
     ShowSettings,
     ShowContactList,
 }
@@ -125,6 +126,7 @@ pub struct Workspace {
     sidebar: Entity<Sidebar>,
     /// App's Dock Area
     dock: Entity<DockArea>,
+    pending_profile_search: Option<u64>,
 
     /// App's Image Cache
     image_cache: Entity<GoopImageCache>,
@@ -278,6 +280,17 @@ impl Workspace {
                                     cx,
                                 );
                             });
+                            if this.pending_profile_search == Some(*id) {
+                                this.pending_profile_search = None;
+                                for panel in this.dock.read(cx).active_panels(cx) {
+                                    if panel.panel_id(cx).as_ref() == id.to_string()
+                                        && let Ok(chat) = panel.view().downcast::<chat_ui::ChatPanel>()
+                                    {
+                                        chat.update(cx, |chat, cx| chat.focus_find(window, cx));
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
                     ChatEvent::CloseRoom(..) => {
@@ -316,6 +329,7 @@ impl Workspace {
         Self {
             sidebar,
             dock,
+            pending_profile_search: None,
             image_cache,
             tasks: vec![],
             _subscriptions: subscriptions,
@@ -458,6 +472,16 @@ impl Workspace {
                         );
                     });
                 }
+            }
+            Command::OpenProfileChat(public_key, search) => {
+                let Some(owner) = NostrRegistry::global(cx).read(cx).current_user() else { return; };
+                let candidate = cx.new(|_| chat::Room::new(owner, [*public_key])
+                    .organize(&owner).kind(chat::RoomKind::Ongoing));
+                let chat = ChatRegistry::global(cx);
+                let room = chat.read(cx).room(&candidate.read(cx).id, cx)
+                    .and_then(|room| room.upgrade()).unwrap_or(candidate);
+                self.pending_profile_search = search.then_some(room.read(cx).id);
+                chat.update(cx, |chat, cx| chat.emit_room(&room, window, cx));
             }
             Command::OpenProfile(public_key) => {
                 self.dock.update(cx, |dock, cx| {
