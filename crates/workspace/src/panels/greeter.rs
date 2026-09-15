@@ -131,6 +131,7 @@ impl Render for GreeterPanel {
                                             .px_3()
                                             .gap_3()
                                             .rounded(cx.theme().radius)
+                                            .when(id == "dm-goop", |row| row.text_color(cx.theme().text_accent))
                                             .hover(|row| row.bg(cx.theme().ghost_element_hover))
                                             .child(Icon::new(icon).small())
                                             .child(div().flex_1().text_sm().child(label))
