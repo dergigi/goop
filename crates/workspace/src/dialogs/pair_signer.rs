@@ -242,7 +242,7 @@ impl Render for PairSigner {
             } else if self.error.is_some() {
                 "Pairing stopped"
             } else if self.image.is_some() {
-                "Scan in Amber"
+                "Scan in your signer app"
             } else {
                 "Preparing code…"
             }))
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn qr_round_trip_preserves_pairing_secret_and_amber_metadata() {
+    fn qr_round_trip_preserves_pairing_secret_and_app_metadata() {
         let keys = Keys::generate();
         let uri = invitation(
             &keys,

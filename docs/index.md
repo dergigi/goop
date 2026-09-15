@@ -16,7 +16,7 @@ If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.
 
 ## Connect your signer
 
-Choose **Pair with Amber**, scan the code in Amber, and approve. Goop remembers the connection for next time. **Escape** cancels; expired codes can be replaced with **New code**.
+Choose **Connect with QR code**, scan it in a compatible NIP-46 signer (such as Amber), and approve. Goop remembers the connection for next time. **Escape** cancels; expired codes can be replaced with **New code**.
 
 Alternatively, paste a `bunker://` connection URL from your signer, or choose **Scan bunker QR** to scan it with your computer’s camera.
 

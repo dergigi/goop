@@ -192,7 +192,7 @@ impl Render for ImportIdentity {
                 .child(div().text_color(cx.theme().text_warning).child(error))
                 .child(Button::new("retry-saved-signer").label("Retry saved connection").ghost()
                     .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |state, cx| state.retry_signer(cx)))))
-            .child(Button::new("pair-with-amber").label("Pair with Amber").icon(ui::IconName::Scan)
+            .child(Button::new("connect-with-qr").label("Connect with QR code").icon(ui::IconName::Scan)
                 .primary().disabled(self.loading).on_click(cx.listener(|this, _, window, cx| this.pair(window, cx))))
             .child(div().text_xs().text_color(cx.theme().text_muted).text_center().child("or use a bunker URL"))
             .child(

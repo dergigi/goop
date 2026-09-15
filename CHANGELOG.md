@@ -9,7 +9,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
-- Pair with Amber from a Goop-generated QR code. Approve in Amber to connect; pairing supports cancellation, expiry, and retry, and saves the approved bunker connection for future launches.
+- Connect a compatible NIP-46 signer with a Goop-generated QR code. Approve in your signer app to connect; pairing supports cancellation, expiry, and retry, and saves the approved bunker connection for future launches.
 
 ### Removed
 
