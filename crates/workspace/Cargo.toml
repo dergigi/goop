@@ -28,3 +28,7 @@ chrono.workspace = true
 serde.workspace = true
 log.workspace = true
 smallvec.workspace = true
+
+[dev-dependencies]
+nostr-sdk = { workspace = true, features = ["local-relay"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

@@ -393,6 +393,7 @@ mod tests {
         Entry {
             name: name.to_owned().into(), detail: "Inbox".into(), text: name.to_lowercase(),
             messages: messages.iter().map(|content| Arc::new(SearchMessage {
+                author: Keys::generate().public_key(),
                 content: (*content).into(), normalized: content.to_lowercase().into(),
                 created_at: Timestamp::from(0),
             })).collect(),

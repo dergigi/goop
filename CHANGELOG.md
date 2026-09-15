@@ -9,9 +9,15 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Add red Mute, Block, and Report profile actions, timed account-scoped notification mutes, and private NIP-51 blocks compatible with Amethyst. A Blocked users sidebar-footer button opens the synced list with profile, unblock, and sync-recovery controls. Blocked direct chats disappear from Inbox, Requests, and Archived; blocked authors are excluded from displayed messages, reactions, search, notifications, and unread counts.
+
+- Let users choose any NIP-56 report reason, with no default selection, and add an optional public explanation.
+
 - Add a live Connection status sidepane, opened from the title bar or account menu, showing signer connection, messaging relay connectivity and observed authentication, history/decryption progress, and outgoing delivery problems. Copy diagnostics or reconnect the signer/relays, resume history from checkpoints, and explicitly retry decryption or pending sends.
 
 ### Fixed
+
+- Show report signing and delivery errors in the dialog, preserve inputs for retry, require relay acknowledgement before confirming submission, and disclose partial delivery. Unchanged retries reuse the same signed report.
 
 - Keep outgoing queue errors visible until recovery, and distinguish history that has not been scanned from a completed scan.
 

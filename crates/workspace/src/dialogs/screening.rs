@@ -24,6 +24,7 @@ pub fn init(public_key: PublicKey, window: &mut Window, cx: &mut App) -> Entity<
 
 /// Screening
 pub struct Screening {
+    pub show_report: bool,
     /// Public Key of the person being screened.
     public_key: PublicKey,
 
@@ -68,6 +69,7 @@ impl Screening {
         });
 
         Self {
+            show_report: true,
             public_key,
             verified: None,
             verifying_address: None,
@@ -286,59 +288,8 @@ impl Screening {
         cx.open_url(&format!("https://njump.to/{bech32}"));
     }
 
-    fn confirm_report(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let view = cx.entity().downgrade();
-        let name = self.profile(cx).name();
-        let public_key = self.public_key.to_bech32().unwrap();
-        window.open_modal(cx, move |modal, _, _| {
-            let view = view.clone();
-            modal.confirm()
-                .title("Report user?")
-                .button_props(ui::modal::ModalButtonProps::default()
-                    .ok_text("Send public report").cancel_text("Cancel"))
-                .child(v_flex().gap_2().text_sm()
-                    .child(format!("Report {name} for impersonation?"))
-                    .child(public_key.clone())
-                    .child("This publishes a public report signed by your account. Other clients may use it to filter this person."))
-                .on_ok(move |_, window, cx| {
-                    view.update(cx, |view, cx| view.report(window, cx)).ok();
-                    true
-                })
-        });
-    }
-
-    fn report(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let nostr = NostrRegistry::global(cx);
-        let client = nostr.read(cx).client();
-        let signer = nostr.read(cx).signer();
-        let public_key = self.public_key;
-
-        let task: Task<Result<(), Error>> = cx.background_spawn(async move {
-            let tag = Tag::from(Nip56Tag::PublicKey {
-                public_key,
-                report: Report::Impersonation,
-            });
-
-            let event = EventBuilder::new(Kind::Reporting, "")
-                .tag(tag)
-                .finalize_async(&signer)
-                .await?;
-
-            // Send the report to the public relays
-            client.send_event(&event).to(BOOTSTRAP_RELAYS).await?;
-
-            Ok(())
-        });
-
-        self.tasks.push(cx.spawn_in(window, async move |_, cx| {
-            if task.await.is_ok() {
-                cx.update(|window, cx| {
-                    window.close_modal(cx);
-                    window.push_notification("Report submitted successfully", cx);
-                })
-                .ok();
-            }
-        }));
+    pub fn confirm_report(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        super::report::open(self.public_key, self.profile(cx).name(), window, cx);
     }
 
     fn mutual_contacts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -498,9 +449,9 @@ impl Render for Screening {
                                         this.open_njump(window, cx);
                                     })),
                             )
-                            .child(
+                            .when(self.show_report, |row| row.child(
                                 Button::new("report")
-                                    .tooltip("Report user for impersonation")
+                                    .tooltip("Send a public report about this user")
                                     .label("Report user")
                                     .icon(IconName::Flag)
                                     .small()
@@ -509,7 +460,7 @@ impl Render for Screening {
                                     .on_click(cx.listener(move |this, _e, window, cx| {
                                         this.confirm_report(window, cx);
                                     })),
-                            ),
+                            )),
                     ),
             )
             .child(

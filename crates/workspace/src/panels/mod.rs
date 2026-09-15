@@ -6,3 +6,5 @@ pub mod relay_list;
 pub mod person_profile;
 
 pub mod connection_status;
+
+pub mod blocked_users;

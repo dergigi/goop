@@ -154,6 +154,8 @@ impl Sidebar {
                                 this.set_filter(RoomKind::Archived, window, cx)
                             })),
                     )
+                    .child(Button::new("sidebar-blocked").icon(IconName::Block).small().ghost().tooltip("Blocked users")
+                        .on_click(cx.listener(|this,_,window,cx| { this.focus_handle.focus(window,cx); window.dispatch_action(Box::new(crate::Command::ShowBlockedUsers),cx); })))
                     .child(
                         Button::new("sidebar-help")
                             .icon(IconName::Help).small().ghost().tooltip("Help")

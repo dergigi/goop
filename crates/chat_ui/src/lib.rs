@@ -83,6 +83,7 @@ pub struct ChatPanel {
     /// Mapping message (rumor event) ids to their reports
     reports_by_id: Arc<RwLock<BTreeMap<EventId, Vec<SendReport>>>>,
     saving_outgoing: bool,
+    blocked_users: std::collections::BTreeSet<PublicKey>,
 
     /// Chat input state
     input: Entity<InputState>,
@@ -166,7 +167,18 @@ impl ChatPanel {
 
         // Define subscriptions
         let mut subscriptions = smallvec![];
-        subscriptions.push(cx.observe(&ChatRegistry::global(cx), |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_in(&ChatRegistry::global(cx), window, |this, chat, window, cx| {
+            let blocked = chat.read(cx).blocked_users();
+            if blocked != this.blocked_users {
+                this.blocked_users = blocked;
+                this.list_state.splice(0..this.messages.len(), 0);
+                this.messages.clear(); this.message_index.clear(); this.reactions.clear();
+                this.rendered_texts_by_id.clear(); this.encrypted_views.clear();
+                this.find.dirty = true;
+                this.get_messages(window, cx);
+            }
+            cx.notify();
+        }));
         subscriptions.push(cx.observe_window_activation(window, |this, _, cx| {
             this.last_read_position = None;
             cx.notify();
@@ -241,6 +253,7 @@ impl ChatPanel {
             rendered_texts_by_id: BTreeMap::new(),
             reports_by_id,
             saving_outgoing: false,
+            blocked_users: ChatRegistry::global(cx).read(cx).blocked_users(),
             uploading: false,
             pending_uploads: VecDeque::new(),
             current_upload: None,
@@ -269,13 +282,14 @@ impl ChatPanel {
             move |this, _room, event, window, cx| {
                 match event {
                     RoomEvent::Incoming(message) => {
+                        if ChatRegistry::global(cx).read(cx).is_blocked(message.rumor.pubkey) { return; }
                         if message.rumor.kind == Kind::Reaction {
                             this.insert_reaction(&message.rumor, cx);
                         } else {
                             this.insert_message(message, false, cx);
 
                             if !message.historical && !window.is_window_active()
-                                && !ChatRegistry::global(cx).read(cx).notifications_muted(&message.rumor.extract_public_keys()) {
+                                && !ChatRegistry::global(cx).read(cx).notifications_muted(message.rumor.pubkey, &message.rumor.extract_public_keys()) {
                                 cx.show_system_notification(SystemNotification {
                                     tag: "message".into(),
                                     title: "New Message".into(),
@@ -540,6 +554,7 @@ impl ChatPanel {
         E: Into<Message>,
     {
         let msg: Message = m.into();
+        if ChatRegistry::global(cx).read(cx).is_blocked(msg.author) { return; }
 
         if let Err(pos) = self.messages.binary_search(&msg) {
             self.messages.insert(pos, msg);
@@ -575,6 +590,7 @@ impl ChatPanel {
 
     /// Insert a reaction into the chat panel
     fn insert_reaction(&mut self, event: &UnsignedEvent, cx: &mut Context<Self>) {
+        if ChatRegistry::global(cx).read(cx).is_blocked(event.pubkey) { return; }
         if event.kind != Kind::Reaction {
             return;
         }
@@ -1848,6 +1864,7 @@ impl Render for ChatPanel {
             let room = room.read(cx);
             ChatRegistry::global(cx).read(cx).has_left(room).then_some(room.id)
         });
+        let blocked_room = self.room.upgrade().is_some_and(|room| ChatRegistry::global(cx).read(cx).room_blocked(room.read(cx)));
         if self.find.open && self.find.dirty {
             self.refresh_find(false, cx);
         }
@@ -1884,7 +1901,7 @@ impl Render for ChatPanel {
                                 .icon(IconName::CheckCircle)
                                 .label("Change")
                                 .secondary()
-                                .disabled(self.uploading || left_room.is_some())
+                                .disabled(self.uploading || left_room.is_some() || blocked_room)
                                 .on_click(cx.listener(move |this, _ev, window, cx| {
                                     this.change_subject(window, cx);
                                 })),
@@ -1932,6 +1949,8 @@ impl Render for ChatPanel {
                     .p_2()
                     .w_full()
                     .gap_1p5()
+                    .when(blocked_room, |view| view.child(div().text_sm().text_color(cx.theme().text_danger)
+                        .child("This user is blocked. Unblock them from their profile or Blocked users to send messages.")))
                     .when_some(left_room, |view, id| {
                         view.child(h_flex().gap_2().child("You left this group locally. Notifications are off.")
                             .child(Button::new("rejoin-group").label("Rejoin").small().secondary()
@@ -1968,7 +1987,7 @@ impl Render for ChatPanel {
                                     .icon(IconName::Plus)
                                     .tooltip("Upload media")
                                     .loading(self.uploading)
-                                    .disabled(self.uploading || left_room.is_some())
+                                    .disabled(self.uploading || left_room.is_some() || blocked_room)
                                     .ghost()
                                     .large()
                                     .on_click(cx.listener(move |this, _ev, window, cx| {
@@ -1978,7 +1997,7 @@ impl Render for ChatPanel {
                             .child(
                                 Input::new(&self.input)
                                     .appearance(false)
-                                    .disabled(left_room.is_some())
+                                    .disabled(left_room.is_some() || blocked_room)
                                     .flex_1()
                                     .min_w_0()
                                     .bg(cx.theme().text.opacity(0.10))
@@ -1995,7 +2014,7 @@ impl Render for ChatPanel {
                                     .child(
                                         Button::new("send")
                                             .icon(IconName::PaperPlaneFill)
-                                            .disabled(self.uploading || left_room.is_some())
+                                            .disabled(self.uploading || left_room.is_some() || blocked_room)
                                             .ghost()
                                             .large()
                                             .on_click(cx.listener(move |this, _ev, window, cx| {

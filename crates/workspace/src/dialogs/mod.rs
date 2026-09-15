@@ -5,3 +5,7 @@ pub mod settings;
 pub mod quick_search;
 pub mod new_chat;
 pub mod shortcuts;
+
+pub mod report;
+
+pub mod moderation;

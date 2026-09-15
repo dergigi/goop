@@ -9110,6 +9110,7 @@ dependencies = [
  "smallvec",
  "state",
  "theme",
+ "tokio",
  "ui",
 ]
 

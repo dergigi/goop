@@ -7,6 +7,7 @@ use nostr_sdk::prelude::*;
 
 #[derive(Debug)]
 pub struct SearchMessage {
+    pub author: PublicKey,
     pub content: Arc<str>,
     pub normalized: Arc<str>,
     pub created_at: Timestamp,
@@ -23,6 +24,7 @@ impl MessageSearchIndex {
         let Some(id) = rumor.id else { return };
         self.0.entry(rumor.uniq_id()).or_default().entry(id).or_insert_with(|| {
             Arc::new(SearchMessage {
+                author: rumor.pubkey,
                 content: rumor.content.as_str().into(),
                 normalized: rumor.content.to_lowercase().into(),
                 created_at: rumor.created_at,

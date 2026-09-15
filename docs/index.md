@@ -113,3 +113,23 @@ Click the connection summary beside your profile in the title bar, or choose **C
 - **Outgoing messages:** delayed sends retry automatically; paused sends require **Retry pending sends**. Counts include your own encrypted copy. A relay accepting a message is not a read receipt.
 
 **Copy status** copies the displayed diagnostic text, without message bodies or secret keys. It can include relay URLs and error details. Authentication results are shown when observed during this session; a connected socket alone does not establish successful authentication or delivery. A completed history scan only covers what its relays retain.
+
+## Reporting an account
+
+Choose **Report** below Chat and Search on a profile (or **Report user** in request screening), select a reason, and optionally add an explanation. Nothing is selected by default. Reports and explanations are **public**, signed by your account; reporting does not block the person.
+
+Goop waits for relay acknowledgement before confirming submission and tells you when only some relays accepted the report. Signing or delivery errors stay visible with **Copy error**, and your inputs are preserved. Retrying an unchanged report reuses its signed event; changing the reason or explanation creates a new report.
+
+## Muting and blocking
+
+Profiles have three red actions below **Chat** and **Search**:
+
+- **Mute:** pause notifications from this person for 1 hour, 8 hours, 1 day, 1 week, or until you unmute them. This applies to their messages in direct and group chats, on this device and account. Messages and unread counts still appear. Open **Unmute** to resume notifications or change the duration.
+- **Block:** after confirmation, hide their direct chats from Inbox, Requests, and Archived. Their messages and reactions in shared groups are hidden, and their messages do not trigger notifications or unread counts. Shared groups remain available. Direct messaging is disabled until you unblock them; existing history is preserved.
+- **Report:** publish a signed report with a reason and optional public explanation. Reporting is separate from muting and blocking.
+
+The **Blocked users** button beside Archive in the sidebar footer opens the list. Open a profile or choose **Unblock** to restore visibility. The list includes users blocked in compatible clients, even if you have never chatted with them in Goop.
+
+Blocks use private NIP-44-encrypted `p` entries in the standard NIP-51 kind-10000 list, as Amethyst does. Existing public/private entries and unrelated list tags are preserved. Local changes take effect immediately; the Blocked users view shows pending sync, errors, **Copy error**, and **Retry sync**. Declined or timed-out signer requests wait for an explicit retry. Muting is device-local and expires automatically.
+
+Legacy NIP-04-encrypted lists are preserved but cannot currently be edited by Goop. If encountered, the view explains that the list needs to be updated in a NIP-44-compatible client first; the local block still applies. Blocking cannot prevent another client from sending encrypted messages to your relays.

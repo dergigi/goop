@@ -27,6 +27,7 @@ mod inbox;
 mod unread;
 pub use unread::ReadPosition;
 mod archive;
+mod moderation;
 mod outgoing;
 #[cfg(test)]
 mod test_signer;
@@ -108,6 +109,9 @@ pub struct ChatRegistry {
     retry_task: Option<Task<Result<(), Error>>>,
     outgoing_task: Option<Task<Result<(), Error>>>,
     outgoing: Option<OutgoingQueue>,
+    moderation: Option<moderation::ModerationStore>,
+    moderation_task: Option<Task<()>>,
+    pub moderation_error: Option<String>,
     archives: Option<archive::ArchiveStore>,
     archive_task: Option<Task<()>>,
     pub archive_error: Option<String>,
@@ -185,6 +189,7 @@ impl ChatRegistry {
                     this.reset(cx);
                     this.handle_notifications(cx);
                     this.start_archives(cx);
+                    this.start_moderation(cx);
                     this.get_metadata(cx);
                     this.get_rooms(cx);
                 } else if matches!(event, StateEvent::NoSigner) {
@@ -204,6 +209,7 @@ impl ChatRegistry {
         cx.defer_in(window, |this, _window, cx| {
             this.get_rooms(cx);
             if this.archives.is_none() { this.start_archives(cx); }
+            if this.moderation.is_none() { this.start_moderation(cx); }
         });
 
         Self {
@@ -223,6 +229,9 @@ impl ChatRegistry {
             retry_task: None,
             outgoing_task: None,
             outgoing: None,
+            moderation: None,
+            moderation_task: None,
+            moderation_error: None,
             archives: None,
             archive_task: None,
             archive_error: None,
@@ -392,7 +401,7 @@ impl ChatRegistry {
     pub fn has_unread(&self, room: u64) -> bool { self.unread_count(room) > 0 }
     pub fn unread_count(&self, room: u64) -> usize {
         match (&self.reads, &self.incoming) {
-            (Some(reads), Some(cache)) => cache.unread_count(room, reads),
+            (Some(reads), Some(cache)) => cache.unread_count_filtered(room, reads, &self.blocked_users()),
             _ => 0,
         }
     }
@@ -424,13 +433,69 @@ impl ChatRegistry {
         }
     }
     pub fn search_messages(&self, room: u64) -> Vec<Arc<SearchMessage>> {
-        self.incoming.as_ref().map(|cache| cache.search_messages(room)).unwrap_or_default()
+        self.incoming.as_ref().map(|cache| cache.search_messages(room).into_iter().filter(|message| !self.is_blocked(message.author)).collect()).unwrap_or_default()
     }
 
     pub fn outgoing_reports(&self, id: &EventId) -> Option<Vec<SendReport>> {
         self.outgoing_reports.get(id).cloned()
     }
 
+    fn start_moderation(&mut self, cx: &mut Context<Self>) {
+        let nostr = NostrRegistry::global(cx).read(cx);
+        let Some(owner) = nostr.current_user() else { return; };
+        let client = nostr.client();
+        let signer = nostr.signer().snapshot();
+        let (store, wake) = match moderation::ModerationStore::open(&common::config_dir(), owner) {
+            Ok(value) => value,
+            Err(error) => { self.moderation_error = Some(error.to_string()); return; }
+        };
+        self.moderation = Some(store.clone());
+        self.moderation_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                if !store.paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    let (sync_store, client, signer) = (store.clone(), client.clone(), signer.clone());
+                    use futures::FutureExt;
+                    let sync = cx.background_spawn(async move { sync_store.sync(&client, &signer).await });
+                    let timeout = cx.background_executor().timer(std::time::Duration::from_secs(60));
+                    let result = match futures::future::select(sync.boxed(), timeout.boxed()).await {
+                        futures::future::Either::Left((result, _)) => result,
+                        futures::future::Either::Right(_) => Err(anyhow!(state::SignerFailure::Timeout)),
+                    };
+                    if let Err(error) = &result {
+                        if state::SignerFailure::classify(error.as_ref()).requires_retry() {
+                            store.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    if this.update(cx, |this, cx| {
+                        this.moderation_error = result.err().map(|error| error.to_string());
+                        cx.notify();
+                    }).is_err() { break; }
+                }
+                use futures::{FutureExt, select_biased};
+                let request = wake.recv_async().fuse();
+                let timer = cx.background_executor().timer(std::time::Duration::from_secs(30)).fuse();
+                futures::pin_mut!(request, timer);
+                select_biased! { _ = request => {}, _ = timer => {} }
+            }
+        }));
+        cx.notify();
+    }
+    pub fn blocked_users(&self) -> BTreeSet<PublicKey> { self.moderation.as_ref().map(|store| store.blocked()).unwrap_or_default() }
+    pub fn is_blocked(&self, key: PublicKey) -> bool { self.blocked_users().contains(&key) }
+    pub fn room_blocked(&self, room: &Room) -> bool { moderation::hides_room(&self.blocked_users(), room.members()) }
+    pub fn is_muted(&self, key: PublicKey) -> bool { self.moderation.as_ref().is_some_and(|store| store.muted(key)) }
+    pub fn moderation_pending(&self) -> bool { self.moderation.as_ref().is_some_and(|store| store.pending()) }
+    pub fn mute_user(&mut self, key: PublicKey, seconds: Option<u64>, cx: &mut Context<Self>) -> Result<(), Error> {
+        self.moderation.as_ref().ok_or_else(|| anyhow!("Connect your signer before muting"))?.mute(key, seconds)?;
+        cx.notify(); Ok(())
+    }
+    pub fn block_user(&mut self, key: PublicKey, blocked: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        self.moderation.as_ref().ok_or_else(|| anyhow!("Connect your signer before blocking"))?.block(key, blocked)?;
+        cx.notify(); Ok(())
+    }
+    pub fn retry_moderation(&mut self, cx: &mut Context<Self>) {
+        if let Some(store) = &self.moderation { store.retry(); } else { self.start_moderation(cx); }
+    }
     fn start_archives(&mut self, cx: &mut Context<Self>) {
         let nostr = NostrRegistry::global(cx).read(cx);
         let Some(owner) = nostr.current_user() else { return; };
@@ -481,7 +546,8 @@ impl ChatRegistry {
     pub fn is_archived(&self, room: &Room) -> bool {
         self.archives.as_ref().is_some_and(|store| store.contains(room.members()) || store.has_left(room.members()))
     }
-    pub fn notifications_muted(&self, members: &[PublicKey]) -> bool {
+    pub fn notifications_muted(&self, author: PublicKey, members: &[PublicKey]) -> bool {
+        if self.is_blocked(author) || self.is_muted(author) { return true; }
         self.archives.as_ref().is_some_and(|store| store.has_left(members))
     }
     pub fn has_left(&self, room: &Room) -> bool {
@@ -806,6 +872,7 @@ impl ChatRegistry {
             .filter(|_| *filter != RoomKind::Request || self.classification_ready)
             .filter(|room| {
                 let room = room.read(cx);
+                if self.room_blocked(room) { return false; }
                 if *filter == RoomKind::Archived { self.is_archived(room) }
                 else { &room.kind == filter && !self.is_archived(room) }
             })
@@ -820,6 +887,7 @@ impl ChatRegistry {
             .filter(|_| *filter != RoomKind::Request || self.classification_ready)
             .filter(|room| {
                 let room = room.read(cx);
+                if self.room_blocked(room) { return false; }
                 if *filter == RoomKind::Archived { self.is_archived(room) }
                 else { &room.kind == filter && !self.is_archived(room) }
             })
@@ -989,6 +1057,9 @@ impl ChatRegistry {
         }
         self.outgoing_task = None;
         self.outgoing = None;
+        if let Some(store) = self.moderation.take() { store.stop(); }
+        self.moderation_task = None;
+        self.moderation_error = None;
         if let Some(store) = self.archives.take() { store.stop(); }
         self.archive_task = None;
         self.archive_error = None;

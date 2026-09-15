@@ -48,6 +48,7 @@ pub(super) struct RumorCache {
     rooms: Arc<RwLock<BTreeMap<EventId, u64>>>,
     reaction_targets: Arc<RwLock<BTreeSet<EventId>>>,
     search: Arc<RwLock<crate::search::MessageSearchIndex>>,
+    authors: Arc<RwLock<BTreeMap<EventId, PublicKey>>>,
     incoming_positions: Arc<RwLock<BTreeMap<u64, BTreeSet<(Timestamp, EventId)>>>>,
 }
 
@@ -70,6 +71,7 @@ impl RumorCache {
             rooms: Arc::default(),
             reaction_targets: Arc::default(),
             search: Arc::default(),
+            authors: Arc::default(),
             incoming_positions: Arc::default(),
         }
     }
@@ -91,6 +93,7 @@ impl RumorCache {
     pub fn note(&self, rumor: &UnsignedEvent) {
         self.search.write().unwrap().insert(rumor);
         if let Some(id) = rumor.id {
+            self.authors.write().unwrap().insert(id, rumor.pubkey);
             if is_chat(rumor.kind) {
                 self.rooms.write().unwrap().insert(id, rumor.uniq_id());
                 if rumor.pubkey != self.owner {
@@ -124,6 +127,14 @@ impl RumorCache {
     pub fn unread_count(&self, room: u64, reads: &crate::unread::ReadStore) -> usize {
         let incoming = self.incoming_positions.read().unwrap();
         reads.count(room, incoming.get(&room).unwrap_or(&BTreeSet::new()))
+    }
+
+    pub fn unread_count_filtered(&self, room: u64, reads: &crate::unread::ReadStore, blocked: &BTreeSet<PublicKey>) -> usize {
+        if blocked.is_empty() { return self.unread_count(room, reads); }
+        let incoming = self.incoming_positions.read().unwrap();
+        let authors = self.authors.read().unwrap();
+        let visible = incoming.get(&room).into_iter().flatten().filter(|(_, id)| authors.get(id).is_none_or(|author| !blocked.contains(author))).copied().collect();
+        reads.count(room, &visible)
     }
 
     pub fn search_messages(&self, room: u64) -> Vec<Arc<crate::SearchMessage>> {
@@ -522,4 +533,28 @@ mod tests {
         assert!(validate(&message(&sender, &[owner], Kind::Reaction, "+"), owner).is_err());
         assert!(validate(&message(&sender, &[owner], Kind::Custom(15), "file"), owner).is_ok());
     }
+    #[test]
+    fn blocked_authors_do_not_count_as_unread_and_unblocking_restores_them() {
+        let owner = Keys::generate().public_key();
+        let bob = Keys::generate().public_key(); let carol = Keys::generate().public_key();
+        let client = Client::default();
+        let cache = RumorCache::with_keys(client, owner, Keys::generate());
+        let root = tempfile::tempdir().unwrap();
+        let reads = crate::unread::ReadStore::open(root.path(),owner).unwrap();
+        let message = |author| {
+            let mut event = EventBuilder::new(Kind::PrivateDirectMessage,"hello")
+                .tags([Tag::public_key(owner),Tag::public_key(bob),Tag::public_key(carol)])
+                .finalize_unsigned(author);
+            event.ensure_id(); event
+        };
+        let first = message(bob); let second = message(carol);
+        let room = first.uniq_id(); assert_eq!(room,second.uniq_id());
+        cache.note(&first); cache.note(&second); cache.note(&first);
+        assert_eq!(cache.unread_count(room,&reads),2);
+        assert_eq!(cache.unread_count_filtered(room,&reads,&BTreeSet::from([bob])),1);
+        assert_eq!(cache.unread_count_filtered(room,&reads,&BTreeSet::from([bob,carol])),0);
+        assert_eq!(cache.unread_count_filtered(room,&reads,&BTreeSet::new()),2);
+        assert_eq!(cache.search_messages(room).iter().filter(|message| message.author != bob).count(),1);
+    }
+
 }

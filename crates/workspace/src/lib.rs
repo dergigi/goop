@@ -118,6 +118,7 @@ pub enum Command {
     ShowConnectionStatus,
     ShowProfile,
     OpenProfile(PublicKey),
+    ShowBlockedUsers,
     OpenProfileChat(PublicKey, bool),
     ShowSettings,
     ShowContactList,
@@ -483,6 +484,9 @@ impl Workspace {
                     .and_then(|room| room.upgrade()).unwrap_or(candidate);
                 self.pending_profile_search = search.then_some(room.read(cx).id);
                 chat.update(cx, |chat, cx| chat.emit_room(&room, window, cx));
+            }
+            Command::ShowBlockedUsers => {
+                self.dock.update(cx, |dock,cx| dock.add_panel(Arc::new(panels::blocked_users::init(cx)), DockPlacement::Right, window, cx));
             }
             Command::OpenProfile(public_key) => {
                 self.dock.update(cx, |dock, cx| {

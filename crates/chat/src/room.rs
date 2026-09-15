@@ -504,6 +504,9 @@ impl Room {
         let nostr = NostrRegistry::global(cx);
         let owner = nostr.read(cx).current_user()?;
         let chat = crate::ChatRegistry::global(cx).read(cx);
+        if chat.room_blocked(self) {
+            return Some(cx.background_spawn(async { Err(anyhow::anyhow!("Unblock this user before sending messages")) }));
+        }
         if chat.has_left(self) {
             return Some(cx.background_spawn(async { Err(anyhow::anyhow!("Rejoin this group before sending messages")) }));
         }
