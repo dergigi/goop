@@ -1,9 +1,6 @@
 /// Client name (Application name)
 pub const CLIENT_NAME: &str = "Goop";
 
-/// Upstream Coop public key
-pub const COOP_PUBKEY: &str = "npub1j3rz3ndl902lya6ywxvy5c983lxs8mpukqnx4pa4lt5wrykwl5ys7wpw3x";
-
 /// App ID
 pub const APP_ID: &str = "com.dergigi.goop";
 
