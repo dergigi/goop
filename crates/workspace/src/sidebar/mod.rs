@@ -20,7 +20,7 @@ pub(crate) mod entry;
 
 #[derive(gpui::Action, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = sidebar, no_json)]
-enum ChatAction { MarkAllRead, SetRead(u64, bool), Pin(u64, bool), Archive(u64, bool), Leave(u64, bool) }
+pub(crate) enum ChatAction { MarkAllRead, SetRead(u64, bool), Pin(u64, bool), Archive(u64, bool), Leave(u64, bool) }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DateGroup { Archive, Pinned, Today, Yesterday, LastWeek, Older }
@@ -92,7 +92,7 @@ impl Sidebar {
         self.filter.read(cx) == kind
     }
 
-    fn chat_action(&mut self, action: &ChatAction, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn chat_action(&mut self, action: &ChatAction, window: &mut Window, cx: &mut Context<Self>) {
         let action = action.clone();
         let filter = self.filter.read(cx).clone();
         let apply = move |window: &mut Window, cx: &mut App| {
@@ -138,14 +138,6 @@ impl Sidebar {
             )
             .child(
                 h_flex().gap_1().flex_shrink_0()
-                    .child(
-                        Button::new("sidebar-relays")
-                            .icon(IconName::Relay).small().ghost().tooltip("Relays")
-                            .dropdown_menu_with_anchor(gpui::Anchor::BottomRight, |menu, _, _| {
-                                menu.menu("Messaging Relays", Box::new(crate::Command::ShowMessaging))
-                                    .menu("Gossip Relays", Box::new(crate::Command::ShowRelayList))
-                            }),
-                    )
                     .child(
                         Button::new("sidebar-archive")
                             .icon(IconName::Archive).small().ghost().tooltip("Archived chats")

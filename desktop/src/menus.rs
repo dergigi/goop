@@ -1,7 +1,7 @@
 use gpui::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, actions};
 use ui::dock::{CloseAllPanels, ClosePanel, NextPanel, PreviousPanel, ReopenClosedPanel};
 use ui::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
-use workspace::Command;
+use workspace::{Command, FindInChat, ToggleChatPin, ToggleChatArchive, MarkChatRead, MarkChatUnread, LeaveChat};
 
 actions!(goop, [Hide, HideOthers, ShowAll, BringToFront]);
 
@@ -37,9 +37,6 @@ fn application_menus() -> Vec<Menu> {
             MenuItem::action("Quit Goop", crate::Quit),
         ]),
         Menu::new("File").items([
-            MenuItem::action("New Chat…", Command::NewConversation),
-            MenuItem::action("New Group…", Command::NewGroup),
-            MenuItem::separator(),
             MenuItem::action("Close Tab", ClosePanel),
             MenuItem::action("Close All Tabs", CloseAllPanels),
             MenuItem::action("Reopen Closed Tab", ReopenClosedPanel),
@@ -53,7 +50,6 @@ fn application_menus() -> Vec<Menu> {
             MenuItem::os_action("Paste", Paste, OsAction::Paste),
             MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
             MenuItem::separator(),
-            MenuItem::action("Find in Current Chat…", Command::Search),
             MenuItem::action("Search Conversations…", Command::SearchConversations),
             MenuItem::action("Search Profiles…", Command::SearchProfiles),
         ]),
@@ -63,13 +59,33 @@ fn application_menus() -> Vec<Menu> {
             MenuItem::action("Requests", Command::ShowRequests),
             MenuItem::action("Focus Message Box", Command::FocusComposer),
             MenuItem::separator(),
-            MenuItem::action("Profile", Command::ShowProfile),
+            MenuItem::action("Reload", Command::RefreshMessagingRelays),
+            MenuItem::action("Toggle Full Screen", Command::ToggleFullScreen),
+        ]),
+        Menu::new("Chats").items([
+            MenuItem::action("New Chat…", Command::NewConversation),
+            MenuItem::action("New Group…", Command::NewGroup),
+            MenuItem::action("Note to Self", Command::NoteToSelf),
+            MenuItem::separator(),
+            MenuItem::action("Find in Chat…", FindInChat),
+            MenuItem::separator(),
+            MenuItem::action("Pin / Unpin Chat", ToggleChatPin),
+            MenuItem::action("Archive / Unarchive Chat", ToggleChatArchive),
+            MenuItem::action("Mark as Read", MarkChatRead),
+            MenuItem::action("Mark as Unread", MarkChatUnread),
+            MenuItem::separator(),
+            MenuItem::action("Leave Group Locally…", LeaveChat),
+        ]),
+        Menu::new("Account").items([
+            MenuItem::action("Your Profile", Command::ShowProfile),
             MenuItem::action("Contacts", Command::ShowContactList),
+            MenuItem::action("Blocked Users", Command::ShowBlockedUsers),
+            MenuItem::separator(),
+            MenuItem::action("Connection Status", Command::ShowConnectionStatus),
             MenuItem::action("Messaging Relays", Command::ShowMessaging),
             MenuItem::action("Gossip Relays", Command::ShowRelayList),
             MenuItem::separator(),
-            MenuItem::action("Reload", Command::RefreshMessagingRelays),
-            MenuItem::action("Toggle Full Screen", Command::ToggleFullScreen),
+            MenuItem::action("Log Out…", Command::Logout),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Command::MinimizeWindow),

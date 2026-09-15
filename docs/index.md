@@ -113,6 +113,7 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 - **Cmd/Ctrl+R** — reload messaging and rescan history.
 - **Cmd/Ctrl+Shift+C** — open Contacts.
 - **Cmd/Ctrl+Shift+P** — open your Profile.
+- **Cmd/Ctrl+Shift+D** — open Connection Status.
 - **Cmd/Ctrl+Shift+M** — open Messaging Relays.
 - **Cmd/Ctrl+Shift+G** — open Gossip Relays.
 - **Cmd/Ctrl+,** — open settings.
@@ -120,13 +121,21 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 
 Quick search filters an in-memory snapshot of loaded items without querying relays as you type. Opening a profile can refresh its details. The sidebar buttons and account menu also expose the quick-search shortcuts.
 
+## App menus
+
+- **Chats:** start chats and groups, open Note to Self, find messages, pin or archive the active chat, mark it read or unread, and leave a group locally. Chat-specific actions are available when a chat is open; Leave requires a group and confirmation.
+- **Account:** your profile, contacts, blocked users, connection status, relay configuration, and Log Out.
+- **View:** sidebar visibility, Inbox, Requests, message-box focus, reload, and full screen.
+
+The top-right controls are **Relays**, **Connection Status** (pulse icon), and **Message History**. Relays has moved out of the sidebar footer.
+
 ## Connection status and recovery
 
-Click the connection summary beside your profile in the title bar, or choose **Connection status** from the account menu. The sidepane refreshes automatically and separates signer connection, messaging relays, history/decryption, and outgoing messages.
+Click the connection-status icon immediately left of Message History in the top-right corner, press **Cmd/Ctrl+Shift+D**, or choose **Connection status** from the account menu. Hover over the icon for a live summary. Relay cards show connection and authentication badges, with explanatory text for errors. The sidepane refreshes automatically and separates signer connection, messaging relays, history/decryption, and outgoing messages.
 
 - **Signer unavailable:** open your signer, check pending requests, and use **Reconnect signer** if needed.
 - **Relay disconnected or authentication failed:** check the named relay and signer. **Reconnect messaging relays** retries connections; **Manage messaging relays** opens your relay configuration.
-- **History incomplete:** **Resume history** continues from saved checkpoints. The existing Message History menu still offers a full rescan and a broader relay search.
+- **History incomplete:** **Resume history** continues from saved checkpoints. The compact Message History menu offers a full rescan and a broader relay search; both are also available in Connection Status.
 - **Decryption failures:** **Retry decryption** retries failed messages. Previously declined requests resume only when you explicitly retry.
 - **Outgoing messages:** delayed sends retry automatically; paused sends require **Retry pending sends**. Counts include your own encrypted copy. A relay accepting a message is not a read receipt.
 

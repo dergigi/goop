@@ -39,6 +39,10 @@ mod dialogs;
 mod panels;
 mod sidebar;
 
+gpui::actions!(workspace, [FindInChat, ToggleChatPin, ToggleChatArchive, MarkChatRead, MarkChatUnread, LeaveChat]);
+
+enum ChatMenuOperation { TogglePin, ToggleArchive, MarkRead, MarkUnread, Leave }
+
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
     let modifier = if cx.theme().platform.is_mac() {
         "cmd"
@@ -52,7 +56,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
             Some(dialogs::shortcuts::HELP_CONTEXT),
         ),
         KeyBinding::new(&format!("{modifier}-,"), Command::ShowSettings, None),
-        KeyBinding::new(&format!("{modifier}-f"), Command::Search, None),
+        KeyBinding::new(&format!("{modifier}-f"), FindInChat, None),
         KeyBinding::new(&format!("{modifier}-b"), Command::ToggleSidebar, None),
         KeyBinding::new(&format!("{modifier}-k"), Command::SearchConversations, None),
         KeyBinding::new(&format!("{modifier}-p"), Command::SearchProfiles, None),
@@ -60,6 +64,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         KeyBinding::new(&format!("{modifier}-shift-c"), Command::ShowContactList, None),
         KeyBinding::new(&format!("{modifier}-shift-m"), Command::ShowMessaging, None),
         KeyBinding::new(&format!("{modifier}-shift-g"), Command::ShowRelayList, None),
+        KeyBinding::new(&format!("{modifier}-shift-d"), Command::ShowConnectionStatus, None),
         KeyBinding::new(
             &format!("{modifier}-r"),
             Command::RefreshMessagingRelays,
@@ -776,18 +781,32 @@ impl Workspace {
                         }),
                 )
             })
-            .child(
-                Button::new("connection-status")
-                    .label(self.connection_status.read(cx).summary(cx))
-                    .tooltip("Connection status and recovery")
-                    .small().ghost()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let panel = this.connection_status.clone();
-                        this.dock.update(cx, |dock, cx| {
-                            dock.add_panel(Arc::new(panel), DockPlacement::Right, window, cx);
-                        });
-                    })),
-            )
+    }
+
+    fn active_chat_panel(&self, window: &Window, cx: &App) -> Option<Entity<chat_ui::ChatPanel>> {
+        let mut panels = self.dock.read(cx).active_panels(cx);
+        if let Some(tab) = self.dock.read(cx).active_tab_group(window, cx)
+            && let Some(panel) = tab.read(cx).active_panel(cx) {
+            panels.insert(0, panel);
+        }
+        panels.into_iter().find_map(|panel| panel.view().downcast::<chat_ui::ChatPanel>().ok())
+    }
+
+    fn chat_menu_action(&mut self, action: ChatMenuOperation, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.active_chat_panel(window, cx) else { return; };
+        let Some(room) = panel.read(cx).room() else { return; };
+        let room = room.read(cx);
+        let chat = ChatRegistry::global(cx);
+        let chat = chat.read(cx);
+        let action = match action {
+            ChatMenuOperation::TogglePin => sidebar::ChatAction::Pin(room.id, !chat.is_pinned(room)),
+            ChatMenuOperation::ToggleArchive => sidebar::ChatAction::Archive(room.id, !chat.is_archived(room)),
+            ChatMenuOperation::MarkRead => sidebar::ChatAction::SetRead(room.id, true),
+            ChatMenuOperation::MarkUnread => sidebar::ChatAction::SetRead(room.id, false),
+            ChatMenuOperation::Leave if room.is_group() => sidebar::ChatAction::Leave(room.id, true),
+            _ => return,
+        };
+        self.sidebar.update(cx, |sidebar, cx| sidebar.chat_action(&action, window, cx));
     }
 
     fn titlebar_right(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -795,13 +814,11 @@ impl Workspace {
         let nip4e_enabled = AppSettings::get_nip4e(cx);
         let nostr = NostrRegistry::global(cx);
 
-        let Some(public_key) = nostr.read(cx).current_user() else {
-            return div();
-        };
-
+        let public_key = nostr.read(cx).current_user();
         let persons = PersonRegistry::global(cx);
-        let profile = persons.read(cx).get(&public_key, cx);
-        let announcement = profile.announcement();
+        let announcement = public_key.and_then(|key| persons.read(cx).get(&key, cx).announcement());
+        let shortcut = if cx.theme().platform.is_mac() { "⌘⇧D" } else { "Ctrl+Shift+D" };
+        let status = self.connection_status.read(cx).summary(cx);
 
         // Update status is only shown when auto-update is available. On
         // managed distribution channels (Flatpak/Snap) no updater exists, so
@@ -817,7 +834,7 @@ impl Workspace {
             .when_some(updater_status, |this, status| {
                 this.child(div().text_xs().italic().child(status))
             })
-            .when(nip4e_enabled, |this| {
+            .when(nip4e_enabled && public_key.is_some(), |this| {
                 this.child(
                     Button::new("key")
                         .icon(IconName::UserKey)
@@ -882,87 +899,52 @@ impl Workspace {
                 )
             })
             .child(
+                Button::new("titlebar-relays")
+                    .icon(IconName::Relay).small().ghost().tooltip("Relays")
+                    .dropdown_menu(|menu, _, _| {
+                        menu.menu("Messaging Relays", Box::new(Command::ShowMessaging))
+                            .menu("Gossip Relays", Box::new(Command::ShowRelayList))
+                    }),
+            )
+            .child(
+                Button::new("connection-status")
+                    .icon(IconName::Activity)
+                    .tooltip(format!("Connection status ({shortcut})\n{status}"))
+                    .small().ghost()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.on_command(&Command::ShowConnectionStatus, window, cx);
+                    })),
+            )
+            .when(public_key.is_some(), |bar| bar.child(
                 Button::new("inbox")
                     .icon(IconName::Inbox)
+                    .tooltip("Message history")
                     .small()
                     .ghost()
                     .dropdown_menu(move |this, _window, cx| {
-                        let registry = chat.read(cx);
-                        let mut menu = this
-                            .min_w(px(320.))
-                            .label("Message History")
-                            .label(registry.history_summary(cx));
-                        for (url, progress) in registry.history_relays() {
-                            let url = SharedString::from(url.to_string());
-                            let status = if let Some(error) = &progress.error {
-                                format!("{} received · {error}", progress.received)
-                            } else {
-                                format!(
-                                    "{} received · {}",
-                                    progress.received,
-                                    if progress.done {
-                                        "History checked"
-                                    } else {
-                                        "Loading…"
-                                    }
-                                )
-                            };
-                            menu = menu.item(PopupMenuItem::element(move |_, cx| {
-                                v_flex()
-                                    .gap_1()
-                                    .px_1()
-                                    .text_xs()
-                                    .text_color(cx.theme().text_muted)
-                                    .child(url.clone())
-                                    .child(status.clone())
-                            }));
-                        }
-
-                        for (reason, count) in registry.decryption_failures(cx) {
-                            menu = menu.item(PopupMenuItem::element(move |_, cx| {
-                                div()
-                                    .px_1()
-                                    .text_xs()
-                                    .text_color(cx.theme().text_muted)
-                                    .child(format!("{count} failed: {reason}"))
-                            }));
-                        }
-
-                        // Footer
-                        menu.separator()
-                            .menu("Rescan all history", Box::new(Command::LoadOlderHistory))
-                            .menu(
-                                "Retry failed decryptions",
-                                Box::new(Command::RetryDecryption),
-                            )
-                            .menu(
-                                "Broaden message scan to other relays",
-                                Box::new(Command::SearchOtherRelays),
-                            )
+                        let chat = chat.read(cx);
+                        let summary = if chat.history_running() { "Loading message history…" }
+                            else if chat.history_error().is_some() || chat.history_relays().values().any(|relay| relay.error.is_some()) { "History incomplete" }
+                            else if chat.pending_messages() > 0 { "Decrypting messages…" }
+                            else { "Search for older messages" };
+                        this.min_w(px(240.))
+                            .label("Message history")
+                            .label(summary)
                             .separator()
-                            .menu_with_icon(
-                                "Manage gossip relays",
-                                IconName::Relay,
-                                Box::new(Command::ShowRelayList),
-                            )
-                            .menu_with_icon(
-                                "Manage messaging relays",
-                                IconName::Relay,
-                                Box::new(Command::ShowMessaging),
-                            )
+                            .menu_with_icon("Rescan all history", IconName::History, Box::new(Command::LoadOlderHistory))
+                            .menu_with_icon("Search other relays", IconName::Search, Box::new(Command::SearchOtherRelays))
                             .separator()
-                            .menu_with_icon(
-                                "Reload",
-                                IconName::Refresh,
-                                Box::new(Command::RefreshMessagingRelays),
-                            )
+                            .menu_with_icon("Connection status", IconName::Activity, Box::new(Command::ShowConnectionStatus))
                     }),
-            )
+            ))
     }
 }
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_room = self.active_chat_panel(window, cx).and_then(|panel| panel.read(cx).room());
+        let chat_actions_available = active_room.is_some() && !Root::read(window, cx).has_active_modals();
+        let group_active = active_room.is_some_and(|room| room.read(cx).is_group());
         let modal_layer = Root::render_modal_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
 
@@ -971,6 +953,17 @@ impl Render for Workspace {
             .key_context("Workspace")
             .on_modifiers_changed(|_, window, _| window.refresh())
             .on_action(cx.listener(Self::on_command))
+            .when(chat_actions_available, |view| view
+                .on_action(cx.listener(|this, _: &FindInChat, window, cx| {
+                    if let Some(panel) = this.active_chat_panel(window, cx) {
+                        panel.update(cx, |chat, cx| chat.focus_find(window, cx));
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &ToggleChatPin, window, cx| this.chat_menu_action(ChatMenuOperation::TogglePin, window, cx)))
+                .on_action(cx.listener(|this, _: &ToggleChatArchive, window, cx| this.chat_menu_action(ChatMenuOperation::ToggleArchive, window, cx)))
+                .on_action(cx.listener(|this, _: &MarkChatRead, window, cx| this.chat_menu_action(ChatMenuOperation::MarkRead, window, cx)))
+                .on_action(cx.listener(|this, _: &MarkChatUnread, window, cx| this.chat_menu_action(ChatMenuOperation::MarkUnread, window, cx)))
+                .when(group_active, |view| view.on_action(cx.listener(|this, _: &LeaveChat, window, cx| this.chat_menu_action(ChatMenuOperation::Leave, window, cx)))))
             .on_action(cx.listener(|this, _: &CloseAllPanels, window, cx| {
                 DockArea::close_all(&this.dock, window, cx)
             }))

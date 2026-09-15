@@ -117,6 +117,10 @@ pub struct ChatPanel {
 }
 
 impl ChatPanel {
+    pub fn room(&self) -> Option<Entity<Room>> {
+        self.room.upgrade()
+    }
+
     pub fn new(room: WeakEntity<Room>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Define attachments and replies_to entities
         let attachments = cx.new(|_| vec![]);

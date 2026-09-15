@@ -19,7 +19,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
                 ("New Group", Box::new(Command::NewGroup)),
                 ("Search conversations", Box::new(Command::SearchConversations)),
                 ("Search profiles", Box::new(Command::SearchProfiles)),
-                ("Find in current chat", Box::new(Command::Search)),
+                ("Find in current chat", Box::new(crate::FindInChat)),
                 ("Toggle sidebar", Box::new(Command::ToggleSidebar)),
                 ("Inbox", Box::new(Command::ShowInbox)),
                 ("Requests", Box::new(Command::ShowRequests)),
@@ -35,6 +35,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
             ("Profile and relays", vec![
                 ("Profile", Box::new(Command::ShowProfile)),
                 ("Contacts", Box::new(Command::ShowContactList)),
+                ("Connection status", Box::new(Command::ShowConnectionStatus)),
                 ("Messaging relays", Box::new(Command::ShowMessaging)),
                 ("Gossip relays", Box::new(Command::ShowRelayList)),
             ]),

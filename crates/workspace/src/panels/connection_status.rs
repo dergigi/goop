@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use chat::ChatRegistry;
 use futures::{FutureExt, StreamExt, stream::BoxStream};
+use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
@@ -15,7 +16,7 @@ use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::scroll::ScrollableElement;
-use ui::{Disableable, Sizable, WindowExtension, h_flex, v_flex};
+use ui::{Disableable, Icon, IconName, Sizable, WindowExtension, h_flex, v_flex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RelayState {
@@ -463,6 +464,11 @@ impl Render for ConnectionStatus {
             .map(|(heading, detail)| format!("{heading}\n{detail}"))
             .collect::<Vec<_>>()
             .join("\n\n");
+        let relay_urls: BTreeSet<String> = self.relays.as_ref().into_iter().flatten()
+            .map(|relay| relay.url.to_string()).collect();
+        let mut details = details.into_iter();
+        let signer_detail = details.next().map(|(_, text)| text).unwrap_or_default();
+        let details: Vec<_> = details.filter(|(heading, _)| !relay_urls.contains(heading)).collect();
         let signed_in = self.owner.is_some();
         let nostr = NostrRegistry::global(cx);
         let signer_needs_retry = nostr.read(cx).identity_loading()
@@ -485,12 +491,28 @@ impl Render for ConnectionStatus {
                     .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))
                 .child(Button::new("retry-status-signer").label("Reconnect signer").small().ghost().disabled(!signer_needs_retry)
                     .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx)))))
+            .child(v_flex().gap_2()
+                .child(h_flex().gap_2().child(Icon::new(IconName::UserKey).small()).child("Signer"))
+                .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(signer_detail)))
+            .when(signed_in && !relay_urls.is_empty(), |view| view.child(
+                v_flex().gap_2()
+                    .child(h_flex().gap_2().child(Icon::new(IconName::Relay).small()).child("Messaging relays"))
+                    .children(self.relays.as_ref().into_iter().flatten().map(|relay| relay_card(relay, chat.history_relays().get(&relay.url).map(|progress| {
+                        format!("{} messages received · {}", progress.received,
+                            if progress.error.is_some() { "Scan incomplete" } else if progress.done { "History checked" } else { "Loading history…" })
+                    }), cx)))
+            ))
             .children(details.into_iter().map(|(heading, detail)| v_flex().gap_1().child(heading)
                 .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(detail))))
             .child(h_flex().gap_2().flex_wrap()
                 .child(Button::new("manage-status-relays").label("Manage messaging relays").small().ghost()
                     .on_click(|_, window, cx| {
                         let panel = super::messaging_relays::init(window, cx);
+                        crate::Workspace::add_panel(panel, ui::dock::DockPlacement::Right, window, cx);
+                    }))
+                .child(Button::new("manage-status-gossip").label("Manage gossip relays").small().ghost()
+                    .on_click(|_, window, cx| {
+                        let panel = super::relay_list::init(window, cx);
                         crate::Workspace::add_panel(panel, ui::dock::DockPlacement::Right, window, cx);
                     }))
                 .child(Button::new("retry-status-relays").label("Reconnect messaging relays").small().ghost().disabled(!signed_in || !relays_found)
@@ -511,6 +533,10 @@ impl Render for ConnectionStatus {
             .child(h_flex().gap_2().flex_wrap()
                 .child(Button::new("status-rescan").label("Resume history").small().ghost().disabled(!signed_in || history_running)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.resume_history(cx))))
+                .child(Button::new("status-full-rescan").label("Rescan all history").small().ghost().disabled(!signed_in || history_running)
+                    .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.load_older_history(cx))))
+                .child(Button::new("status-broaden").label("Search other relays").small().ghost().disabled(!signed_in || history_running)
+                    .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.search_other_relays(cx))))
                 .child(Button::new("status-decrypt").label("Retry decryption").small().ghost().disabled(!signed_in || !decrypt_failed)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_failed_messages(cx))))
                 .child(Button::new("status-send").label("Retry pending sends").small().ghost().disabled(!signed_in || !send_pending)
@@ -518,6 +544,41 @@ impl Render for ConnectionStatus {
             .child(gpui::div().text_xs().text_color(cx.theme().text_muted)
                 .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))
     }
+}
+
+fn relay_card(relay: &RelayState, history: Option<String>, cx: &App) -> impl IntoElement {
+    let (icon, label, color) = match relay.status {
+        Some(RelayStatus::Connected) => (IconName::CheckCircle, "Connected", cx.theme().text_accent),
+        Some(RelayStatus::Initialized | RelayStatus::Pending | RelayStatus::Connecting) =>
+            (IconName::Loader, "Connecting", cx.theme().text_warning),
+        Some(RelayStatus::Sleeping) => (IconName::Moon, "Sleeping", cx.theme().text_muted),
+        Some(RelayStatus::Banned) => (IconName::Block, "Disabled", cx.theme().text_danger),
+        Some(RelayStatus::Shutdown) => (IconName::CloseCircle, "Shut down", cx.theme().text_muted),
+        _ => (IconName::CloseCircle, "Disconnected", cx.theme().text_warning),
+    };
+    let auth = match relay.auth {
+        Some("Authenticated") => Some((IconName::Shield, "Authenticated", cx.theme().text_accent)),
+        Some("Authentication failed") => Some((IconName::Warning, "Auth failed", cx.theme().text_danger)),
+        Some("Waiting for signer authentication") => Some((IconName::UserKey, "Awaiting signer", cx.theme().text_warning)),
+        _ => None,
+    };
+    let badge = |icon: IconName, label: &'static str, color| h_flex()
+        .gap_1().px_2().py_1().rounded_full().text_xs().text_color(color)
+        .bg(cx.theme().surface_background)
+        .child(Icon::new(icon).xsmall()).child(label);
+    v_flex().w_full().min_w_0().flex_shrink_0().p_3().gap_2()
+        .rounded(cx.theme().radius).bg(cx.theme().elevated_surface_background)
+        .child(gpui::div().min_w_0().truncate().text_sm()
+            .child(relay.url.as_str().trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/').to_owned()))
+        .child(h_flex().gap_2().flex_wrap()
+            .child(badge(icon, label, color))
+            .when_some(auth, |row, (icon, label, color)| row.child(badge(icon, label, color))))
+        .when_some(history, |card, progress| card.child(
+            gpui::div().text_xs().text_color(cx.theme().text_muted).child(progress)))
+        .when_some(relay.closed.clone(), |card, reason| card.child(
+            h_flex().items_start().gap_2().text_sm().text_color(cx.theme().text_danger)
+                .child(Icon::new(IconName::Warning).small())
+                .child(gpui::div().min_w_0().child(reason))))
 }
 
 #[cfg(test)]
