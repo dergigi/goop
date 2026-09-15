@@ -453,7 +453,9 @@ impl Render for Screening {
                             )
                             .when_some(website, |row, url| row.child(
                                 Button::new("profile-website")
-                                    .icon(IconName::Link).label("Website").secondary().small().rounded()
+                                    .icon(IconName::Link)
+                                    .label(url.as_str().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_owned())
+                                    .secondary().small().rounded()
                                     .tooltip(url.to_string())
                                     .on_click(move |_, _, cx| cx.open_url(url.as_str())),
                             ))

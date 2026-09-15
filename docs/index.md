@@ -30,7 +30,7 @@ Open the account menu in the title bar and choose **Log out**, immediately after
 
 ## Profile links
 
-Profiles include a **njump.to** link and a **Website** link when the person has set a valid homepage. Hover over Website to see its destination.
+Profiles include a **njump.to** link and a homepage link labeled with its address (for example, **dergigi.com**) when the person has set a valid homepage. Hover over the address to see the full URL.
 
 ## Agent Guide
 

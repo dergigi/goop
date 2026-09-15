@@ -184,6 +184,11 @@ impl DeviceRegistry {
 
         self.tasks.push(cx.spawn_in(window, async move |this, cx| {
             while let Ok(event) = rx.recv_async().await {
+                // Relays may deliver old experiment events on other subscriptions.
+                // Do not activate key sharing unless the user enabled it.
+                if !this.read_with(cx, |_, cx| AppSettings::get_nip4e(cx))? {
+                    continue;
+                }
                 match event.kind {
                     Kind::Custom(10044) => {
                         this.update_in(cx, |this, _window, cx| {
@@ -606,6 +611,10 @@ impl DeviceRegistry {
 
     /// Handle encryption request
     fn ask_for_approval(&mut self, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        // A device waiting for a key cannot approve requests to share that key.
+        if !AppSettings::get_nip4e(cx) || self.signer.read(cx).is_none() {
+            return;
+        }
         // Ignore if there is already a pending request
         if self.pending_request {
             return;
