@@ -25,7 +25,7 @@ use ui::avatar::Avatar;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::input::{Input, InputEvent, InputState};
-use ui::menu::DropdownMenu;
+use ui::menu::{ContextMenuExt, DropdownMenu};
 use ui::notification::Notification;
 use ui::scroll::Scrollbar;
 use ui::{
@@ -819,6 +819,11 @@ impl ChatPanel {
                     window.push_notification(Notification::error("Failed to toggle backup"), cx);
                 }
             }
+            Command::ViewProfile(public_key) => {
+                ChatRegistry::global(cx).update(cx, |_, cx| cx.emit(chat::ChatEvent::OpenProfile(*public_key)));
+            }
+            Command::CopyMessage(id) => self.copy_message(id, cx),
+            Command::Reply(id) => self.reply_to(id, cx),
             Command::Copy(public_key) => {
                 self.copy_author(public_key, cx);
             }
@@ -1097,6 +1102,7 @@ impl ChatPanel {
         let id = message.id;
         let author = self.profile(&message.author, cx);
         let pk = author.public_key();
+        let focus_handle = self.focus_handle(cx);
 
         let replies = message.replies_to.as_slice();
         let has_replies = !replies.is_empty();
@@ -1125,13 +1131,7 @@ impl ChatPanel {
                             this.child(
                                 Avatar::new(author.avatar())
                                     .flex_shrink_0()
-                                    .relative()
-                                    .dropdown_menu(move |this, _window, _cx| {
-                                        this.menu("Public Key", Box::new(Command::Copy(pk)))
-                                            .menu("View Relays", Box::new(Command::Relays(pk)))
-                                            .separator()
-                                            .menu("View on njump.to", Box::new(Command::Njump(pk)))
-                                    }),
+                                    .relative(),
                             )
                         } else {
                             this.child(div().flex_shrink_0().w(px(32.)))
@@ -1190,6 +1190,20 @@ impl ChatPanel {
                 this.reply_to(&id, cx);
             }))
             .hover(|this| this.bg(cx.theme().surface_background))
+            .context_menu_with_id(format!("message-context-{id}"), move |menu, _, cx| {
+                menu.action_context(focus_handle.clone())
+                    .menu("Reply", Box::new(Command::Reply(id)))
+                    .menu("Copy message", Box::new(Command::CopyMessage(id)))
+                    .separator()
+                    .menu("View profile", Box::new(Command::ViewProfile(pk)))
+                    .menu("View relays", Box::new(Command::Relays(pk)))
+                    .menu("View on njump.to", Box::new(Command::Njump(pk)))
+                    .separator()
+                    .menu("Seen on", Box::new(Command::Trace(id)))
+                    .when(NostrRegistry::global(cx).read(cx).current_user() == Some(pk), |menu| {
+                        menu.menu("Rebroadcast", Box::new(Command::Rebroadcast(id)))
+                    })
+            })
             .into_any_element()
     }
 

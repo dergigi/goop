@@ -57,6 +57,8 @@ impl Global for GlobalChatRegistry {}
 pub enum ChatEvent {
     /// An event to open a room by its ID
     OpenRoom(u64),
+    /// Show a message author in the workspace profile sidepane.
+    OpenProfile(PublicKey),
     /// An event to close a room by its ID
     CloseRoom(u64),
     /// An event to notify UI about a new chat request

@@ -21,6 +21,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Replace the message-avatar left-click menu with a right-click message menu. View profile opens the author in the right sidepane; the menu also provides reply, copy, relay details, and rebroadcast for your own messages.
+
 - Show archived chats under a single Archive heading, without date or pinned sections.
 
 - Show report signing and delivery errors in the dialog, preserve inputs for retry, require relay acknowledgement before confirming submission, and disclose partial delivery. Unchanged retries reuse the same signed report.

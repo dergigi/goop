@@ -275,6 +275,13 @@ impl Workspace {
                             cx,
                         );
                     }
+                    ChatEvent::OpenProfile(public_key) => {
+                        let public_key = *public_key;
+                        // Let the context menu finish dismissing before moving focus.
+                        cx.defer_in(window, move |this, window, cx| {
+                            this.on_command(&Command::OpenProfile(public_key), window, cx);
+                        });
+                    }
                     ChatEvent::OpenRoom(id) => {
                         if let Some(room) = chat.read(cx).room(id, cx) {
                             this.dock.update(cx, |this, cx| {
