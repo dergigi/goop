@@ -1,31 +1,24 @@
 use std::collections::HashMap;
 
 use anyhow::{Error, anyhow};
-#[cfg(not(target_arch = "wasm32"))]
-use browser_signer_proxy::prelude::*;
 use common::config_dir;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, Task, Window};
 use gpui_tokio::Tokio;
 use instant::Duration;
 use nostr_connect::prelude::*;
 use nostr_gossip_memory::prelude::*;
-#[cfg(not(target_arch = "wasm32"))]
 use nostr_lmdb::prelude::*;
-#[cfg(target_arch = "wasm32")]
-use nostr_memory::prelude::*;
 use nostr_sdk::prelude::*;
 
 mod blossom;
 pub mod encrypted_file;
 mod constants;
 mod nip05;
-mod nip4e;
 mod profiles;
 mod signer;
 
 pub use blossom::*;
 pub use constants::*;
-pub use nip4e::*;
 pub use nip05::*;
 pub use profiles::subscribe_profiles;
 pub use signer::{GoopAuthUrlHandler, SignerFailure, UniversalSigner};
@@ -34,13 +27,11 @@ pub fn init(window: &mut Window, cx: &mut App) {
     // rustls uses the `aws_lc_rs` provider by default
     // This only errors if the default provider has already
     // been installed. We can ignore this `Result`.
-    #[cfg(not(target_arch = "wasm32"))]
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .ok();
 
     // Initialize the tokio runtime
-    #[cfg(not(target_arch = "wasm32"))]
     gpui_tokio::init(cx);
 
     NostrRegistry::set_global(cx.new(|cx| NostrRegistry::new(window, cx)), cx);
@@ -124,15 +115,11 @@ impl NostrRegistry {
         let authenticator = SignerAuthenticator::new(signer.clone());
 
         // Construct the nostr lmdb instance
-        #[cfg(not(target_arch = "wasm32"))]
         let database = cx.foreground_executor().block_on(async move {
             NostrLmdb::open(config_dir().join("nostr"))
                 .await
                 .expect("Failed to initialize database")
         });
-
-        #[cfg(target_arch = "wasm32")]
-        let database = MemoryDatabase::unbounded();
 
         // Construct the nostr client
         let client = ClientBuilder::default()
@@ -150,11 +137,7 @@ impl NostrRegistry {
         cx.defer_in(window, |this, _window, cx| {
             this.connect_bootstrap_relays(cx);
 
-            if cfg!(target_arch = "wasm32") {
-                this.finish_identity_loading(cx);
-            } else {
-                this.get_user_credential(cx);
-            }
+            this.get_user_credential(cx);
         });
 
         Self {
@@ -448,9 +431,14 @@ impl NostrRegistry {
                                 cx.notify();
                             })?;
                         } else if content == "proxy" {
-                            #[cfg(not(target_arch = "wasm32"))]
+                            // Preserve the old credential and account data until the
+                            // user explicitly connects a replacement signer.
                             this.update(cx, |this, cx| {
-                                this.connect_proxy(cx);
+                                this.remembered_user = None;
+                                this.identity_loading = false;
+                                this.connection_error = Some("Browser-extension login has been removed. Connect your signer using a bunker:// URL.".into());
+                                cx.emit(StateEvent::NoSigner);
+                                cx.notify();
                             })?;
                         } else {
                             return Err(anyhow!("Unrecognized saved identity format"));
@@ -504,83 +492,6 @@ impl NostrRegistry {
             }
             Ok(keys)
         })
-    }
-
-    /// Start the browser proxy
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn connect_proxy(&mut self, cx: &mut Context<Self>) {
-        let proxy = BrowserSignerProxy::new(BrowserSignerProxyOptions::default());
-        let (tx, rx) = flume::bounded::<String>(1);
-
-        self.tasks.push(Tokio::spawn_result(cx, {
-            let proxy = proxy.clone();
-            async move {
-                // Start the proxy and get the web url
-                proxy.start().await?;
-                // Notify GPUI
-                let url = proxy.url();
-                tx.send(url).ok();
-                Ok(())
-            }
-        }));
-
-        self.tasks.push(Tokio::spawn_result(cx, {
-            let proxy = proxy.clone();
-            async move {
-                loop {
-                    if proxy.is_session_active() {
-                        break;
-                    }
-                    smol::Timer::after(Duration::from_secs(1)).await;
-                }
-                Ok(())
-            }
-        }));
-
-        self.tasks.push(cx.spawn({
-            let proxy = proxy.clone();
-            async move |this, cx| {
-                while let Ok(url) = rx.recv_async().await {
-                    this.update(cx, |this, cx| {
-                        let save = cx.write_credentials(USER_KEYRING, "proxy", b"proxy");
-                        cx.background_spawn(async move { save.await.ok() }).detach();
-                        cx.open_url(&url);
-                        this.set_signer(proxy.clone(), cx);
-                    })?;
-                }
-                Ok(())
-            }
-        }));
-
-        // Monitor the session, if the browser disconnects, notify user to reconnect
-        self.tasks.push(cx.spawn({
-            let proxy = proxy.clone();
-            let executor = cx.background_executor().clone();
-            async move |this, cx| {
-                // Wait for the signer to be confirmed (timeout is 30s)
-                executor.timer(Duration::from_secs(30)).await;
-
-                loop {
-                    executor.timer(Duration::from_secs(5)).await;
-                    if !proxy.is_session_active() {
-                        _ = this.update(cx, |this, cx| {
-                            // Only notify if this proxy is still the active signer
-                            if this.current_user.is_some() {
-                                this.signer.swap_inner(Keys::generate());
-                                this.current_user = None;
-                                this.media_servers.clear();
-                                this.media_servers_task = None;
-                                cx.emit(StateEvent::NoSigner);
-                                cx.notify();
-                            }
-                        });
-                        break;
-                    }
-                }
-
-                Ok(())
-            }
-        }));
     }
 
     /// Get the public key of a NIP-05 address

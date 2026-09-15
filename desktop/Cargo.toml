@@ -36,7 +36,6 @@ ui = { path = "../crates/ui" }
 theme = { path = "../crates/theme" }
 common = { path = "../crates/common" }
 state = { path = "../crates/state" }
-device = { path = "../crates/device" }
 chat = { path = "../crates/chat" }
 settings = { path = "../crates/settings" }
 auto_update = { path = "../crates/auto_update" }

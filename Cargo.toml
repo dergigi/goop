@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "desktop", "web"]
+members = ["crates/*", "desktop"]
 default-members = ["desktop"]
 
 [workspace.package]
@@ -29,7 +29,7 @@ nostr = { git = "https://github.com/rust-nostr/nostr", features = [ "nip59", "ni
 
 # Others
 anyhow = "1.0.44"
-chrono = { version = "0.4.38", features = ["wasmbind"] }
+chrono = "0.4.38"
 futures = "0.3"
 itertools = "0.13.0"
 log = "0.4"

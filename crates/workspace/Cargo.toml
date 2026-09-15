@@ -10,7 +10,6 @@ ui = { path = "../ui" }
 theme = { path = "../theme" }
 common = { path = "../common" }
 state = { path = "../state" }
-device = { path = "../device" }
 chat = { path = "../chat" }
 chat_ui = { path = "../chat_ui" }
 settings = { path = "../settings" }
@@ -21,7 +20,6 @@ gpui.workspace = true
 nostr-sdk.workspace = true
 instant.workspace = true
 nostr-connect.workspace = true
-browser-signer-proxy = { path = "../browser-signer-proxy" }
 
 anyhow.workspace = true
 chrono.workspace = true

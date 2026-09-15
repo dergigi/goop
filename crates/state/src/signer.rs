@@ -45,16 +45,6 @@ impl SignerFailure {
                     _ => {}
                 }
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(error) = error.downcast_ref::<browser_signer_proxy::Error>() {
-                use browser_signer_proxy::ErrorKind;
-                match error.kind() {
-                    ErrorKind::Rejected => return Self::refusal(&error.to_string()),
-                    ErrorKind::Timeout => return Self::Timeout,
-                    ErrorKind::State => return Self::Disconnected,
-                    _ => {}
-                }
-            }
             if let Some(error) = error.downcast_ref::<nostr_sdk::error::Error>() {
                 use nostr_sdk::error::ErrorKind;
                 match error.kind() {

@@ -7,6 +7,13 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- Remove experimental decoupled encryption (NIP-4e), its settings, per-chat signer selection, key announcements, and device key-sharing prompts. New messages use standard NIP-17 through the account signer. Existing keys and message data are preserved; queued experimental messages require sending a new NIP-17 message instead of retrying or rebroadcasting old wraps.
+- Remove the inherited web/WASM app, frontend tooling, and web-only workspace dependencies. Goop is a native desktop application.
+- Remove experimental browser-extension login and its local HTTP bridge. Existing browser logins are directed to signer setup; pasted and camera-scanned NIP-46 bunker connections remain.
+- Remove the unused upstream public-key constant.
+
 ## [2.7.1] - 2026-09-15
 
 ### Changed

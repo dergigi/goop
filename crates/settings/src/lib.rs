@@ -39,46 +39,20 @@ setting_accessors! {
     pub render_markdown: bool,
     pub screening: bool,
     pub auto_block_reports: bool,
-    pub nip4e: bool,
     pub trusted_relays: Vec<String>,
     pub file_server: Url,
-}
-
-/// Signer kind
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-pub enum SignerKind {
-    Auto,
-    Encryption,
-    #[default]
-    User,
-}
-
-impl SignerKind {
-    pub fn auto(&self) -> bool {
-        matches!(self, SignerKind::Auto)
-    }
-
-    pub fn user(&self) -> bool {
-        matches!(self, SignerKind::User)
-    }
-
-    pub fn encryption(&self) -> bool {
-        matches!(self, SignerKind::Encryption)
-    }
 }
 
 /// Room configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RoomConfig {
     backup: bool,
-    signer_kind: SignerKind,
 }
 
 impl RoomConfig {
     pub fn new() -> Self {
         Self {
             backup: true,
-            signer_kind: SignerKind::default(),
         }
     }
 
@@ -92,15 +66,6 @@ impl RoomConfig {
         self.backup = !self.backup;
     }
 
-    /// Get signer kind config
-    pub fn signer_kind(&self) -> &SignerKind {
-        &self.signer_kind
-    }
-
-    /// Set signer kind config
-    pub fn set_signer_kind(&mut self, kind: &SignerKind) {
-        self.signer_kind = kind.to_owned();
-    }
 }
 
 /// Settings
@@ -124,9 +89,6 @@ pub struct Settings {
     #[serde(default = "default_auto_block_reports")]
     pub auto_block_reports: bool,
 
-    /// Enable decoupling encryption key
-    pub nip4e: bool,
-
     /// Trusted relays; Goop will automatically authenticate with these relays
     pub trusted_relays: Vec<String>,
 
@@ -148,7 +110,6 @@ impl Default for Settings {
             render_markdown: default_render_markdown(),
             screening: true,
             auto_block_reports: default_auto_block_reports(),
-            nip4e: false,
             trusted_relays: vec![],
             file_server: Url::parse("https://blossom.band/").unwrap(),
         }
@@ -262,9 +223,6 @@ impl AppSettings {
     }
 
     /// Check if decoupling encryption key is enabled
-    pub fn is_nip4e_enabled(&self, cx: &App) -> bool {
-        self.inner.read(cx).nip4e
-    }
 
     /// Check if the given relay is already authenticated
     pub fn trusted_relay(&self, url: &RelayUrl, cx: &App) -> bool {
@@ -294,6 +252,21 @@ impl AppSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_experiments_do_not_change_remaining_preferences() {
+        let mut saved = serde_json::to_value(Settings::default()).unwrap();
+        saved["nip4e"] = true.into();
+        saved["hide_avatar"] = true.into();
+        let loaded: Settings = serde_json::from_value(saved).unwrap();
+        assert!(loaded.hide_avatar);
+        assert!(serde_json::to_value(loaded).unwrap().get("nip4e").is_none());
+        for kind in ["Auto", "Encryption", "User"] {
+            let config: RoomConfig = serde_json::from_value(serde_json::json!({"backup": false, "signer_kind": kind})).unwrap();
+            assert!(!config.backup());
+            assert_eq!(serde_json::to_value(config).unwrap(), serde_json::json!({"backup": false}));
+        }
+    }
 
     #[test]
     fn auto_block_defaults_on_for_existing_settings_and_preserves_opt_out() {

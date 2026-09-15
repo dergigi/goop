@@ -7,7 +7,7 @@ use gpui::{App, AppContext, Context, EventEmitter, SharedString, Task};
 use instant::Duration;
 use nostr_sdk::prelude::*;
 use person::{Person, PersonRegistry};
-use settings::{RoomConfig, SignerKind};
+use settings::RoomConfig;
 use state::{NostrRegistry, TIMEOUT};
 
 use crate::NewMessage;
@@ -260,12 +260,6 @@ impl Room {
         cx.notify();
     }
 
-    /// Updates the signer kind config for the room
-    pub fn set_signer_kind(&mut self, kind: &SignerKind, cx: &mut Context<Self>) {
-        self.config.set_signer_kind(kind);
-        cx.notify();
-    }
-
     /// Updates the backup config for the room
     pub fn set_backup(&mut self, cx: &mut Context<Self>) {
         self.config.toggle_backup();
@@ -384,13 +378,8 @@ impl Room {
                             .kind(Kind::InboxRelays)
                             .limit(1);
 
-                        let announcement = Filter::new()
-                            .author(public_key)
-                            .kind(Kind::Custom(10044))
-                            .limit(1);
-
                         client
-                            .subscribe(vec![inbox, announcement])
+                            .subscribe(inbox)
                             .close_on(opts)
                             .await
                     }
@@ -511,7 +500,6 @@ impl Room {
             return Some(cx.background_spawn(async { Err(anyhow::anyhow!("Rejoin this group before sending messages")) }));
         }
         let queue = chat.outgoing_queue()?;
-        let persons = PersonRegistry::global(cx);
         let destinations = self
             .members
             .iter()
@@ -519,17 +507,14 @@ impl Room {
             .filter(|key| *key != owner)
             .chain(std::iter::once(owner))
             .map(|key| {
-                let person = persons.read(cx).get(&key, cx);
                 crate::outgoing::Destination::new(
                     key,
-                    person.announcement().map(|a| a.public_key()),
                     key == owner,
                 )
             })
             .collect();
-        let kind = self.config.signer_kind().clone();
         Some(cx.background_spawn(async move {
-            let message = crate::outgoing::OutgoingMessage::new(owner, rumor, kind, destinations)?;
+            let message = crate::outgoing::OutgoingMessage::new(owner, rumor, destinations)?;
             queue.enqueue(message).await
         }))
     }
@@ -582,14 +567,13 @@ mod delivery_tests {
             .unwrap();
         // No UI listener or post-send registration: the relay responds immediately.
         let mut destination =
-            crate::outgoing::Destination::new(recipient.public_key(), None, false);
+            crate::outgoing::Destination::new(recipient.public_key(), false);
         destination.wrap = Some(event.clone());
         crate::outgoing::publish(&client, &mut destination).await;
         let job = crate::outgoing::OutgoingMessage::new(
             sender.public_key(),
             EventBuilder::new(Kind::PrivateDirectMessage, "test")
                 .finalize_unsigned(sender.public_key()),
-            settings::SignerKind::User,
             vec![destination],
         )
         .unwrap();

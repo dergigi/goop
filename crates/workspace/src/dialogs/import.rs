@@ -10,7 +10,7 @@ use state::{GoopAuthUrlHandler, NostrRegistry, USER_KEYRING};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
-use ui::{Disableable, StyledExt, divider, v_flex};
+use ui::{Disableable, StyledExt, v_flex};
 
 #[derive(Debug)]
 pub struct ImportIdentity {
@@ -127,14 +127,6 @@ impl ImportIdentity {
         }));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn proxy(&mut self, cx: &mut Context<Self>) {
-        let nostr = NostrRegistry::global(cx);
-        nostr.update(cx, |this, cx| {
-            this.connect_proxy(cx);
-        });
-    }
-
     fn set_loading(&mut self, status: bool, cx: &mut Context<Self>) {
         self.loading = status;
         cx.notify();
@@ -172,8 +164,7 @@ impl Render for ImportIdentity {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if let Some(scanner) = &self.scanner { return scanner.clone().into_any_element(); }
-        const BUNKER_WARN: &str = "Nostr Connect will usually take more time to get all your messages. Please keep your session open until you see all your messages.";
-        let is_wasm = cfg!(target_arch = "wasm32");
+        const BUNKER_WARN: &str = "Keep Goop and your signer connected while message history loads.";
         let bunker_warning = self.key_input.read(cx).value().starts_with("bunker://");
 
         v_flex()
@@ -219,19 +210,6 @@ impl Render for ImportIdentity {
                 let view = view.child(Button::new("scan-bunker-qr").icon(ui::IconName::Scan).label("Scan QR code")
                     .ghost_alt().disabled(self.loading).on_click(cx.listener(|this,_,window,cx| this.scan(window,cx))));
                 view
-            })
-            .child(divider(cx))
-            .when(!is_wasm, |this| {
-                this.child(
-                    Button::new("proxy")
-                        .label("Connect via Web Extension (Experimental)")
-                        .ghost_alt()
-                        .loading(self.loading)
-                        .disabled(self.loading)
-                        .on_click(cx.listener(move |this, _ev, _window, cx| {
-                            this.proxy(cx);
-                        })),
-                )
             })
             .when_some(self.error.read(cx).as_ref(), |this, error| {
                 this.child(

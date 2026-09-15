@@ -17,9 +17,6 @@ pub const IMAGE_CACHE_SIZE: usize = 20;
 /// Default delay for searching
 pub const FIND_DELAY: u64 = 600;
 
-/// Default subscription id for device gift wrap events
-pub const DEVICE_GIFTWRAP: &str = "device-gift-wraps";
-
 /// Default subscription id for user gift wrap events
 pub const USER_GIFTWRAP: &str = "user-gift-wraps";
 

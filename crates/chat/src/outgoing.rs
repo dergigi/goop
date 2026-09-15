@@ -10,8 +10,7 @@ use anyhow::{Result, bail};
 use futures::{FutureExt, lock::Mutex};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
-use settings::SignerKind;
-use state::{Announcement, SignerFailure, UniversalSigner};
+use state::{SignerFailure, UniversalSigner};
 
 use super::{SendReport, Signal};
 use common::EventExt;
@@ -21,7 +20,6 @@ const STORE_TAG: &str = "goop-outgoing-v1";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Destination {
     pub receiver: PublicKey,
-    pub announcement: Option<PublicKey>,
     pub self_copy: bool,
     pub wrap: Option<Event>,
     pub accepted: BTreeSet<RelayUrl>,
@@ -30,10 +28,9 @@ pub(super) struct Destination {
 }
 
 impl Destination {
-    pub fn new(receiver: PublicKey, announcement: Option<PublicKey>, self_copy: bool) -> Self {
+    pub fn new(receiver: PublicKey, self_copy: bool) -> Self {
         Self {
             receiver,
-            announcement,
             self_copy,
             wrap: None,
             accepted: BTreeSet::new(),
@@ -51,7 +48,9 @@ impl Destination {
 pub(super) struct OutgoingMessage {
     pub owner: PublicKey,
     pub rumor: UnsignedEvent,
-    pub signer_kind: SignerKind,
+    // Read old queue records without silently publishing their experimental wraps.
+    #[serde(default, rename = "signer_kind", skip_serializing_if = "Option::is_none")]
+    legacy_signer_kind: Option<String>,
     pub destinations: Vec<Destination>,
     revision: u64,
     #[serde(default)]
@@ -62,7 +61,6 @@ impl OutgoingMessage {
     pub fn new(
         owner: PublicKey,
         rumor: UnsignedEvent,
-        signer_kind: SignerKind,
         destinations: Vec<Destination>,
     ) -> Result<Self> {
         if rumor.pubkey != owner || destinations.is_empty() {
@@ -74,11 +72,15 @@ impl OutgoingMessage {
         Ok(Self {
             owner,
             rumor,
-            signer_kind,
+            legacy_signer_kind: None,
             destinations,
             revision: 0,
             paused: false,
         })
+    }
+
+    fn uses_removed_encryption(&self) -> bool {
+        self.legacy_signer_kind.as_deref().is_some_and(|kind| kind != "User")
     }
 
     pub fn id(&self) -> EventId {
@@ -98,6 +100,11 @@ impl OutgoingMessage {
                 report.queued = !self.paused && !destination.complete();
                 report.accepted = !destination.accepted.is_empty();
                 report.error = destination.error.clone().map(Into::into);
+                if self.uses_removed_encryption() && !destination.complete() {
+                    report.paused = true;
+                    report.queued = false;
+                    report.error = Some("This queued message uses removed experimental encryption. Send a new message to use NIP-17.".into());
+                }
                 if let Some(wrap) = &destination.wrap {
                     report.gift_wrap_id = Some(wrap.id);
                     let mut output = Output::new(wrap.id);
@@ -174,7 +181,6 @@ pub(super) struct OutgoingQueue {
     owner: PublicKey,
     wake: flume::Sender<()>,
     enqueue_lock: Arc<Mutex<()>>,
-    encryption: Arc<RwLock<Option<UniversalSigner>>>,
     active: Arc<AtomicBool>,
     resume_requested: Arc<AtomicBool>,
     rebroadcast_requested: Arc<RwLock<BTreeSet<EventId>>>,
@@ -184,7 +190,6 @@ impl OutgoingQueue {
     pub fn new(
         client: Client,
         owner: PublicKey,
-        encryption: Option<UniversalSigner>,
     ) -> (Self, flume::Receiver<()>) {
         let (wake, receiver) = flume::bounded(1);
         (
@@ -194,18 +199,12 @@ impl OutgoingQueue {
                 owner,
                 wake,
                 enqueue_lock: Arc::default(),
-                encryption: Arc::new(RwLock::new(encryption.map(|signer| signer.snapshot()))),
                 active: Arc::new(AtomicBool::new(true)),
                 resume_requested: Arc::default(),
                 rebroadcast_requested: Arc::default(),
             },
             receiver,
         )
-    }
-
-    pub fn set_encryption_signer(&self, signer: Option<UniversalSigner>) {
-        *self.encryption.write().unwrap() = signer.map(|signer| signer.snapshot());
-        self.wake();
     }
 
     pub fn stop(&self) {
@@ -249,6 +248,9 @@ impl OutgoingQueue {
         let message = load(&self.root, self.owner).await?.into_iter()
             .find(|message| message.id() == id)
             .ok_or_else(|| anyhow::anyhow!("Original outgoing message is unavailable on this device"))?;
+        if message.uses_removed_encryption() {
+            bail!("This message uses removed experimental encryption and cannot be rebroadcast. Send a new message to use NIP-17.");
+        }
         if message.destinations.iter().any(|destination| destination.wrap.is_none()) {
             bail!("Message is still being prepared; retry it from Delivery status first");
         }
@@ -325,6 +327,13 @@ impl OutgoingQueue {
         self.ensure_active()?;
         let resume = self.resume_requested.swap(false, Ordering::SeqCst);
         for mut message in load(&self.root, self.owner).await? {
+            if message.uses_removed_encryption() {
+                if announced.get(&message.id()) != Some(&message.revision) {
+                    signals.send_async(Signal::Outgoing(message.clone())).await?;
+                    announced.insert(message.id(), message.revision);
+                }
+                continue;
+            }
             if self.rebroadcast_requested.write().unwrap().remove(&message.id()) {
                 // Only the worker mutates persisted jobs. Keep the original
                 // rumors and signed wraps; requeue exactly this message.
@@ -357,14 +366,13 @@ impl OutgoingQueue {
                 }
                 self.ensure_active()?;
                 if message.destinations[index].wrap.is_none() {
-                    let encryption = self.encryption.read().unwrap().clone();
                     let result =
                         async_utility::time::timeout(Some(Duration::from_secs(30)), async {
                             let signing_owner = signer.get_public_key_async().await?;
                             if signing_owner != self.owner {
                                 bail!("Outgoing account changed");
                             }
-                            prepare(&self.client, signer, encryption.as_ref(), &message, index)
+                            prepare(signer, &message, index)
                                 .await
                         })
                         .await
@@ -409,48 +417,13 @@ impl OutgoingQueue {
 }
 
 async fn prepare(
-    client: &Client,
     signer: &UniversalSigner,
-    encryption: Option<&UniversalSigner>,
     message: &OutgoingMessage,
     index: usize,
 ) -> Result<Event> {
     let destination = &message.destinations[index];
-    let mut announcement = destination.announcement;
-    if !message.signer_kind.user() && announcement.is_none() {
-        let events = client
-            .database()
-            .query(
-                Filter::new()
-                    .kind(Kind::Custom(10044))
-                    .author(destination.receiver)
-                    .limit(1),
-            )
-            .await?;
-        announcement = events
-            .first()
-            .map(|event| Announcement::from(event).public_key());
-    }
-    if message.signer_kind.encryption() && (announcement.is_none() || encryption.is_none()) {
-        bail!("Encryption key unavailable; waiting to retry");
-    }
-    let target = if message.signer_kind.user() {
-        destination.receiver
-    } else {
-        announcement.unwrap_or(destination.receiver)
-    };
-    let signing = if !message.signer_kind.user() && announcement.is_some() {
-        encryption.unwrap_or(signer)
-    } else {
-        signer
-    };
-    let mut tags = Vec::new();
-    if target != destination.receiver {
-        tags.push(Tag::public_key(destination.receiver));
-    }
-    Ok(nip59::GiftWrapBuilder::new(target, message.rumor.clone())
-        .extra_tags(tags)
-        .finalize_async(signing)
+    Ok(nip59::GiftWrapBuilder::new(destination.receiver, message.rumor.clone())
+        .finalize_async(signer)
         .await?)
 }
 
@@ -561,7 +534,7 @@ mod tests {
     }
 
     fn queue(client: Client, owner: PublicKey, dir: &Path) -> OutgoingQueue {
-        let (mut queue, _) = OutgoingQueue::new(client, owner, None);
+        let (mut queue, _) = OutgoingQueue::new(client, owner);
         queue.root = dir.to_owned();
         queue
     }
@@ -573,10 +546,57 @@ mod tests {
         let destinations = recipients
             .iter()
             .copied()
-            .map(|key| Destination::new(key, None, false))
-            .chain([Destination::new(owner.public_key(), None, true)])
+            .map(|key| Destination::new(key, false))
+            .chain([Destination::new(owner.public_key(), true)])
             .collect();
-        OutgoingMessage::new(owner.public_key(), rumor, SignerKind::User, destinations).unwrap()
+        OutgoingMessage::new(owner.public_key(), rumor, destinations).unwrap()
+    }
+
+    #[tokio::test]
+    async fn legacy_identity_queue_ignores_alternate_recipient_keys() {
+        let owner = Keys::generate();
+        let recipient = Keys::generate();
+        let original = message(&owner, &[recipient.public_key()]);
+        let mut json = serde_json::to_value(&original).unwrap();
+        json["signer_kind"] = "User".into();
+        json["destinations"][0]["announcement"] = serde_json::to_value(Keys::generate().public_key()).unwrap();
+        let restored: OutgoingMessage = serde_json::from_value(json).unwrap();
+        assert!(!restored.uses_removed_encryption());
+        let wrap = prepare(&UniversalSigner::new(owner.clone()), &restored, 0).await.unwrap();
+        let unwrapped = nip59::extract_rumor(&recipient, &wrap).unwrap();
+        assert_eq!(unwrapped.sender, owner.public_key());
+        assert_eq!(unwrapped.rumor.content, original.rumor.content);
+        assert!(serde_json::to_value(original).unwrap().get("signer_kind").is_none());
+    }
+
+    #[tokio::test]
+    async fn experimental_queue_records_are_preserved_and_never_retried_or_rebroadcast() {
+        let owner = Keys::generate();
+        let recipient = Keys::generate();
+        let client = Client::default();
+        for kind in ["Auto", "Encryption"] {
+            let dir = tempfile::tempdir().unwrap();
+            let queue = queue(client.clone(), owner.public_key(), dir.path());
+            let mut json = serde_json::to_value(message(&owner, &[recipient.public_key()])).unwrap();
+            json["signer_kind"] = kind.into();
+            let mut legacy: OutgoingMessage = serde_json::from_value(json).unwrap();
+            // Even an already-prepared wrap must not escape through retry/rebroadcast.
+            legacy.destinations[0].wrap = Some(prepare(&UniversalSigner::new(owner.clone()), &legacy, 0).await.unwrap());
+            save(dir.path(), &mut legacy).await.unwrap();
+            let before = std::fs::read(dir.path().join(owner.public_key().to_hex()).join(format!("{}.json", legacy.id()))).unwrap();
+            let (tx, rx) = flume::unbounded();
+            queue.retry();
+            // A revoked signer proves no signing is attempted while restoring the queue.
+            let signer = UniversalSigner::new(owner.clone());
+            signer.disconnect();
+            queue.process(&signer, &tx, &mut BTreeMap::new()).await.unwrap();
+            let Signal::Outgoing(restored) = rx.recv().unwrap() else { panic!("missing restored message"); };
+            assert!(restored.reports().iter().all(|r| r.paused && r.error.is_some()));
+            assert!(queue.rebroadcast(legacy.id()).await.unwrap_err().to_string().contains("removed experimental encryption"));
+            let after = std::fs::read(dir.path().join(owner.public_key().to_hex()).join(format!("{}.json", legacy.id()))).unwrap();
+            assert_eq!(before, after);
+        }
+        client.shutdown().await;
     }
 
     #[tokio::test]
@@ -589,16 +609,16 @@ mod tests {
         let rumor = EventBuilder::new(Kind::Custom(15), encrypted.file.url.to_string())
             .tags(encrypted.file.tags()).tag(Tag::public_key(receiver.public_key()))
             .finalize_unsigned(owner.public_key());
-        let original = OutgoingMessage::new(owner.public_key(), rumor, SignerKind::User,
-            vec![Destination::new(receiver.public_key(), None, false),
-                 Destination::new(owner.public_key(), None, true)]).unwrap();
+        let original = OutgoingMessage::new(owner.public_key(), rumor,
+            vec![Destination::new(receiver.public_key(), false),
+                 Destination::new(owner.public_key(), true)]).unwrap();
         let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
         let dir = tempfile::tempdir().unwrap();
         let queue = queue(client.clone(), owner.public_key(), dir.path());
         queue.enqueue(original).await.unwrap();
         let stored = load(dir.path(), owner.public_key()).await.unwrap().remove(0);
         for (index, recipient) in [&receiver, &owner].into_iter().enumerate() {
-            let wrap = prepare(&client, &UniversalSigner::new(owner.clone()), None, &stored, index).await.unwrap();
+            let wrap = prepare(&UniversalSigner::new(owner.clone()), &stored, index).await.unwrap();
             assert_eq!(wrap.kind, Kind::GiftWrap);
             assert!(!wrap.as_json().contains("decryption-key"));
             assert!(!wrap.as_json().contains(encrypted.file.url.as_str()));
@@ -826,7 +846,6 @@ mod tests {
         let restarted = queue(client.clone(), owner.public_key(), dir.path());
         // A signer reconnect must not reverse the user's refusal.
         controlled.refused.store(false, Ordering::SeqCst);
-        restarted.set_encryption_signer(Some(signer.clone()));
         restarted
             .process(&signer, &signals, &mut BTreeMap::new())
             .await
@@ -961,7 +980,7 @@ mod tests {
         let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
         let account_dir = dir.path().join(owner.public_key().to_hex());
         std::fs::write(&account_dir, "not a directory").unwrap();
-        let (mut queue, wake) = OutgoingQueue::new(client.clone(), owner.public_key(), None);
+        let (mut queue, wake) = OutgoingQueue::new(client.clone(), owner.public_key());
         queue.root = dir.path().to_owned();
         let (tx, rx) = flume::unbounded();
         let worker = queue.clone();

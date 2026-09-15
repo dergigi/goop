@@ -499,12 +499,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c59bdb34bc650a32731b31bd8f0829cc15d24a708ee31559e0bb34f2bc320cba"
 
 [[package]]
-name = "atomic-destructor"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d919cb60ba95c87ba42777e9e246c4e8d658057299b437b7512531ce0a09a23"
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -899,21 +893,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "browser-signer-proxy"
-version = "0.1.0"
-dependencies = [
- "atomic-destructor",
- "event-listener",
- "nostr",
- "opaquerr 0.1.0",
- "serde",
- "serde_json",
- "smol",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "bstr"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1130,7 +1109,6 @@ dependencies = [
  "anyhow",
  "async-utility",
  "common",
- "device",
  "flume 0.11.1",
  "futures",
  "fuzzy-matcher",
@@ -1403,16 +1381,6 @@ checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
 dependencies = [
  "cfg-if 1.0.4",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "console_log"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86919cef3e37b9356ccf54d4421208c17ecfda01beae61393e7ffd72916c0ef1"
-dependencies = [
- "log",
- "web-sys",
 ]
 
 [[package]]
@@ -1864,26 +1832,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "device"
-version = "2.7.1"
-dependencies = [
- "anyhow",
- "common",
- "flume 0.11.1",
- "gpui",
- "instant",
- "log",
- "nostr-sdk",
- "person",
- "settings",
- "smallvec",
- "smol",
- "state",
- "theme",
- "ui",
 ]
 
 [[package]]
@@ -2781,7 +2729,6 @@ dependencies = [
  "auto_update",
  "chat",
  "common",
- "device",
  "gpui",
  "gpui_linux",
  "gpui_macos",
@@ -2796,35 +2743,6 @@ dependencies = [
  "theme",
  "tracing-subscriber",
  "ui",
- "workspace",
-]
-
-[[package]]
-name = "goop_web"
-version = "2.7.1"
-dependencies = [
- "assets",
- "chat",
- "common",
- "console_error_panic_hook",
- "console_log",
- "device",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "getrandom 0.4.3",
- "gpui",
- "gpui_platform",
- "gpui_web",
- "instant",
- "log",
- "person",
- "settings",
- "state",
- "theme",
- "tracing-wasm",
- "ui",
- "universal-time 0.3.1 (git+https://github.com/shadowylab/universal-time)",
- "wasm-bindgen",
  "workspace",
 ]
 
@@ -3771,9 +3689,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
 dependencies = [
  "cfg-if 1.0.4",
- "js-sys",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
@@ -4622,14 +4537,14 @@ dependencies = [
  "chacha20 0.9.1",
  "chacha20poly1305",
  "faster-hex",
- "opaquerr 0.2.0",
+ "opaquerr",
  "rand 0.10.2",
  "scrypt",
  "secp256k1",
  "serde",
  "serde_json",
  "unicode-normalization",
- "universal-time 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "universal-time",
  "url",
  "zeroize",
 ]
@@ -4642,7 +4557,7 @@ dependencies = [
  "base64 0.22.1",
  "bitcoin_hashes 1.2.0",
  "nostr",
- "opaquerr 0.2.0",
+ "opaquerr",
  "reqwest",
  "serde",
 ]
@@ -4656,7 +4571,7 @@ dependencies = [
  "futures-core",
  "nostr",
  "nostr-sdk",
- "opaquerr 0.2.0",
+ "opaquerr",
  "tokio",
  "tracing",
 ]
@@ -4667,7 +4582,7 @@ version = "0.45.1"
 source = "git+https://github.com/rust-nostr/nostr#472c8839ea3f532259435d0513bf155ddeb467ba"
 dependencies = [
  "nostr",
- "opaquerr 0.2.0",
+ "opaquerr",
 ]
 
 [[package]]
@@ -4676,7 +4591,7 @@ version = "0.45.0"
 source = "git+https://github.com/rust-nostr/nostr#472c8839ea3f532259435d0513bf155ddeb467ba"
 dependencies = [
  "nostr",
- "opaquerr 0.2.0",
+ "opaquerr",
 ]
 
 [[package]]
@@ -4732,12 +4647,12 @@ dependencies = [
  "nostr-database",
  "nostr-gossip",
  "nostr-memory",
- "opaquerr 0.2.0",
+ "opaquerr",
  "rand 0.10.2",
  "tokio",
  "tokio-stream",
  "tracing",
- "universal-time 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "universal-time",
 ]
 
 [[package]]
@@ -5176,12 +5091,6 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
-
-[[package]]
-name = "opaquerr"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e55a7b7f0accc9fdd8e514f122a697adf824d55de481ca26c31ff8f9a8e813c5"
 
 [[package]]
 name = "opaquerr"
@@ -7102,7 +7011,6 @@ version = "2.7.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
- "browser-signer-proxy",
  "common",
  "flume 0.11.1",
  "futures",
@@ -7914,17 +7822,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-wasm"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4575c663a174420fa2d78f4108ff68f65bf2fbb7dd89f33749b6e826b3626e07"
-dependencies = [
- "tracing",
- "tracing-subscriber",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "tree-sitter"
 version = "0.26.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8126,11 +8023,6 @@ name = "universal-time"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47a939edecc3c5a7b83c02e5f6b3c31d2bc69eabcc9a87ab12c6d37ee6dbc856"
-
-[[package]]
-name = "universal-time"
-version = "0.3.1"
-source = "git+https://github.com/shadowylab/universal-time#394cd158556e1162806f6066fe89c413c06f9421"
 
 [[package]]
 name = "untrusted"
@@ -9450,12 +9342,10 @@ version = "2.7.1"
 dependencies = [
  "anyhow",
  "auto_update",
- "browser-signer-proxy",
  "chat",
  "chat_ui",
  "chrono",
  "common",
- "device",
  "flume 0.11.1",
  "futures",
  "gpui",

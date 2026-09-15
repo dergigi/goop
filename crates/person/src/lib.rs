@@ -6,7 +6,7 @@ use gpui::{App, AppContext, Context, Entity, Global, Task, Window};
 use instant::{Duration, Instant};
 use nostr_sdk::prelude::*;
 use smallvec::{SmallVec, smallvec};
-use state::{Announcement, NostrRegistry};
+use state::NostrRegistry;
 
 mod person;
 
@@ -23,7 +23,6 @@ impl Global for GlobalPersonRegistry {}
 #[derive(Debug, Clone)]
 enum Dispatch {
     Person(Person),
-    Announcement(Event),
     Relays(Event),
 }
 
@@ -103,9 +102,6 @@ impl PersonRegistry {
                         Dispatch::Person(person) => {
                             this.insert(person, cx);
                         }
-                        Dispatch::Announcement(event) => {
-                            this.set_announcement(&event, cx);
-                        }
                         Dispatch::Relays(event) => {
                             this.set_messaging_relays(&event, cx);
                         }
@@ -145,7 +141,7 @@ impl PersonRegistry {
                 // must not block delivery of profile events already on the stream.
                 if !matches!(
                     event.kind,
-                    Kind::Metadata | Kind::InboxRelays | Kind::Custom(10044)
+                    Kind::Metadata | Kind::InboxRelays
                 ) {
                     continue;
                 }
@@ -165,11 +161,6 @@ impl PersonRegistry {
                     }
                     Kind::InboxRelays => {
                         tx.send_async(Dispatch::Relays(event.into_owned()))
-                            .await
-                            .ok();
-                    }
-                    Kind::Custom(10044) => {
-                        tx.send_async(Dispatch::Announcement(event.into_owned()))
                             .await
                             .ok();
                     }
@@ -203,22 +194,6 @@ impl PersonRegistry {
                 .ok();
             }
         }));
-    }
-
-    /// Set profile encryption keys announcement
-    fn set_announcement(&mut self, event: &Event, cx: &mut App) {
-        let announcement = Announcement::from(event);
-
-        if let Some(person) = self.persons.get(&event.pubkey) {
-            person.update(cx, |person, cx| {
-                person.set_announcement(announcement);
-                cx.notify();
-            });
-        } else {
-            let person =
-                Person::new(event.pubkey, Metadata::default()).with_announcement(announcement);
-            self.insert(person, cx);
-        }
     }
 
     /// Set messaging relays for a person

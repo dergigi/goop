@@ -68,14 +68,12 @@ impl Render for Preferences {
         const SCREENING: &str = "Show a screening dialog to verify unknown senders.";
         const AVATAR: &str = "Hide all avatar pictures to improve performance.";
         const MODE: &str = "Follow your system appearance, or choose light or dark.";
-        const NIP4E: &str = "Use a dedicated key to encrypt and decrypt messages.";
 
         let servers = NostrRegistry::global(cx).read(cx).media_servers().to_vec();
         let screening = AppSettings::get_screening(cx);
         let auto_block_reports = AppSettings::get_auto_block_reports(cx);
         let render_markdown = AppSettings::get_render_markdown(cx);
         let hide_avatar = AppSettings::get_hide_avatar(cx);
-        let nip4e = AppSettings::get_nip4e(cx);
         let appearance = AppSettings::get_appearance(cx);
 
         v_flex()
@@ -161,21 +159,6 @@ impl Render for Preferences {
                                         )
                                     }),
                             ),
-                    ),
-            )
-            .child(
-                GroupBox::new()
-                    .id("experiments")
-                    .title("Experiments")
-                    .fill()
-                    .child(
-                        Switch::new("nip4e")
-                            .label("Decoupled Encryption Key")
-                            .description(NIP4E)
-                            .checked(nip4e)
-                            .on_click(move |_, _window, cx| {
-                                AppSettings::update_nip4e(!nip4e, cx);
-                            }),
                     ),
             )
             .child(

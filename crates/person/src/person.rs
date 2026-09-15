@@ -3,7 +3,6 @@ use std::hash::{Hash, Hasher};
 
 use gpui::SharedString;
 use nostr_sdk::prelude::*;
-use state::Announcement;
 
 /// Person
 #[derive(Debug, Clone)]
@@ -17,8 +16,6 @@ pub struct Person {
     /// None identifies a placeholder that still needs metadata.
     metadata_timestamp: Option<Timestamp>,
 
-    /// Dekey (NIP-4e) announcement
-    announcement: Option<Announcement>,
 
     /// Messaging relays
     messaging_relays: Vec<RelayUrl>,
@@ -62,7 +59,6 @@ impl Person {
             public_key,
             metadata_timestamp: (metadata != Metadata::default()).then(Timestamp::now),
             metadata,
-            announcement: None,
             messaging_relays: vec![],
         }
     }
@@ -90,12 +86,6 @@ impl Person {
         changed
     }
 
-    /// Build profile encryption keys announcement
-    pub fn with_announcement(mut self, announcement: Announcement) -> Self {
-        self.announcement = Some(announcement);
-        self
-    }
-
     /// Build profile messaging relays
     pub fn with_messaging_relays<I>(mut self, relays: I) -> Self
     where
@@ -113,11 +103,6 @@ impl Person {
     /// Get profile metadata
     pub fn metadata(&self) -> Metadata {
         self.metadata.clone()
-    }
-
-    /// Get profile encryption keys announcement
-    pub fn announcement(&self) -> Option<Announcement> {
-        self.announcement.clone()
     }
 
     /// Get profile messaging relays
@@ -161,11 +146,6 @@ impl Person {
     pub fn set_metadata(&mut self, metadata: Metadata) {
         self.metadata = metadata;
         self.metadata_timestamp = Some(Timestamp::now());
-    }
-
-    /// Set profile encryption keys announcement
-    pub fn set_announcement(&mut self, announcement: Announcement) {
-        self.announcement = Some(announcement);
     }
 
     /// Set profile messaging relays

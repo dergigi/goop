@@ -1,19 +1,17 @@
 use std::sync::Arc;
 
 use ::settings::AppSettings;
-use anyhow::Error;
 use auto_update::AutoUpdater;
 use chat::{ChatEvent, ChatRegistry};
-use common::{GoopImageCache, download_dir};
-use device::{DeviceEvent, DeviceRegistry};
+use common::GoopImageCache;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     Action, App, AppContext, Axis, Context, Entity, InteractiveElement, IntoElement,
-    KeyBinding, ParentElement, Render, SharedString, Styled, Subscription, Task, Window, div,
+    KeyBinding, ParentElement, Render, Styled, Subscription, Window, div,
     image_cache, px,
 };
 use nostr_sdk::prelude::*;
-use person::{PersonRegistry, shorten_pubkey};
+use person::PersonRegistry;
 use serde::Deserialize;
 use smallvec::{SmallVec, smallvec};
 use state::{IMAGE_CACHE_SIZE, NostrRegistry, StateEvent};
@@ -25,11 +23,10 @@ use ui::dock::{
     PreviousPanel, ReopenClosedPanel,
 };
 use ui::menu::{DropdownMenu, PopupMenuItem};
-use ui::notification::{Notification, NotificationKind};
+use ui::notification::Notification;
 use ui::{Icon, IconName, Root, Sizable, TitleBar, WindowExtension, h_flex, v_flex};
 
 use crate::dialogs::import::ImportIdentity;
-use crate::dialogs::restore::RestoreEncryption;
 use crate::dialogs::settings;
 use crate::panels::{contact_list, greeter, messaging_relays, profile, relay_list};
 use crate::sidebar::Sidebar;
@@ -87,7 +84,6 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
     cx.new(|cx| Workspace::new(window, cx))
 }
 
-struct DeviceNotifcation;
 struct MsgRelayNotification;
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
@@ -114,10 +110,6 @@ pub enum Command {
     LoadOlderHistory,
     SearchOtherRelays,
     RetryDecryption,
-    BackupEncryption,
-    ImportEncryption,
-    RefreshEncryption,
-    ResetEncryption,
     ShowRelayList,
     ShowMessaging,
     ShowConnectionStatus,
@@ -141,8 +133,6 @@ pub struct Workspace {
     /// App's Image Cache
     image_cache: Entity<GoopImageCache>,
 
-    /// Async tasks
-    tasks: Vec<Task<Result<(), Error>>>,
 
     /// Event subscriptions
     _subscriptions: SmallVec<[Subscription; 6]>,
@@ -151,7 +141,6 @@ pub struct Workspace {
 impl Workspace {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let chat = ChatRegistry::global(cx);
-        let device = DeviceRegistry::global(cx);
         let nostr = NostrRegistry::global(cx);
 
         let sidebar = cx.new(|cx| Sidebar::new(window, cx));
@@ -201,60 +190,6 @@ impl Workspace {
                         this.import_identity(window, cx);
                     }
                     _ => {}
-                };
-            }),
-        );
-
-        subscriptions.push(
-            // Observe all events emitted by the device registry
-            cx.subscribe_in(&device, window, |_this, _device, event, window, cx| {
-                match event {
-                    DeviceEvent::Requesting => {
-                        const MSG: &str =
-                            "Open your other client and approve the encryption key request.";
-
-                        let note = Notification::new()
-                            .id::<DeviceNotifcation>()
-                            .autohide(false)
-                            .title("Wait for approval")
-                            .message(MSG)
-                            .with_kind(NotificationKind::Info);
-
-                        window.push_notification(note, cx);
-                    }
-                    DeviceEvent::NotSet => {
-                        const MSG: &str =
-                            "You haven't set up an encryption key yet. Would you like to create one?";
-
-                        let note = Notification::new()
-                            .id::<DeviceNotifcation>()
-                            .message(MSG)
-                            .with_kind(NotificationKind::Info)
-                            .action(|_this, _window, _cx| {
-                                Button::new("retry").label("Retry").on_click(
-                                    move |_this, window, cx| {
-                                        let device = DeviceRegistry::global(cx);
-                                        device.update(cx, |this, cx| {
-                                            this.set_announcement(Keys::generate(), cx);
-                                        });
-                                        window.clear_notification::<DeviceNotifcation>(cx);
-                                    },
-                                )
-                            });
-
-                        window.push_notification(note, cx);
-                    }
-                    DeviceEvent::Set => {
-                        let note = Notification::new()
-                            .id::<DeviceNotifcation>()
-                            .message("Your encryption key has been set.")
-                            .with_kind(NotificationKind::Success);
-
-                        window.push_notification(note, cx);
-                    }
-                    DeviceEvent::Error(error) => {
-                        window.push_notification(Notification::error(error).autohide(false), cx);
-                    }
                 };
             }),
         );
@@ -358,7 +293,6 @@ impl Workspace {
             dock,
             pending_profile_search: None,
             image_cache,
-            tasks: vec![],
             _subscriptions: subscriptions,
         }
     }
@@ -578,12 +512,6 @@ impl Workspace {
                     );
                 });
             }
-            Command::RefreshEncryption => {
-                let device = DeviceRegistry::global(cx);
-                device.update(cx, |this, cx| {
-                    this.get_announcement(cx);
-                });
-            }
             Command::Logout => {
                 window.open_modal(cx, |modal, _, _| {
                     modal.confirm()
@@ -606,46 +534,6 @@ impl Workspace {
                         })
                 });
             }
-            Command::ResetEncryption => {
-                self.confirm_reset_encryption(window, cx);
-            }
-            Command::BackupEncryption => {
-                let device = DeviceRegistry::global(cx).downgrade();
-                let save_dialog = cx.prompt_for_new_path(download_dir(), Some("encryption.txt"));
-
-                self.tasks.push(cx.spawn_in(window, async move |_this, cx| {
-                    // Get the output path from the save dialog
-                    let output_path = match save_dialog.await {
-                        Ok(Ok(Some(path))) => path,
-                        Ok(Ok(None)) | Err(_) => return Ok(()),
-                        Ok(Err(error)) => {
-                            cx.update(|window, cx| {
-                                let message = format!("Failed to pick save location: {error:#}");
-                                let note = Notification::error(message).autohide(false);
-                                window.push_notification(note, cx);
-                            })?;
-                            return Ok(());
-                        }
-                    };
-
-                    // Get the backup task
-                    let backup =
-                        device.read_with(cx, |this, cx| this.backup(output_path.clone(), cx))?;
-
-                    // Run the backup task
-                    backup.await?;
-
-                    // Open the backup file with the system's default application
-                    cx.update(|_window, cx| {
-                        cx.open_with_system(output_path.as_path());
-                    })?;
-
-                    Ok(())
-                }));
-            }
-            Command::ImportEncryption => {
-                self.import_encryption(window, cx);
-            }
             Command::Update => {
                 // No-op on managed distribution channels (Flatpak/Snap) where
                 // the in-app updater is never initialized.
@@ -658,54 +546,6 @@ impl Workspace {
                 }
             }
         }
-    }
-
-    fn confirm_reset_encryption(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const ENC_MSG: &str = "An encryption key is a special key used to encrypt and decrypt your messages. \
-                               Your identity is completely decoupled from all encryption processes to protect your privacy.";
-
-        const ENC_WARN: &str = "By resetting your encryption key, you will lose access to \
-                                all your previously encrypted messages. This action cannot be undone.";
-
-        let device = DeviceRegistry::global(cx);
-        let ent = device.downgrade();
-
-        window.open_modal(cx, move |this, _window, cx| {
-            let ent = ent.clone();
-
-            this.confirm()
-                .show_close(true)
-                .title("Reset Encryption Key")
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .text_sm()
-                        .child(SharedString::from(ENC_MSG))
-                        .child(
-                            div()
-                                .italic()
-                                .text_color(cx.theme().text_danger)
-                                .child(SharedString::from(ENC_WARN)),
-                        ),
-                )
-                .on_ok(move |_ev, _window, cx| {
-                    ent.update(cx, |this, cx| {
-                        this.set_announcement(Keys::generate(), cx);
-                    })
-                    .ok();
-                    // true to close modal
-                    true
-                })
-        });
-    }
-
-    fn import_encryption(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let restore = cx.new(|cx| RestoreEncryption::new(window, cx));
-        window.open_modal(cx, move |this, _window, _cx| {
-            this.width(px(420.))
-                .title("Restore Encryption")
-                .child(restore.clone())
-        });
     }
 
     fn import_identity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -838,12 +678,7 @@ impl Workspace {
 
     fn titlebar_right(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let chat = ChatRegistry::global(cx);
-        let nip4e_enabled = AppSettings::get_nip4e(cx);
-        let nostr = NostrRegistry::global(cx);
-
-        let public_key = nostr.read(cx).current_user();
-        let persons = PersonRegistry::global(cx);
-        let announcement = public_key.and_then(|key| persons.read(cx).get(&key, cx).announcement());
+        let public_key = NostrRegistry::global(cx).read(cx).current_user();
         let shortcut = if cx.theme().platform.is_mac() { "⌘⇧D" } else { "Ctrl+Shift+D" };
         let status = self.connection_status.read(cx).summary(cx);
 
@@ -860,70 +695,6 @@ impl Workspace {
             .gap_2()
             .when_some(updater_status, |this, status| {
                 this.child(div().text_xs().italic().child(status))
-            })
-            .when(nip4e_enabled && public_key.is_some(), |this| {
-                this.child(
-                    Button::new("key")
-                        .icon(IconName::UserKey)
-                        .tooltip("Decoupled encryption key")
-                        .small()
-                        .ghost()
-                        .dropdown_menu(move |this, _window, _cx| {
-                            this.min_w(px(260.))
-                                .label("Encryption Key")
-                                .when_some(announcement.as_ref(), |this, announcement| {
-                                    let name = announcement.client_name();
-                                    let pkey = shorten_pubkey(announcement.public_key(), 8);
-
-                                    this.item(PopupMenuItem::element(move |_window, cx| {
-                                        h_flex()
-                                            .gap_1()
-                                            .text_sm()
-                                            .child(
-                                                Icon::new(IconName::Device)
-                                                    .small()
-                                                    .text_color(cx.theme().icon_muted),
-                                            )
-                                            .child(name.clone())
-                                    }))
-                                    .item(
-                                        PopupMenuItem::element(move |_window, cx| {
-                                            h_flex()
-                                                .gap_1()
-                                                .text_sm()
-                                                .child(
-                                                    Icon::new(IconName::UserKey)
-                                                        .small()
-                                                        .text_color(cx.theme().icon_muted),
-                                                )
-                                                .child(SharedString::from(pkey.clone()))
-                                        }),
-                                    )
-                                })
-                                .separator()
-                                .menu_with_icon(
-                                    "Export Encryption Key",
-                                    IconName::Shield,
-                                    Box::new(Command::BackupEncryption),
-                                )
-                                .menu_with_icon(
-                                    "Restore from secret key",
-                                    IconName::Usb,
-                                    Box::new(Command::ImportEncryption),
-                                )
-                                .separator()
-                                .menu_with_icon(
-                                    "Reload",
-                                    IconName::Refresh,
-                                    Box::new(Command::RefreshEncryption),
-                                )
-                                .menu_with_icon(
-                                    "Reset",
-                                    IconName::Warning,
-                                    Box::new(Command::ResetEncryption),
-                                )
-                        }),
-                )
             })
             .child(
                 Button::new("titlebar-relays")

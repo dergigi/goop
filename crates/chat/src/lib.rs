@@ -200,13 +200,6 @@ impl ChatRegistry {
             }),
         );
 
-        let device = device::DeviceRegistry::global(cx);
-        subscriptions.push(cx.subscribe(&device, |this, device, _, cx| {
-            if let Some(queue) = &this.outgoing {
-                queue.set_encryption_signer(device.read(cx).signer(cx));
-            }
-        }));
-
         // Run at the end of the current cycle
         cx.defer_in(window, |this, _window, cx| {
             this.get_rooms(cx);
@@ -383,8 +376,7 @@ impl ChatRegistry {
         };
         let client = nostr.read(cx).client();
         let signer = nostr.read(cx).signer().snapshot();
-        let encryption = device::DeviceRegistry::global(cx).read(cx).signer(cx);
-        let (queue, wake) = OutgoingQueue::new(client, owner, encryption);
+        let (queue, wake) = OutgoingQueue::new(client, owner);
         self.outgoing = Some(queue.clone());
         let signals = self.signal_tx.clone();
         self.outgoing_task =

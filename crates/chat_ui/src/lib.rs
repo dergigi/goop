@@ -17,7 +17,7 @@ use gpui::{
 use nostr_sdk::prelude::*;
 use person::{Person, PersonRegistry};
 use regex::Regex;
-use settings::{AppSettings, SignerKind};
+use settings::AppSettings;
 use smallvec::{SmallVec, smallvec};
 use state::{NostrRegistry, upload_encrypted};
 use theme::ActiveTheme;
@@ -790,26 +790,6 @@ impl ChatPanel {
                     .is_err()
                 {
                     window.push_notification(Notification::error("Failed to change subject"), cx);
-                }
-            }
-            Command::ChangeSigner(kind) => {
-                let settings = AppSettings::global(cx);
-                let is_nip4e_enabled = settings.read(cx).is_nip4e_enabled(cx);
-                let is_force_nip4e = *kind == SignerKind::Encryption || *kind == SignerKind::Auto;
-
-                if !is_nip4e_enabled && is_force_nip4e {
-                    window.push_notification("The decoupled encryption key is not enabled.", cx);
-                    return;
-                }
-
-                if self
-                    .room
-                    .update(cx, |this, cx| {
-                        this.set_signer_kind(kind, cx);
-                    })
-                    .is_err()
-                {
-                    window.push_notification(Notification::error("Failed to change signer"), cx);
                 }
             }
             Command::ToggleBackup => {
@@ -1728,45 +1708,15 @@ impl ChatPanel {
     }
 
     fn render_config_menu(&self, _window: &mut Window, cx: &Context<Self>) -> impl IntoElement {
-        let (backup, signer_kind) = self
-            .room
-            .read_with(cx, |this, _cx| {
-                (this.config().backup(), this.config().signer_kind().clone())
-            })
-            .ok()
-            .unwrap_or((true, SignerKind::default()));
+        let backup = self.room.read_with(cx, |room, _| room.config().backup()).unwrap_or(true);
 
-        Button::new("encryption")
+        Button::new("chat-config")
             .icon(IconName::Settings2)
             .tooltip("Configuration")
             .ghost()
             .large()
             .dropdown_menu(move |this, _window, _cx| {
-                let auto = matches!(signer_kind, SignerKind::Auto);
-                let encryption = matches!(signer_kind, SignerKind::Encryption);
-                let user = matches!(signer_kind, SignerKind::User);
-
-                this.label("Signer")
-                    .menu_with_check_and_disabled(
-                        "Auto",
-                        auto,
-                        Box::new(Command::ChangeSigner(SignerKind::Auto)),
-                        auto,
-                    )
-                    .menu_with_check_and_disabled(
-                        "Decoupled Encryption Key",
-                        encryption,
-                        Box::new(Command::ChangeSigner(SignerKind::Encryption)),
-                        encryption,
-                    )
-                    .menu_with_check_and_disabled(
-                        "User Identity",
-                        user,
-                        Box::new(Command::ChangeSigner(SignerKind::User)),
-                        user,
-                    )
-                    .separator()
-                    .label("Backup")
+                this.label("Backup")
                     .menu_with_check("Backup messages", backup, Box::new(Command::ToggleBackup))
             })
     }
