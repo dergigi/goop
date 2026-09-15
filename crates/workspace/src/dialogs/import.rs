@@ -12,8 +12,9 @@ use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
 use ui::{Disableable, StyledExt, v_flex};
 
-#[derive(Debug)]
 pub struct ImportIdentity {
+    pairing: Option<Entity<super::pair_signer::PairSigner>>,
+    pairing_subscription: Option<Subscription>,
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     scanner: Option<Entity<super::qr_scanner::QrScanner>>,
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -48,6 +49,8 @@ impl ImportIdentity {
             });
 
         Self {
+            pairing: None,
+            pairing_subscription: None,
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             scanner: None,
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -79,8 +82,21 @@ impl ImportIdentity {
         cx.notify();
     }
 
+    fn pair(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading || self.pairing.is_some() { return; }
+        let pairing = cx.new(|cx| super::pair_signer::PairSigner::new(window, cx));
+        self.pairing_subscription = Some(cx.subscribe_in(&pairing, window, |this, _, _, window, cx| {
+            this.pairing = None;
+            this.pairing_subscription = None;
+            this.key_input.update(cx, |input, cx| input.focus(window, cx));
+            cx.notify();
+        }));
+        self.pairing = Some(pairing);
+        cx.notify();
+    }
+
     fn login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.loading { return; }
+        if self.loading || self.pairing.is_some() { return; }
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if self.scanner.is_some() { return; }
         let value = self.key_input.read(cx).value();
@@ -162,6 +178,7 @@ impl ImportIdentity {
 
 impl Render for ImportIdentity {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(pairing) = &self.pairing { return pairing.clone().into_any_element(); }
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if let Some(scanner) = &self.scanner { return scanner.clone().into_any_element(); }
         const BUNKER_WARN: &str = "Keep Goop and your signer connected while message history loads.";
@@ -175,6 +192,9 @@ impl Render for ImportIdentity {
                 .child(div().text_color(cx.theme().text_warning).child(error))
                 .child(Button::new("retry-saved-signer").label("Retry saved connection").ghost()
                     .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |state, cx| state.retry_signer(cx)))))
+            .child(Button::new("pair-with-amber").label("Pair with Amber").icon(ui::IconName::Scan)
+                .primary().disabled(self.loading).on_click(cx.listener(|this, _, window, cx| this.pair(window, cx))))
+            .child(div().text_xs().text_color(cx.theme().text_muted).text_center().child("or use a bunker URL"))
             .child(
                 v_flex()
                     .gap_2()
@@ -182,7 +202,6 @@ impl Render for ImportIdentity {
                         v_flex()
                             .gap_1()
                             .text_color(cx.theme().text_muted)
-                            .child("Connect with your signer application")
                             .child(Input::new(&self.key_input)),
                     )
                     .when(bunker_warning, |this| {
@@ -207,7 +226,7 @@ impl Render for ImportIdentity {
             )
             .map(|view| {
                 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-                let view = view.child(Button::new("scan-bunker-qr").icon(ui::IconName::Scan).label("Scan QR code")
+                let view = view.child(Button::new("scan-bunker-qr").icon(ui::IconName::Scan).label("Scan bunker QR")
                     .ghost_alt().disabled(self.loading).on_click(cx.listener(|this,_,window,cx| this.scan(window,cx))));
                 view
             })

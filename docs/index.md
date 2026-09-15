@@ -16,7 +16,9 @@ If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.
 
 ## Connect your signer
 
-On the sign-in screen, paste the `bunker://` connection URL from your signer app, or choose **Scan QR code** on macOS, Windows, or Linux.
+Choose **Pair with Amber**, scan the code in Amber, and approve. Goop remembers the connection for next time. **Escape** cancels; expired codes can be replaced with **New code**.
+
+Alternatively, paste a `bunker://` connection URL from your signer, or choose **Scan bunker QR** to scan it with your computer’s camera.
 
 Allow Goop to access your camera, then hold your signer’s bunker QR code in the preview. Use the camera selector for an external webcam. A successful scan turns the camera off and fills the URL field; press **Continue** to connect. **Escape** or **Paste URL instead** cancels scanning.
 

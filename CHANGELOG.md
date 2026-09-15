@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Pair with Amber from a Goop-generated QR code. Approve in Amber to connect; pairing supports cancellation, expiry, and retry, and saves the approved bunker connection for future launches.
+
 ### Removed
 
 - Remove experimental decoupled encryption (NIP-4e), its settings, per-chat signer selection, key announcements, and device key-sharing prompts. New messages use standard NIP-17 through the account signer. Existing keys and message data are preserved; queued experimental messages require sending a new NIP-17 message instead of retrying or rebroadcasting old wraps.
