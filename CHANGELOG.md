@@ -15,6 +15,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 ### Changed
 
 - Use a single double-checkmark icon for fully accepted outgoing messages, with matching icons in delivery details.
+- Show each blocked user's Unblock button only while hovering over their row.
 
 ## [2.8.0] - 2026-09-15
 

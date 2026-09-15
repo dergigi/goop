@@ -2,7 +2,7 @@ use chat::ChatRegistry;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Window, div,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Window, div,
 };
 use person::PersonRegistry;
 use nostr_sdk::prelude::ToBech32;
@@ -57,7 +57,7 @@ impl Render for BlockedUsers {
             .when(keys.is_empty(), |view| view.child(div().px_2().text_sm().text_color(cx.theme().text_muted).child("No blocked users.")))
             .children(keys.into_iter().map(|key| {
                 let profile = PersonRegistry::global(cx).read(cx).get(&key,cx);
-                h_flex().min_w_0().w_full().gap_1()
+                h_flex().group("blocked-user-row").min_w_0().w_full().gap_1()
                     .child(Button::new(format!("profile-{key}"))
                         .flex_1().min_w_0().truncate_label().align_left().small().ghost()
                         .tooltip(key.to_bech32().unwrap())
@@ -65,8 +65,10 @@ impl Render for BlockedUsers {
                             .child(Avatar::new(profile.avatar()).small().flex_shrink_0())
                             .child(div().min_w_0().truncate().child(profile.name())))
                         .on_click(move |_,window,cx| window.dispatch_action(Box::new(crate::Command::OpenProfile(key)),cx)))
-                    .child(Button::new(format!("unblock-{key}")).label("Unblock").flex_shrink_0().small().ghost()
-                        .on_click(move |_,window,cx| crate::dialogs::moderation::block(key,window,cx)))
+                    .child(h_flex().flex_shrink_0().invisible()
+                        .group_hover("blocked-user-row", |style| style.visible())
+                        .child(Button::new(format!("unblock-{key}")).label("Unblock").small().ghost()
+                            .on_click(move |_,window,cx| crate::dialogs::moderation::block(key,window,cx))))
             }))
     }
 }
