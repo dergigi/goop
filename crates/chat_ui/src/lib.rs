@@ -145,7 +145,7 @@ impl ChatPanel {
                 let is_self = NostrRegistry::global(cx).read(cx).current_user()
                     .is_some_and(|owner| this.members() == [owner]);
                 let placeholder = if is_self {
-                    "Write a note to yourself…".to_owned()
+                    "Write a note to your future self".to_owned()
                 } else {
                     format!("Message {}", this.display_name(cx))
                 };
