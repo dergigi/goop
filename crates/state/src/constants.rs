@@ -1,6 +1,9 @@
 /// Client name (Application name)
 pub const CLIENT_NAME: &str = "Goop";
 
+/// Goop project identity (NIP-19 encoded public key).
+pub const GOOP_NPUB: &str = "npub1vnl7t2z4vy28lwthaavlpsxq67qnwqss0jz2t9jg3ealzjs43y6q5hwqec";
+
 /// App ID
 pub const APP_ID: &str = "com.dergigi.goop";
 
