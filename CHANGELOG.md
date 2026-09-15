@@ -7,6 +7,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-09-15
+
 ### Added
 
 - Connect a compatible NIP-46 signer with a Goop-generated QR code. Approve in your signer app to connect; pairing supports cancellation, expiry, and retry, and saves the approved bunker connection for future launches.
@@ -307,7 +309,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/dergigi/goop/compare/v2.7.1...v2.8.0
 [2.7.1]: https://github.com/dergigi/goop/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/dergigi/goop/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/dergigi/goop/compare/v2.5.0...v2.6.0
