@@ -14,6 +14,8 @@ actions!(goop, [Quit]);
 mod menus;
 
 fn main() {
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    if workspace::qr_camera::run_if_requested() { return; }
     // Initialize logging
     tracing_subscriber::fmt::init();
 

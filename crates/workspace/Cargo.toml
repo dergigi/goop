@@ -26,9 +26,18 @@ browser-signer-proxy = { path = "../browser-signer-proxy" }
 anyhow.workspace = true
 chrono.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 log.workspace = true
 smallvec.workspace = true
 
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+nokhwa = { version = "0.10.11", default-features = false, features = ["input-native", "decoding"] }
+rqrr = { version = "0.10.1", default-features = false }
+image = { version = "0.25", default-features = false }
+flume.workspace = true
+
 [dev-dependencies]
+qrcode = { version = "0.14", default-features = false }
+
 nostr-sdk = { workspace = true, features = ["local-relay"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

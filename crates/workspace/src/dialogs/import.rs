@@ -14,6 +14,10 @@ use ui::{Disableable, StyledExt, divider, v_flex};
 
 #[derive(Debug)]
 pub struct ImportIdentity {
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    scanner: Option<Entity<super::qr_scanner::QrScanner>>,
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    scan_subscription: Option<Subscription>,
     /// Bunker connection URI
     key_input: Entity<InputState>,
 
@@ -43,6 +47,10 @@ impl ImportIdentity {
             });
 
         Self {
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+            scanner: None,
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+            scan_subscription: None,
             key_input,
             error,
             loading: false,
@@ -51,7 +59,28 @@ impl ImportIdentity {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    fn scan(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading || self.scanner.is_some() { return; }
+        let scanner = cx.new(|cx| super::qr_scanner::QrScanner::new(window,cx));
+        self.scan_subscription = Some(cx.subscribe_in(&scanner,window,|this,_,event,window,cx| {
+            if let super::qr_scanner::ScanEvent::Scanned(url) = event {
+                this.key_input.update(cx,|input,cx| input.set_value(url.clone(),window,cx));
+                this.error.update(cx,|error,cx| { *error=None; cx.notify(); });
+            }
+            this.scanner = None;
+            this.scan_subscription = None;
+            this.key_input.update(cx,|input,cx| input.focus(window,cx));
+            cx.notify();
+        }));
+        self.scanner = Some(scanner);
+        cx.notify();
+    }
+
     fn login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading { return; }
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if self.scanner.is_some() { return; }
         let value = self.key_input.read(cx).value();
         self.set_loading(true, cx);
         match NostrConnectUri::parse(value.trim()) {
@@ -139,6 +168,8 @@ impl ImportIdentity {
 
 impl Render for ImportIdentity {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if let Some(scanner) = &self.scanner { return scanner.clone().into_any_element(); }
         const BUNKER_WARN: &str = "Nostr Connect will usually take more time to get all your messages. Please keep your session open until you see all your messages.";
         let is_wasm = cfg!(target_arch = "wasm32");
         let bunker_warning = self.key_input.read(cx).value().starts_with("bunker://");
@@ -177,6 +208,12 @@ impl Render for ImportIdentity {
                         this.login(window, cx);
                     })),
             )
+            .map(|view| {
+                #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+                let view = view.child(Button::new("scan-bunker-qr").icon(ui::IconName::Scan).label("Scan QR code")
+                    .ghost_alt().disabled(self.loading).on_click(cx.listener(|this,_,window,cx| this.scan(window,cx))));
+                view
+            })
             .child(divider(cx))
             .when(!is_wasm, |this| {
                 this.child(
@@ -198,6 +235,6 @@ impl Render for ImportIdentity {
                         .text_color(cx.theme().text_danger)
                         .child(error.clone()),
                 )
-            })
+            }).into_any_element()
     }
 }

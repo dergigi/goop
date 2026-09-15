@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Scan a signer’s bunker QR code with a built-in or external camera on the desktop sign-in screen. Add a local preview, camera selector, permission/error handling, and explicit Continue after scanning. Release camera access on cancellation, success, timeout, or app exit.
+
 - Automatically block users after an acknowledged report, with a default-on setting in General. Disclose the behavior before sending, skip blocking after account changes or failed reports, and distinguish blocking failures from successful reports.
 
 - Add red Mute, Block, and Report profile actions, timed account-scoped notification mutes, and private NIP-51 blocks compatible with Amethyst. A Blocked users sidebar-footer button opens the synced list with profile, unblock, and sync-recovery controls. Blocked direct chats disappear from Inbox, Requests, and Archived; blocked authors are excluded from displayed messages, reactions, search, notifications, and unread counts.

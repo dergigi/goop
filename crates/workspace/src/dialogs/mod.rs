@@ -9,3 +9,6 @@ pub mod shortcuts;
 pub mod report;
 
 pub mod moderation;
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod qr_scanner;

@@ -26,6 +26,9 @@ icons = [
     "resources/icon.ico",
 ]
 
+[package.metadata.packager.macos]
+info-plist-path = "resources/Info.plist"
+
 [dependencies]
 assets = { path = "../crates/assets" }
 workspace = { path = "../crates/workspace" }

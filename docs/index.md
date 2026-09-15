@@ -14,6 +14,16 @@ If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.
 
 [Agent Guide](#agent-guide) · [Keyboard shortcuts](#keyboard-shortcuts)
 
+## Connect your signer
+
+On the sign-in screen, paste the `bunker://` connection URL from your signer app, or choose **Scan QR code** on macOS, Windows, or Linux.
+
+Allow Goop to access your camera, then hold your signer’s bunker QR code in the preview. Use the camera selector for an external webcam. A successful scan turns the camera off and fills the URL field; press **Continue** to connect. **Escape** or **Paste URL instead** cancels scanning.
+
+Camera images are decoded on your device, never uploaded or saved. Scanning also stops when you leave the screen, close Goop, or reach the two-minute timeout. If access is denied, enable Goop’s camera permission in system settings and try again. If no camera is available, you can still paste the URL. Sandboxed Linux packages may need camera access enabled in their app permissions.
+
+Only bunker connection QR codes are accepted here; an `nsec` private key or a website QR code is not a signer connection.
+
 ## Agent Guide
 
 Get updates from your agents and reply to them in Goop. Each agent needs its own
