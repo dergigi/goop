@@ -781,6 +781,15 @@ impl Workspace {
                         }),
                 )
             })
+            .child(
+                Button::new("connection-status-summary")
+                    .label(self.connection_status.read(cx).summary(cx))
+                    .tooltip("Connection status and recovery")
+                    .small().ghost()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.on_command(&Command::ShowConnectionStatus, window, cx);
+                    })),
+            )
     }
 
     fn active_chat_panel(&self, window: &Window, cx: &App) -> Option<Entity<chat_ui::ChatPanel>> {

@@ -131,7 +131,7 @@ The top-right controls are **Relays**, **Connection Status** (pulse icon), and *
 
 ## Connection status and recovery
 
-Click the connection-status icon immediately left of Message History in the top-right corner, press **Cmd/Ctrl+Shift+D**, or choose **Connection status** from the account menu. Hover over the icon for a live summary. Relay cards show connection and authentication badges, with explanatory text for errors. The sidepane refreshes automatically and separates signer connection, messaging relays, history/decryption, and outgoing messages.
+Click the live status beside your avatar or the connection-status icon immediately left of Message History in the top-right corner, press **Cmd/Ctrl+Shift+D**, or choose **Connection status** from the account menu. Hover over the icon for a live summary. Relay cards show connection and authentication badges, with explanatory text for errors. The sidepane refreshes automatically and separates signer connection, messaging relays, history/decryption, and outgoing messages.
 
 - **Signer unavailable:** open your signer, check pending requests, and use **Reconnect signer** if needed.
 - **Relay disconnected or authentication failed:** check the named relay and signer. **Reconnect messaging relays** retries connections; **Manage messaging relays** opens your relay configuration.
