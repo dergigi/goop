@@ -120,6 +120,7 @@ pub struct Button {
 
     icon: Option<Icon>,
     label: Option<SharedString>,
+    truncate_label: bool,
     tooltip: Option<SharedString>,
     children: Vec<AnyElement>,
 
@@ -159,6 +160,7 @@ impl Button {
             style: StyleRefinement::default(),
             icon: None,
             label: None,
+            truncate_label: false,
             variant: ButtonVariant::default(),
             disabled: false,
             selected: false,
@@ -186,6 +188,12 @@ impl Button {
     /// Set label to the Button, if no label is set, the button will be in Icon Button mode.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Ellipsize the label when the button is constrained by its available width.
+    pub fn truncate_label(mut self) -> Self {
+        self.truncate_label = true;
         self
     }
 
@@ -430,6 +438,7 @@ impl RenderOnce for Button {
             .child({
                 h_flex()
                     .id("label")
+                    .when(self.truncate_label, |this| this.min_w_0().max_w_full())
                     .justify_center()
                     .map(|this| match self.size {
                         Size::XSmall => this.text_xs().gap_1(),
@@ -443,7 +452,13 @@ impl RenderOnce for Button {
                     })
                     .when(self.loading, |this| this.child(Indicator::new()))
                     .when_some(self.label, |this, label| {
-                        this.child(div().flex_none().line_height(relative(1.)).child(label))
+                        this.child(div()
+                            .map(|this| if self.truncate_label {
+                                this.min_w_0().truncate()
+                            } else {
+                                this.flex_none()
+                            })
+                            .line_height(relative(1.)).child(label))
                     })
                     .children(self.children)
                     .when(self.caret, |this| {

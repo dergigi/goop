@@ -438,6 +438,7 @@ impl Render for Screening {
                     )
                     .child(
                         h_flex()
+                            .w_full().min_w_0()
                             .flex_wrap()
                             .gap_1()
                             .child(
@@ -453,6 +454,7 @@ impl Render for Screening {
                             )
                             .when_some(website, |row, url| row.child(
                                 Button::new("profile-website")
+                                    .min_w_0().max_w_full().truncate_label()
                                     .icon(IconName::Link)
                                     .label(url.as_str().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_owned())
                                     .secondary().small().rounded()
