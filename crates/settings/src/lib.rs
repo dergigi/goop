@@ -38,6 +38,7 @@ setting_accessors! {
     pub hide_avatar: bool,
     pub render_markdown: bool,
     pub screening: bool,
+    pub auto_block_reports: bool,
     pub nip4e: bool,
     pub trusted_relays: Vec<String>,
     pub file_server: Url,
@@ -119,6 +120,10 @@ pub struct Settings {
     /// Enable screening for unknown chat requests
     pub screening: bool,
 
+    /// Block a reported user after a relay acknowledges the report.
+    #[serde(default = "default_auto_block_reports")]
+    pub auto_block_reports: bool,
+
     /// Enable decoupling encryption key
     pub nip4e: bool,
 
@@ -128,6 +133,8 @@ pub struct Settings {
     /// Server for blossom media attachments
     pub file_server: Url,
 }
+
+fn default_auto_block_reports() -> bool { true }
 
 fn default_render_markdown() -> bool {
     true
@@ -140,6 +147,7 @@ impl Default for Settings {
             hide_avatar: false,
             render_markdown: default_render_markdown(),
             screening: true,
+            auto_block_reports: default_auto_block_reports(),
             nip4e: false,
             trusted_relays: vec![],
             file_server: Url::parse("https://blossom.band/").unwrap(),
@@ -286,6 +294,19 @@ impl AppSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_block_defaults_on_for_existing_settings_and_preserves_opt_out() {
+        let mut legacy = serde_json::to_value(Settings::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("auto_block_reports");
+        legacy["hide_avatar"] = true.into();
+        let migrated: Settings = serde_json::from_value(legacy).unwrap();
+        assert!(migrated.auto_block_reports);
+        assert!(migrated.hide_avatar);
+        let opted_out = Settings { auto_block_reports: false, ..migrated };
+        let restored: Settings = serde_json::from_str(&serde_json::to_string(&opted_out).unwrap()).unwrap();
+        assert!(!restored.auto_block_reports);
+    }
 
     #[test]
     fn old_settings_keep_preferences_and_enable_markdown() {

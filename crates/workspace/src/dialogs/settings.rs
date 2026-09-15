@@ -72,6 +72,7 @@ impl Render for Preferences {
 
         let servers = NostrRegistry::global(cx).read(cx).media_servers().to_vec();
         let screening = AppSettings::get_screening(cx);
+        let auto_block_reports = AppSettings::get_auto_block_reports(cx);
         let render_markdown = AppSettings::get_render_markdown(cx);
         let hide_avatar = AppSettings::get_hide_avatar(cx);
         let nip4e = AppSettings::get_nip4e(cx);
@@ -92,6 +93,13 @@ impl Render for Preferences {
                             .on_click(move |_, _window, cx| {
                                 AppSettings::update_screening(!screening, cx);
                             }),
+                    )
+                    .child(
+                        Switch::new("auto-block-reports")
+                            .label("Automatically block reported users")
+                            .description("Block users after a relay accepts your report. You can unblock them from Blocked users.")
+                            .checked(auto_block_reports)
+                            .on_click(move |_, _, cx| AppSettings::update_auto_block_reports(!auto_block_reports, cx)),
                     )
                     .child(
                         Switch::new("avatar")

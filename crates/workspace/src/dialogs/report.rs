@@ -1,4 +1,6 @@
 use anyhow::{anyhow, bail};
+use settings::AppSettings;
+use chat::ChatRegistry;
 use futures::{FutureExt, future::Either};
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -105,6 +107,28 @@ async fn publish_to(client: &Client, event: &Event, relays: &[RelayUrl]) -> anyh
     )
 }
 
+// A report failure must never trigger blocking. A block failure must never
+// turn a published report into a failed report that the user might resubmit.
+fn finish_report(
+    result: anyhow::Result<String>,
+    auto_block: bool,
+    same_account: bool,
+    block: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<String> {
+    let mut message = result?;
+    if auto_block {
+        if !same_account {
+            message.push_str(" Automatic blocking was skipped because your account changed. Return to the reporting account to block this user.");
+        } else {
+            match block() {
+                Ok(()) => message.push_str(" This user is blocked locally. Block-list sync status is available in Blocked users."),
+                Err(error) => message.push_str(&format!(" The report was sent, but automatic blocking failed: {error}. Use Block on their profile to retry blocking.")),
+            }
+        }
+    }
+    Ok(message)
+}
+
 pub fn open(target: PublicKey, name: SharedString, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| ReportForm::new(target, name, window, cx));
     window.open_modal(cx, move |modal, window, cx| {
@@ -128,6 +152,7 @@ struct ReportForm {
     explanation: Entity<InputState>,
     signed: Option<Event>,
     sending: bool,
+    submitted_auto_block: bool,
     error: Option<String>,
     success: Option<String>,
     task: Option<Task<()>>,
@@ -147,13 +172,14 @@ impl ReportForm {
                 .multi_line(true)
                 .rows(3)
         });
-        let subscriptions = vec![cx.subscribe(&explanation, |this: &mut Self, _, event, cx| {
+        let mut subscriptions = vec![cx.subscribe(&explanation, |this: &mut Self, _, event, cx| {
             if matches!(event, InputEvent::Change) && !this.sending {
                 this.signed = None;
                 this.error = None;
                 cx.notify();
             }
         })];
+        subscriptions.push(cx.observe(&AppSettings::global(cx), |_, _, cx| cx.notify()));
         Self {
             target,
             name,
@@ -162,6 +188,7 @@ impl ReportForm {
             explanation,
             signed: None,
             sending: false,
+            submitted_auto_block: false,
             error: None,
             success: None,
             task: None,
@@ -199,6 +226,8 @@ impl ReportForm {
         let signer = nostr.read(cx).signer().snapshot();
         let client = nostr.read(cx).client();
         let cached = self.signed.clone();
+        let auto_block = AppSettings::get_auto_block_reports(cx);
+        self.submitted_auto_block = auto_block;
         self.sending = true;
         self.error = None;
         cx.notify();
@@ -236,6 +265,12 @@ impl ReportForm {
             }.await;
             this.update(cx, |this, cx| {
                 this.sending = false;
+                let same_account = NostrRegistry::global(cx).read(cx).current_user() == Some(owner);
+                let result = finish_report(result, auto_block, same_account, || {
+                    ChatRegistry::global(cx).update(cx, |chat, cx| {
+                        if chat.is_blocked(this.target) { Ok(()) } else { chat.block_user(this.target, true, cx) }
+                    })
+                });
                 match result {
                     Ok(message) => this.success = Some(message),
                     Err(error) => this.error = Some(error.to_string()),
@@ -264,11 +299,17 @@ impl Render for ReportForm {
                         .on_click(|_, window, cx| window.close_modal(cx)),
                 );
         }
+        let auto_block = if self.sending { self.submitted_auto_block } else { AppSettings::get_auto_block_reports(cx) };
         v_flex().gap_3().text_sm()
             .max_h((window.viewport_size().height - px(112.)).max(px(80.))).overflow_y_scrollbar()
             .child(format!("Report {}", self.name))
             .child(div().text_xs().text_color(cx.theme().text_muted).child(self.target.to_bech32().unwrap()))
-            .child("This publishes a report signed by your account. The selected reason and explanation are public. Reporting does not block this person.")
+            .child("This publishes a report signed by your account. The selected reason and explanation are public.")
+            .child(if auto_block {
+                "After a relay accepts your report, Goop will also block this person. You can turn this off in Settings."
+            } else {
+                "Automatic blocking is off in Settings. Reporting will not block this person."
+            })
             .child("Reason (required)")
             .child(h_flex().flex_wrap().gap_2().children(REASONS.iter().map(|(reason, label, description)| {
                 let selected = self.reason.as_ref() == Some(reason);
@@ -301,6 +342,21 @@ impl Render for ReportForm {
 mod tests {
     use super::*;
     use nostr_sdk::local_relay::{LocalRelay, WritePolicy, WritePolicyResult};
+
+    #[test]
+    fn auto_block_requires_report_success_preference_and_same_account() {
+        let never = || -> anyhow::Result<()> { panic!("must not block") };
+        assert!(finish_report(Err(anyhow!("relay rejected")), true, true, never).is_err());
+        assert_eq!(finish_report(Ok("Accepted".into()), false, true, never).unwrap(), "Accepted");
+        assert!(finish_report(Ok("Accepted".into()), true, false, never).unwrap().contains("account changed"));
+        let mut calls = 0;
+        let message = finish_report(Ok("Accepted by 1 of 2 relays".into()), true, true, || { calls += 1; Ok(()) }).unwrap();
+        assert_eq!(calls, 1);
+        assert!(message.contains("blocked locally"));
+        let message = finish_report(Ok("Accepted".into()), true, true, || Err(anyhow!("disk full"))).unwrap();
+        assert!(message.contains("report was sent"));
+        assert!(message.contains("disk full"));
+    }
 
     #[derive(Debug)]
     struct RejectReports;

@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Automatically block users after an acknowledged report, with a default-on setting in General. Disclose the behavior before sending, skip blocking after account changes or failed reports, and distinguish blocking failures from successful reports.
+
 - Add red Mute, Block, and Report profile actions, timed account-scoped notification mutes, and private NIP-51 blocks compatible with Amethyst. A Blocked users sidebar-footer button opens the synced list with profile, unblock, and sync-recovery controls. Blocked direct chats disappear from Inbox, Requests, and Archived; blocked authors are excluded from displayed messages, reactions, search, notifications, and unread counts.
 
 - Let users choose any NIP-56 report reason, with no default selection, and add an optional public explanation.
