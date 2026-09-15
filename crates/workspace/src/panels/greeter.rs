@@ -110,6 +110,16 @@ impl Render for GreeterPanel {
                                         IconName::Keyboard,
                                         Command::KeyboardShortcuts,
                                     ),
+                                    (
+                                        "dm-goop",
+                                        "Found a bug? Feature request? DM Goop!",
+                                        IconName::Chat,
+                                        Command::OpenProfileChat(
+                                            nostr_sdk::prelude::PublicKey::parse(state::GOOP_NPUB)
+                                                .expect("Goop project npub must be valid"),
+                                            false,
+                                        ),
+                                    ),
                                 ]
                                 .into_iter()
                                 .map(

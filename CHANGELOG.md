@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Add “Found a bug? Feature request? DM Goop!” as the fifth Get Started option, opening a direct chat with Goop.
+
 ### Changed
 
 - Use a single double-checkmark icon for fully accepted outgoing messages, with matching icons in delivery details.
