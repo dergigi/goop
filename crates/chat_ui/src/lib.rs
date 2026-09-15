@@ -1340,28 +1340,32 @@ impl ChatPanel {
             .is_some_and(|reports| reports.iter().any(|r| r.paused));
         let checks = reports.as_ref().map(|reports| delivery_status::delivery_checks(reports)).unwrap_or(0);
         let label = if checks == 2 {
-            SharedString::from("✓✓")
+            None
         } else if paused && success {
-            SharedString::from("✓ · paused")
+            Some("· paused")
         } else if paused {
-            SharedString::from("• Paused · retry when ready")
+            Some("• Paused · retry when ready")
         } else if success && pending {
-            SharedString::from("✓ · queued")
+            Some("· queued")
         } else if success {
-            SharedString::from("✓")
+            None
         } else if failed && pending {
-            SharedString::from("• Queued for retry")
+            Some("• Queued for retry")
         } else if failed {
-            SharedString::from("• Error")
+            Some("• Error")
         } else if pending {
-            SharedString::from("• Queued")
+            Some("• Queued")
         } else {
-            SharedString::from("• Unknown")
+            Some("• Unknown")
         };
 
-        div()
+        h_flex()
             .id(SharedString::from(id.to_hex()))
-            .child(label)
+            .gap_1()
+            .when(success || checks == 2, |this| {
+                this.child(Icon::new(if checks == 2 { IconName::CheckDouble } else { IconName::Check }).small())
+            })
+            .when_some(label, |this, label| this.child(label))
             .when(failed, |this| this.text_color(cx.theme().text_danger))
             .when_some(reports, |this, reports| {
                 this.when(true, |this| {
@@ -1392,7 +1396,12 @@ impl ChatPanel {
                                         })
                                     })
                                     .child(v_flex().gap_4()
-                                        .child(div().text_sm().child("✓ A relay accepted a copy. ✓✓ Every recipient’s copy was accepted by a relay. These are not read receipts."))
+                                        .child(v_flex().gap_2().text_sm()
+                                            .child(h_flex().gap_2().child(Icon::new(IconName::Check).small())
+                                                .child("A relay accepted a copy."))
+                                            .child(h_flex().gap_2().child(Icon::new(IconName::CheckDouble).small())
+                                                .child("Every recipient’s copy was accepted by a relay."))
+                                            .child("These are not read receipts."))
                                         .children(
                                         reports.iter().map(|report| Self::render_report(report, cx)),
                                     ))
