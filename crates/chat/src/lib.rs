@@ -76,6 +76,7 @@ enum Signal {
     History(RelayUrl, RelayHistory),
     Outgoing(OutgoingMessage),
     OutgoingError(String),
+    OutgoingRecovered,
 }
 
 /// Chat Registry
@@ -116,6 +117,7 @@ pub struct ChatRegistry {
     contacts: HashSet<PublicKey>,
     classification_ready: bool,
     outgoing_reports: HashMap<EventId, Vec<SendReport>>,
+    outgoing_error: Option<String>,
 
     /// Channel for sending signals to the UI.
     signal_tx: flume::Sender<Signal>,
@@ -230,6 +232,7 @@ impl ChatRegistry {
             contacts: HashSet::new(),
             classification_ready: false,
             outgoing_reports: HashMap::new(),
+            outgoing_error: None,
             matcher: CachedMatcher(SkimMatcherV2::default()),
             signal_rx: rx,
             signal_tx: tx,
@@ -330,7 +333,11 @@ impl ChatRegistry {
                             incoming.historical = true;
                             this.new_message(incoming, cx);
                         }
-                        Signal::OutgoingError(error) => cx.emit(ChatEvent::Error(error)),
+                        Signal::OutgoingError(error) => {
+                            this.outgoing_error = Some(error.clone());
+                            cx.emit(ChatEvent::Error(error));
+                        }
+                        Signal::OutgoingRecovered => this.outgoing_error = None,
                         Signal::History(relay, progress) => {
                             this.history.insert(relay, progress);
                         }
@@ -582,6 +589,11 @@ impl ChatRegistry {
     }
 
     /// Explicitly rescan the entire retained history, including previously scanned gaps.
+    /// Resume interrupted history using saved checkpoints without forcing a full rescan.
+    pub fn resume_history(&mut self, cx: &mut Context<Self>) {
+        self.start_history(false, false, cx);
+    }
+
     pub fn load_older_history(&mut self, cx: &mut Context<Self>) {
         self.start_history(true, false, cx);
     }
@@ -715,6 +727,17 @@ impl ChatRegistry {
         reasons
     }
 
+    /// Current-account delivery reports for diagnostics; contains no message text.
+    pub fn delivery_reports(&self) -> impl Iterator<Item = &Vec<SendReport>> {
+        self.outgoing_reports.values()
+    }
+
+    pub fn outgoing_error(&self) -> Option<&str> { self.outgoing_error.as_deref() }
+
+    pub fn history_error(&self) -> Option<&str> {
+        self.history_error.as_deref()
+    }
+
     pub fn history_relays(&self) -> &BTreeMap<RelayUrl, RelayHistory> {
         &self.history
     }
@@ -747,6 +770,8 @@ impl ChatRegistry {
             "Decrypting messages"
         } else if errors > 0 {
             "History incomplete"
+        } else if self.last_history.is_none() {
+            "History not scanned yet"
         } else {
             "History checked"
         };
@@ -973,6 +998,7 @@ impl ChatRegistry {
         self.contacts.clear();
         self.classification_ready = false;
         self.outgoing_reports.clear();
+        self.outgoing_error = None;
         self.notification_listener = None;
         self.signal_consumer = None;
         self.queue = None;

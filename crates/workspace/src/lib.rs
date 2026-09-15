@@ -24,7 +24,6 @@ use ui::dock::{
     CloseAllPanels, ClosePanel, DockArea, DockEvent, DockItem, DockPlacement, NextPanel, PanelView,
     PreviousPanel, ReopenClosedPanel,
 };
-use ui::indicator::Indicator;
 use ui::menu::{DropdownMenu, PopupMenuItem};
 use ui::notification::{Notification, NotificationKind};
 use ui::{Icon, IconName, Root, Sizable, TitleBar, WindowExtension, h_flex, v_flex};
@@ -116,6 +115,7 @@ pub enum Command {
     ResetEncryption,
     ShowRelayList,
     ShowMessaging,
+    ShowConnectionStatus,
     ShowProfile,
     OpenProfile(PublicKey),
     OpenProfileChat(PublicKey, bool),
@@ -125,6 +125,7 @@ pub enum Command {
 
 pub struct Workspace {
     sidebar: Entity<Sidebar>,
+    connection_status: Entity<panels::connection_status::ConnectionStatus>,
     /// App's Dock Area
     dock: Entity<DockArea>,
     pending_profile_search: Option<u64>,
@@ -149,7 +150,9 @@ impl Workspace {
         let dock = cx.new(|cx| DockArea::new(window, cx));
         let image_cache = GoopImageCache::new(IMAGE_CACHE_SIZE, cx);
 
+        let connection_status = panels::connection_status::init(cx);
         let mut subscriptions = smallvec![];
+        subscriptions.push(cx.observe(&connection_status, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&nostr, |_, _, cx| cx.notify()));
         subscriptions.push(cx.subscribe_in(&dock, window, |_, _, event, window, cx| {
             if matches!(event, DockEvent::LayoutChanged) {
@@ -329,6 +332,7 @@ impl Workspace {
 
         Self {
             sidebar,
+            connection_status,
             dock,
             pending_profile_search: None,
             image_cache,
@@ -500,6 +504,10 @@ impl Workspace {
                     );
                 });
             }
+            Command::ShowConnectionStatus => {
+                let panel = self.connection_status.clone();
+                self.dock.update(cx, |dock, cx| dock.add_panel(Arc::new(panel), DockPlacement::Right, window, cx));
+            }
             Command::ShowMessaging => {
                 self.dock.update(cx, |this, cx| {
                     this.add_panel(
@@ -659,11 +667,7 @@ impl Workspace {
 
     fn titlebar_left(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let nostr = NostrRegistry::global(cx);
-        let current_user = nostr.read(cx).current_user();
         let displayed_user = nostr.read(cx).displayed_user();
-        let connection_error = nostr.read(cx).signer_connection_error().map(str::to_owned);
-        let restoring = nostr.read(cx).identity_loading();
-        let loading_chats = current_user.is_some() && ChatRegistry::global(cx).read(cx).loading();
 
         h_flex()
             .flex_shrink_0()
@@ -701,6 +705,7 @@ impl Workspace {
                                 )
                                 .menu("Search profiles", Box::new(Command::SearchProfiles))
                                 .menu("Toggle sidebar", Box::new(Command::ToggleSidebar))
+                                .menu("Connection status", Box::new(Command::ShowConnectionStatus))
                                 .separator()
                                 .menu_with_icon(
                                     "Profile",
@@ -729,47 +734,18 @@ impl Workspace {
                         }),
                 )
             })
-            .when(restoring || loading_chats, |this| {
-                this.child(
-                    h_flex()
-                        .gap_2()
-                        .text_xs()
-                        .text_color(cx.theme().text_muted)
-                        .child(Indicator::new().small())
-                        .child(if restoring {
-                            "Reconnecting to signer…"
-                        } else {
-                            "Loading conversations…"
-                        }),
-                )
-            })
-            .when(
-                current_user.is_none() && !restoring && connection_error.is_none(),
-                |this| {
-                    this.child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().text_muted)
-                            .child(SharedString::from("Connect your signer to continue")),
-                    )
-                },
+            .child(
+                Button::new("connection-status")
+                    .label(self.connection_status.read(cx).summary(cx))
+                    .tooltip("Connection status and recovery")
+                    .small().ghost()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let panel = this.connection_status.clone();
+                        this.dock.update(cx, |dock, cx| {
+                            dock.add_panel(Arc::new(panel), DockPlacement::Right, window, cx);
+                        });
+                    })),
             )
-            .when_some(connection_error, |this, error| {
-                this.child(
-                    Button::new("retry-signer")
-                        .label(if restoring {
-                            "Retry now"
-                        } else {
-                            "Signer unavailable · Retry"
-                        })
-                        .tooltip(error)
-                        .small()
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            NostrRegistry::global(cx)
-                                .update(cx, |nostr, cx| nostr.retry_signer(cx));
-                        })),
-                )
-            })
     }
 
     fn titlebar_right(&mut self, cx: &mut Context<Self>) -> impl IntoElement {

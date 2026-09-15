@@ -7,6 +7,14 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Add a live Connection status sidepane, opened from the title bar or account menu, showing signer connection, messaging relay connectivity and observed authentication, history/decryption progress, and outgoing delivery problems. Copy diagnostics or reconnect the signer/relays, resume history from checkpoints, and explicitly retry decryption or pending sends.
+
+### Fixed
+
+- Keep outgoing queue errors visible until recovery, and distinguish history that has not been scanned from a completed scan.
+
 ## [2.6.0] - 2026-09-15
 
 ### Added

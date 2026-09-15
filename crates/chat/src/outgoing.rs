@@ -292,7 +292,11 @@ impl OutgoingQueue {
         let mut last_error = None;
         while self.active.load(Ordering::SeqCst) {
             match self.process(&signer, &signals, &mut announced).await {
-                Ok(()) => last_error = None,
+                Ok(()) => {
+                    if last_error.take().is_some() {
+                        signals.send_async(Signal::OutgoingRecovered).await?;
+                    }
+                },
                 Err(error) => {
                     self.ensure_active()?;
                     let error = error.to_string();
@@ -950,6 +954,30 @@ mod tests {
         assert!(queue.enqueue(message).await.is_err());
         client.shutdown().await;
     }
+    #[tokio::test]
+    async fn queue_error_is_reported_until_storage_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Keys::generate();
+        let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
+        let account_dir = dir.path().join(owner.public_key().to_hex());
+        std::fs::write(&account_dir, "not a directory").unwrap();
+        let (mut queue, wake) = OutgoingQueue::new(client.clone(), owner.public_key(), None);
+        queue.root = dir.path().to_owned();
+        let (tx, rx) = flume::unbounded();
+        let worker = queue.clone();
+        let task = tokio::spawn(async move { worker.run(UniversalSigner::new(owner), wake, tx).await });
+        let error = tokio::time::timeout(Duration::from_secs(5), rx.recv_async()).await.unwrap().unwrap();
+        assert!(matches!(error, Signal::OutgoingError(_)));
+        std::fs::remove_file(&account_dir).unwrap();
+        std::fs::create_dir(&account_dir).unwrap();
+        queue.retry();
+        let recovered = tokio::time::timeout(Duration::from_secs(5), rx.recv_async()).await.unwrap().unwrap();
+        assert!(matches!(recovered, Signal::OutgoingRecovered));
+        queue.stop();
+        task.await.unwrap().unwrap();
+        client.shutdown().await;
+    }
+
     #[derive(Debug)]
     struct PausingSigner {
         signer: UniversalSigner,
