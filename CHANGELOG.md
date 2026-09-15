@@ -18,6 +18,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Put profile public keys on their own full-width row with a dedicated copy button.
 - Give the message composer a distinct rounded background and roomier padding. It grows with new lines and wrapped text, keeping its controls aligned to the bottom.
 
 ## [2.4.0] - 2026-09-15

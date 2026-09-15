@@ -9,7 +9,7 @@ use gpui::{
 };
 use instant::Duration;
 use nostr_sdk::prelude::*;
-use person::{Person, PersonRegistry, shorten_pubkey};
+use person::{Person, PersonRegistry};
 use smallvec::{SmallVec, smallvec};
 use state::{BOOTSTRAP_RELAYS, NostrAddress, NostrRegistry, TIMEOUT};
 use theme::ActiveTheme;
@@ -404,7 +404,7 @@ impl Render for Screening {
             }
         }
         let profile = self.profile(cx);
-        let shorten_pubkey = shorten_pubkey(self.public_key, 8);
+        let npub = self.public_key.to_bech32().unwrap();
 
         let last_active = if self.activity_loading {
             None
@@ -457,32 +457,30 @@ impl Render for Screening {
                     ),
             )
             .child(
-                h_flex()
-                    .gap_3()
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_2()
                     .child(
                         h_flex()
-                            .p_1()
-                            .flex_1()
-                            .h_7()
-                            .justify_center()
-                            .rounded_full()
+                            .w_full()
+                            .min_w_0()
+                            .px_3()
+                            .py_1()
+                            .gap_2()
+                            .rounded(cx.theme().radius)
                             .bg(cx.theme().elevated_surface_background)
-                            .text_sm()
-                            .truncate()
-                            .text_ellipsis()
-                            .text_center()
-                            .line_height(relative(1.))
+                            .child(div().flex_1().min_w_0().text_sm().truncate().child(npub.clone()))
                             .child(
                                 Button::new("copy-request-key")
-                                    .label(shorten_pubkey)
+                                    .icon(IconName::Copy)
                                     .small()
                                     .ghost()
-                                    .tooltip("Copy public key")
+                                    .flex_shrink_0()
+                                    .tooltip(format!("Copy {npub}"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let Ok(npub) = this.public_key.to_bech32();
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                            npub,
-                                        ));
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(npub));
                                     })),
                             ),
                     )
