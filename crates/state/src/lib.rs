@@ -93,6 +93,8 @@ pub struct NostrRegistry {
     remembered_user: Option<PublicKey>,
     connection_error: Option<String>,
     pending_signer: Option<UniversalSigner>,
+    bunker: Option<NostrConnect>,
+    logging_out: bool,
     connection_task: Option<Task<Result<(), Error>>>,
     credential_task: Option<Task<Result<(), Error>>>,
 
@@ -165,6 +167,8 @@ impl NostrRegistry {
                 .and_then(|value| PublicKey::parse(value.trim()).ok()),
             connection_error: None,
             pending_signer: None,
+            bunker: None,
+            logging_out: false,
             connection_task: None,
             credential_task: None,
             media_servers: Vec::new(),
@@ -202,6 +206,7 @@ impl NostrRegistry {
     }
 
     pub fn retry_signer(&mut self, cx: &mut Context<Self>) {
+        if self.logging_out { return; }
         if let Some(signer) = self.pending_signer.clone() {
             self.begin_signer_connection(signer, cx);
         } else {
@@ -239,6 +244,55 @@ impl NostrRegistry {
         }));
     }
 
+    /// Forget only the login, preserving the master key and account history.
+    pub fn logout(&mut self, cx: &mut Context<Self>) -> Task<Result<(), Error>> {
+        if self.logging_out {
+            return Task::ready(Err(anyhow!("Log out is already in progress")));
+        }
+        self.logging_out = true;
+        let credentials = cx.read_credentials(USER_KEYRING);
+        cx.spawn(async move |this, cx| {
+            let result: Result<(), Error> = async {
+                // Keychain deletion reports an error for absent entries on macOS.
+                if credentials.await?.is_some() {
+                    this.update(cx, |_, cx| cx.delete_credentials(USER_KEYRING))?.await?;
+                }
+                Ok(())
+            }.await;
+            this.update(cx, |this, cx| {
+                this.logging_out = false;
+                result?;
+                match std::fs::remove_file(config_dir().join("last-signer-pubkey")) {
+                    Ok(()) => {},
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(error) => return Err(error.into()),
+                }
+                this.credential_task = None;
+                this.connection_task = None;
+                this.pending_signer = None;
+                this.tasks.clear();
+                if let Some(bunker) = this.bunker.take() {
+                    Tokio::spawn(cx, async move { bunker.shutdown().await }).detach();
+                }
+                this.signer.disconnect();
+                this.current_user = None;
+                this.remembered_user = None;
+                this.identity_loading = false;
+                this.connection_error = None;
+                this.media_servers.clear();
+                this.media_servers_task = None;
+                cx.emit(StateEvent::NoSigner);
+                cx.notify();
+                Ok(())
+            })?
+        })
+    }
+
+    pub fn set_bunker(&mut self, signer: NostrConnect, cx: &mut Context<Self>) {
+        self.bunker = Some(signer.clone());
+        self.set_signer(signer, cx);
+    }
+
     /// Update the signer
     pub fn set_signer<T>(&mut self, new_signer: T, cx: &mut Context<Self>)
     where
@@ -251,6 +305,7 @@ impl NostrRegistry {
     }
 
     fn begin_signer_connection(&mut self, signer: UniversalSigner, cx: &mut Context<Self>) {
+        if self.logging_out { return; }
         self.connection_task = None;
         self.pending_signer = Some(signer.clone());
         self.identity_loading = true;
@@ -382,7 +437,7 @@ impl NostrRegistry {
                             signer.auth_url_handler(GoopAuthUrlHandler);
 
                             this.update(cx, |this, cx| {
-                                this.set_signer(signer, cx);
+                                this.set_bunker(signer, cx);
                                 cx.notify();
                             })?;
                         } else if content == "proxy" {

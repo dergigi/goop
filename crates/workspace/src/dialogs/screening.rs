@@ -356,6 +356,7 @@ impl Render for Screening {
         }
         let profile = self.profile(cx);
         let npub = self.public_key.to_bech32().unwrap();
+        let website = profile.metadata().website.as_deref().and_then(profile_website);
 
         let last_active = if self.activity_loading {
             None
@@ -437,6 +438,7 @@ impl Render for Screening {
                     )
                     .child(
                         h_flex()
+                            .flex_wrap()
                             .gap_1()
                             .child(
                                 Button::new("njump")
@@ -449,6 +451,12 @@ impl Render for Screening {
                                         this.open_njump(window, cx);
                                     })),
                             )
+                            .when_some(website, |row, url| row.child(
+                                Button::new("profile-website")
+                                    .icon(IconName::Link).label("Website").secondary().small().rounded()
+                                    .tooltip(url.to_string())
+                                    .on_click(move |_, _, cx| cx.open_url(url.as_str())),
+                            ))
                             .when(self.show_report, |row| row.child(
                                 Button::new("report")
                                     .tooltip("Send a public report about this user")
@@ -650,4 +658,25 @@ fn status_badge(status: Option<bool>, cx: &App) -> Div {
                 this.child(Indicator::new().small())
             }
         })
+}
+
+fn profile_website(value: &str) -> Option<Url> {
+    let value = value.trim();
+    if value.is_empty() { return None; }
+    let url = Url::parse(value).or_else(|_| Url::parse(&format!("https://{value}"))).ok()?;
+    (matches!(url.scheme(), "https" | "http") && url.host_str().is_some()
+        && url.username().is_empty() && url.password().is_none()).then_some(url)
+}
+
+#[cfg(test)]
+mod website_tests {
+    use super::profile_website;
+    #[test]
+    fn accepts_websites_only() {
+        assert_eq!(profile_website(" example.com/about ").unwrap().as_str(), "https://example.com/about");
+        assert_eq!(profile_website("https://example.com").unwrap().host_str(), Some("example.com"));
+        for value in ["", "javascript:alert(1)", "file:///tmp/a", "https://user:pass@example.com", "not a website"] {
+            assert!(profile_website(value).is_none(), "{value}");
+        }
+    }
 }

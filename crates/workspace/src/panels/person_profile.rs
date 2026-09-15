@@ -49,47 +49,62 @@ impl Render for PersonProfile {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .p_4()
-            .gap_6()
-            .overflow_y_scrollbar()
-            .child(self.details.clone())
+            .min_h_0()
             .child(
-                h_flex().flex_shrink_0().justify_center().gap_6().pb_2().children(
-                    [
-                        ("Chat", IconName::Chat, false),
-                        ("Search", IconName::Search, true),
-                    ]
-                    .into_iter()
-                    .map(|(label, icon, search)| {
-                        v_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Button::new(label)
-                                    .icon(icon)
-                                    .large()
-                                    .ghost()
-                                    .w(gpui::px(56.))
-                                    .h(gpui::px(44.))
-                                    .rounded_full()
-                                    .bg(cx.theme().elevated_surface_background)
-                                    .tooltip(if search {
-                                        "Find in this chat"
-                                    } else {
-                                        "Open chat"
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(crate::Command::OpenProfileChat(
-                                                this.key, search,
-                                            )),
-                                            cx,
-                                        );
-                                    })),
-                            )
-                            .child(gpui::div().text_sm().font_semibold().child(label))
-                    }),
-                ),
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .p_4()
+                    .gap_6()
+                    .overflow_y_scrollbar()
+                    .child(self.details.clone())
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .justify_center()
+                            .gap_6()
+                            .pb_2()
+                            .children(
+                                [
+                                    ("Chat", IconName::Chat, false),
+                                    ("Search", IconName::Search, true),
+                                ]
+                                .into_iter()
+                                .map(|(label, icon, search)| {
+                                    v_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            Button::new(label)
+                                                .icon(icon)
+                                                .large()
+                                                .ghost()
+                                                .w(gpui::px(56.))
+                                                .h(gpui::px(44.))
+                                                .rounded_full()
+                                                .bg(cx.theme().elevated_surface_background)
+                                                .tooltip(if search {
+                                                    "Find in this chat"
+                                                } else {
+                                                    "Open chat"
+                                                })
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        window.dispatch_action(
+                                                            Box::new(
+                                                                crate::Command::OpenProfileChat(
+                                                                    this.key, search,
+                                                                ),
+                                                            ),
+                                                            cx,
+                                                        );
+                                                    },
+                                                )),
+                                        )
+                                        .child(gpui::div().text_sm().font_semibold().child(label))
+                                }),
+                            ),
+                    ),
             )
             .when(
                 NostrRegistry::global(cx)
@@ -101,53 +116,61 @@ impl Render for PersonProfile {
                     let muted = chat.is_muted(self.key);
                     let blocked = chat.is_blocked(self.key);
                     view.child(
-                        h_flex().flex_shrink_0().justify_center().gap_6().pb_2().children(
-                            [
-                                (if muted { "Unmute" } else { "Mute" }, IconName::Mute, 0),
-                                (
-                                    if blocked { "Unblock" } else { "Block" },
-                                    IconName::Block,
-                                    1,
-                                ),
-                                ("Report", IconName::Flag, 2),
-                            ]
-                            .into_iter()
-                            .map(|(label, icon, action)| {
-                                v_flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        Button::new(label)
-                                            .icon(icon)
-                                            .large()
-                                            .danger()
-                                            .w(gpui::px(56.))
-                                            .h(gpui::px(44.))
-                                            .rounded_full()
-                                            .tooltip(label)
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                match action {
-                                                    0 => crate::dialogs::moderation::mute(
-                                                        this.key, window, cx,
-                                                    ),
-                                                    1 => crate::dialogs::moderation::block(
-                                                        this.key, window, cx,
-                                                    ),
-                                                    _ => this.details.update(cx, |details, cx| {
-                                                        details.confirm_report(window, cx)
-                                                    }),
-                                                }
-                                            })),
-                                    )
-                                    .child(
-                                        gpui::div()
-                                            .text_sm()
-                                            .font_semibold()
-                                            .text_color(cx.theme().text_danger)
-                                            .child(label),
-                                    )
-                            }),
-                        ),
+                        h_flex()
+                            .flex_shrink_0()
+                            .justify_center()
+                            .gap_6()
+                            .p_4()
+                            .children(
+                                [
+                                    (if muted { "Unmute" } else { "Mute" }, IconName::Mute, 0),
+                                    (
+                                        if blocked { "Unblock" } else { "Block" },
+                                        IconName::Block,
+                                        1,
+                                    ),
+                                    ("Report", IconName::Flag, 2),
+                                ]
+                                .into_iter()
+                                .map(|(label, icon, action)| {
+                                    v_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            Button::new(label)
+                                                .icon(icon)
+                                                .large()
+                                                .danger()
+                                                .w(gpui::px(56.))
+                                                .h(gpui::px(44.))
+                                                .rounded_full()
+                                                .tooltip(label)
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| match action {
+                                                        0 => crate::dialogs::moderation::mute(
+                                                            this.key, window, cx,
+                                                        ),
+                                                        1 => crate::dialogs::moderation::block(
+                                                            this.key, window, cx,
+                                                        ),
+                                                        _ => this.details.update(
+                                                            cx,
+                                                            |details, cx| {
+                                                                details.confirm_report(window, cx)
+                                                            },
+                                                        ),
+                                                    },
+                                                )),
+                                        )
+                                        .child(
+                                            gpui::div()
+                                                .text_sm()
+                                                .font_semibold()
+                                                .text_color(cx.theme().text_danger)
+                                                .child(label),
+                                        )
+                                }),
+                            ),
                     )
                 },
             )

@@ -121,6 +121,7 @@ pub enum Command {
     ShowBlockedUsers,
     OpenProfileChat(PublicKey, bool),
     ShowSettings,
+    Logout,
     ShowContactList,
 }
 
@@ -188,6 +189,8 @@ impl Workspace {
                         window.close_all_modals(cx);
                     }
                     StateEvent::NoSigner => {
+                        window.close_all_modals(cx);
+                        DockArea::close_all(&this.dock, window, cx);
                         this.dock.update(cx, |dock, _| dock.clear_closed_panels());
                         this.import_identity(window, cx);
                     }
@@ -561,6 +564,28 @@ impl Workspace {
                     this.get_announcement(cx);
                 });
             }
+            Command::Logout => {
+                window.open_modal(cx, |modal, _, _| {
+                    modal.confirm()
+                        .title("Log out?")
+                        .button_props(ui::modal::ModalButtonProps::default()
+                            .ok_text("Log out")
+                            .ok_variant(ui::button::ButtonVariant::Danger)
+                            .cancel_text("Cancel"))
+                        .child("Disconnect your signer and forget the saved login on this device. Your local chat history will be kept. You’ll need to connect your signer again to log in.")
+                        .on_ok(|_, window, cx| {
+                            let task = NostrRegistry::global(cx).update(cx, |state, cx| state.logout(cx));
+                            window.spawn(cx, async move |cx| {
+                                if let Err(error) = task.await {
+                                    cx.update(|window, cx| {
+                                        window.push_notification(Notification::error(format!("Could not log out: {error}")).autohide(false), cx);
+                                    }).ok();
+                                }
+                            }).detach();
+                            true
+                        })
+                });
+            }
             Command::ResetEncryption => {
                 self.confirm_reset_encryption(window, cx);
             }
@@ -742,6 +767,9 @@ impl Workspace {
                                     IconName::Settings,
                                     Box::new(Command::ShowSettings),
                                 )
+                                .menu_element(Box::new(Command::Logout), |_, cx| {
+                                    div().text_color(cx.theme().text_danger).child("Log out")
+                                })
                         }),
                 )
             })

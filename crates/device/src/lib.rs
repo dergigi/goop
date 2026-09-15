@@ -107,7 +107,21 @@ impl DeviceRegistry {
 
         subscriptions.push(
             // Observe the user signer
-            cx.subscribe(&nostr, move |this, _nostr, event, cx| {
+            cx.subscribe_in(&nostr, window, move |this, _nostr, event, window, cx| {
+                if matches!(event, state::StateEvent::NoSigner) {
+                    this.tasks.clear();
+                    this.pending_request = false;
+                    this.announcement_existed = Arc::new(AtomicBool::new(false));
+                    this.signer.update(cx, |signer, cx| {
+                        if let Some(signer) = signer.take() { signer.disconnect(); }
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+                if event.signer_changed() {
+                    this.tasks.clear();
+                    this.handle_notifications(window, cx);
+                }
                 if event.signer_changed() && settings.read(cx).is_nip4e_enabled(cx) {
                     this.get_announcement(cx);
                 }

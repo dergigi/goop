@@ -24,6 +24,14 @@ Camera images are decoded on your device, never uploaded or saved. Scanning also
 
 Only bunker connection QR codes are accepted here; an `nsec` private key or a website QR code is not a signer connection.
 
+## Log out
+
+Open the account menu in the title bar and choose **Log out**, immediately after **Settings**. Confirm to disconnect the signer and forget the saved login on this device. **Cancel** keeps you signed in. Local chat history and encryption keys are kept; reconnect your signer to log in again.
+
+## Profile links
+
+Profiles include a **njump.to** link and a **Website** link when the person has set a valid homepage. Hover over Website to see its destination.
+
 ## Agent Guide
 
 Get updates from your agents and reply to them in Goop. Each agent needs its own
@@ -126,7 +134,7 @@ Click the connection summary beside your profile in the title bar, or choose **C
 
 ## Reporting an account
 
-Choose **Report** below Chat and Search on a profile (or **Report user** in request screening), select a reason, and optionally add an explanation. Nothing is selected by default. Reports and explanations are **public**, signed by your account. **Automatically block reported users** is enabled by default in **Settings → General**. When enabled, Goop blocks the person after a relay accepts your report; turn it off to report without blocking.
+Choose **Report** at the bottom of the profile pane (or **Report user** in request screening), select a reason, and optionally add an explanation. Nothing is selected by default. Reports and explanations are **public**, signed by your account. **Automatically block reported users** is enabled by default in **Settings → General**. When enabled, Goop blocks the person after a relay accepts your report; turn it off to report without blocking.
 
 If automatic blocking fails, the confirmation says the report was sent and explains how to retry blocking. Changing accounts while the report is being sent skips automatic blocking.
 
@@ -134,7 +142,7 @@ Goop waits for relay acknowledgement before confirming submission and tells you 
 
 ## Muting and blocking
 
-Profiles have three red actions below **Chat** and **Search**:
+The profile pane keeps three red actions at the bottom, with profile details and **Chat** / **Search** above:
 
 - **Mute:** pause notifications from this person for 1 hour, 8 hours, 1 day, 1 week, or until you unmute them. This applies to their messages in direct and group chats, on this device and account. Messages and unread counts still appear. Open **Unmute** to resume notifications or change the duration.
 - **Block:** after confirmation, hide their direct chats from Inbox, Requests, and Archived. Their messages and reactions in shared groups are hidden, and their messages do not trigger notifications or unread counts. Shared groups remain available. Direct messaging is disabled until you unblock them; existing history is preserved.

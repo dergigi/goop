@@ -111,7 +111,7 @@ impl ImportIdentity {
                 signer.auth_url_handler(GoopAuthUrlHandler);
 
                 nostr.update(cx, |this, cx| {
-                    this.set_signer(signer, cx);
+                    this.set_bunker(signer, cx);
                     cx.notify();
                 });
 

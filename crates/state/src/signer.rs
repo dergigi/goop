@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use nostr_connect::client::AuthUrlHandler;
@@ -120,7 +121,32 @@ impl UniversalSignerError {
 
 #[derive(Clone, Debug)]
 pub struct UniversalSigner {
-    inner: Arc<RwLock<Arc<dyn InnerSigner>>>,
+    inner: Arc<RwLock<Arc<SignerSession>>>,
+}
+
+#[derive(Debug)]
+struct SignerSession {
+    signer: RwLock<Option<Arc<dyn InnerSigner>>>,
+    active: AtomicBool,
+}
+
+impl SignerSession {
+    fn signer(&self) -> Result<Arc<dyn InnerSigner>, UniversalSignerError> {
+        self.ensure_active()?;
+        self.signer
+            .read()
+            .expect("RwLock poisoned")
+            .clone()
+            .ok_or_else(|| UniversalSignerError::new(SignerFailure::Disconnected))
+    }
+
+    fn ensure_active(&self) -> Result<(), UniversalSignerError> {
+        if self.active.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(UniversalSignerError::new(SignerFailure::Disconnected))
+        }
+    }
 }
 
 impl UniversalSigner {
@@ -132,7 +158,10 @@ impl UniversalSigner {
         <T as AsyncNip44>::Error: Error + Send + Sync + 'static,
     {
         Self {
-            inner: Arc::new(RwLock::new(Arc::new(InnerSignerImpl(signer)))),
+            inner: Arc::new(RwLock::new(Arc::new(SignerSession {
+                signer: RwLock::new(Some(Arc::new(InnerSignerImpl(signer)))),
+                active: AtomicBool::new(true),
+            }))),
         }
     }
 
@@ -146,6 +175,13 @@ impl UniversalSigner {
         }
     }
 
+    /// Revoke the session, including frozen snapshots held by account workers.
+    pub fn disconnect(&self) {
+        let session = self.inner.read().expect("RwLock poisoned");
+        session.active.store(false, Ordering::SeqCst);
+        session.signer.write().expect("RwLock poisoned").take();
+    }
+
     /// Swap the inner signer in-place. All clones see the new signer.
     pub fn swap_inner<T>(&self, new_signer: T)
     where
@@ -154,7 +190,10 @@ impl UniversalSigner {
         <T as AsyncSignEvent>::Error: Error + Send + Sync + 'static,
         <T as AsyncNip44>::Error: Error + Send + Sync + 'static,
     {
-        *self.inner.write().expect("RwLock poisoned") = Arc::new(InnerSignerImpl(new_signer));
+        *self.inner.write().expect("RwLock poisoned") = Arc::new(SignerSession {
+            signer: RwLock::new(Some(Arc::new(InnerSignerImpl(new_signer)))),
+            active: AtomicBool::new(true),
+        });
     }
 }
 
@@ -234,14 +273,6 @@ where
     }
 }
 
-impl UniversalSigner {
-    #[allow(dead_code)]
-    fn with_inner<R>(&self, f: impl FnOnce(&dyn InnerSigner) -> R) -> R {
-        let guard = self.inner.read().expect("RwLock poisoned");
-        f(&**guard)
-    }
-}
-
 impl AsyncGetPublicKey for UniversalSigner {
     type Error = UniversalSignerError;
 
@@ -249,7 +280,12 @@ impl AsyncGetPublicKey for UniversalSigner {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<PublicKey, Self::Error>> + Send + '_>> {
         let inner = self.inner.read().expect("RwLock poisoned").clone();
-        Box::pin(async move { inner.get_public_key_async().await })
+        Box::pin(async move {
+            inner.ensure_active()?;
+            let result = inner.signer()?.get_public_key_async().await;
+            inner.ensure_active()?;
+            result
+        })
     }
 }
 
@@ -261,7 +297,12 @@ impl AsyncSignEvent for UniversalSigner {
         unsigned: UnsignedEvent,
     ) -> Pin<Box<dyn Future<Output = Result<Event, Self::Error>> + Send + '_>> {
         let inner = self.inner.read().expect("RwLock poisoned").clone();
-        Box::pin(async move { inner.sign_event_async(unsigned).await })
+        Box::pin(async move {
+            inner.ensure_active()?;
+            let result = inner.signer()?.sign_event_async(unsigned).await;
+            inner.ensure_active()?;
+            result
+        })
     }
 }
 
@@ -274,7 +315,15 @@ impl AsyncNip44 for UniversalSigner {
         content: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<String, Self::Error>> + Send + 'a>> {
         let inner = self.inner.read().expect("RwLock poisoned").clone();
-        Box::pin(async move { inner.nip44_encrypt_async(public_key, content).await })
+        Box::pin(async move {
+            inner.ensure_active()?;
+            let result = inner
+                .signer()?
+                .nip44_encrypt_async(public_key, content)
+                .await;
+            inner.ensure_active()?;
+            result
+        })
     }
 
     fn nip44_decrypt_async<'a>(
@@ -283,7 +332,15 @@ impl AsyncNip44 for UniversalSigner {
         payload: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<String, Self::Error>> + Send + 'a>> {
         let inner = self.inner.read().expect("RwLock poisoned").clone();
-        Box::pin(async move { inner.nip44_decrypt_async(public_key, payload).await })
+        Box::pin(async move {
+            inner.ensure_active()?;
+            let result = inner
+                .signer()?
+                .nip44_decrypt_async(public_key, payload)
+                .await;
+            inner.ensure_active()?;
+            result
+        })
     }
 }
 
@@ -304,6 +361,39 @@ impl AuthUrlHandler for GoopAuthUrlHandler {
 
 #[cfg(test)]
 mod failure_tests {
+    #[test]
+    fn logout_revokes_snapshots_without_breaking_a_new_login() {
+        use super::*;
+        smol::block_on(async {
+            let signer = UniversalSigner::new(Keys::generate());
+            let old = signer.snapshot();
+            let public_key = old.get_public_key_async().await.unwrap();
+            let pending = old.get_public_key_async();
+            signer.disconnect();
+            assert!(pending.await.is_err());
+            assert!(old.get_public_key_async().await.is_err());
+            assert!(
+                old.nip44_encrypt_async(&public_key, "secret")
+                    .await
+                    .is_err()
+            );
+            assert!(
+                old.sign_event_async(
+                    EventBuilder::new(Kind::TextNote, "test").finalize_unsigned(public_key)
+                )
+                .await
+                .is_err()
+            );
+            let next = Keys::generate();
+            signer.swap_inner(next.clone());
+            assert_eq!(
+                signer.get_public_key_async().await.unwrap(),
+                next.public_key()
+            );
+            assert!(old.get_public_key_async().await.is_err());
+        });
+    }
+
     use super::*;
     #[test]
     fn classifies_wrapped_signer_errors_without_treating_relay_rejection_as_consent() {
