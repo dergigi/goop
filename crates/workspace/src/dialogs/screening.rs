@@ -55,9 +55,9 @@ impl Screening {
     pub fn new(public_key: PublicKey, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut subscriptions = smallvec![];
 
-        subscriptions.push(cx.on_release_in(window, move |this, window, cx| {
+        subscriptions.push(cx.on_release_in(window, move |this, _window, _cx| {
             this.tasks.clear();
-            window.close_all_modals(cx);
+
         }));
 
         cx.defer_in(window, |this, _window, cx| {
@@ -420,12 +420,6 @@ impl Render for Screening {
 
         v_flex()
             .gap_4()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().text_muted)
-                    .child("This person wants to start a conversation with you."),
-            )
             .child(
                 v_flex()
                     .gap_3()

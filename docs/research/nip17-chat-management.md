@@ -43,3 +43,18 @@ Amethyst tracks relay acknowledgements for each recipient's gift wrap. A single 
 - Sync polls while connected and wakes after edits. Signer refusals pause synchronization until an explicit Retry sync or new edit. Pending local edits survive restart. Concurrent publications still follow Nostr's last-write-wins behavior; this is not a conflict-free protocol.
 - Leave locally also archives the group but stores its notification suppression only on this device. It preserves history and refuses new sends until Rejoin. Its confirmation explains that it cannot prevent peers sending messages.
 - Tests cover direct and group IDs, unknown/legacy tags, account isolation, pending changes across restart, local Leave/Rejoin persistence, and two local clients exchanging encrypted archive state through a test relay. A live Nospeak-device test remains pending.
+
+
+## Pinned chats: Amethyst compatibility
+
+Source reviewed: Amethyst commit `e57b0e07540e2038e9eab0324e0a9efab3e9395c`.
+
+- [AppSpecificState](https://github.com/vitorpamplona/amethyst/blob/e57b0e07540e2038e9eab0324e0a9efab3e9395c/amethyst/src/main/java/com/vitorpamplona/amethyst/model/nip78AppSpecific/AppSpecificState.kt) publishes kind 30078, `d=AmethystSettings`, with a NIP-44 self-encrypted JSON object.
+- [AccountSyncedSettingsInternal](https://github.com/vitorpamplona/amethyst/blob/e57b0e07540e2038e9eab0324e0a9efab3e9395c/amethyst/src/main/java/com/vitorpamplona/amethyst/model/AccountSyncedSettingsInternal.kt) stores `chats.pinnedRooms` as arrays of sorted member hex keys.
+- [BaseDMGroupEvent](https://github.com/vitorpamplona/amethyst/blob/e57b0e07540e2038e9eab0324e0a9efab3e9395c/quartz/src/commonMain/kotlin/com/vitorpamplona/quartz/nip17Dm/base/BaseDMGroupEvent.kt) excludes the current account from the room key, except that a self-chat uses the account's own key.
+
+Goop reads the latest remote settings before editing, preserves other JSON fields, and changes only `chats.pinnedRooms`. Pending pin/unpin changes persist per account and retry with the archive-sync worker. Remote unpins are authoritative unless there is a pending local edit. Pins are shown above date groups; archive and pin remain separate states. Concurrent settings writes still follow Nostr's last-write-wins semantics.
+
+Regression tests cover DM/group/self keys, restart and account isolation, encrypted relay round trips, preservation of other settings, and remote unpinning. Live Goop–Amethyst testing remains pending. Unsupported or malformed settings are rejected rather than overwritten.
+
+Nospeak's current source at `e94a4647caf81ac44f75b28c772dd44e0b9ca262` implements chat archives and message favorites (`30003`, `dm-favorites`); no chat pinning implementation was found there.

@@ -48,6 +48,7 @@ pub(super) struct RumorCache {
     rooms: Arc<RwLock<BTreeMap<EventId, u64>>>,
     reaction_targets: Arc<RwLock<BTreeSet<EventId>>>,
     search: Arc<RwLock<crate::search::MessageSearchIndex>>,
+    incoming_positions: Arc<RwLock<BTreeMap<u64, BTreeSet<(Timestamp, EventId)>>>>,
 }
 
 impl RumorCache {
@@ -69,6 +70,7 @@ impl RumorCache {
             rooms: Arc::default(),
             reaction_targets: Arc::default(),
             search: Arc::default(),
+            incoming_positions: Arc::default(),
         }
     }
 
@@ -91,6 +93,10 @@ impl RumorCache {
         if let Some(id) = rumor.id {
             if is_chat(rumor.kind) {
                 self.rooms.write().unwrap().insert(id, rumor.uniq_id());
+                if rumor.pubkey != self.owner {
+                    self.incoming_positions.write().unwrap().entry(rumor.uniq_id()).or_default()
+                        .insert((rumor.created_at, id));
+                }
             }
             if rumor.kind == Kind::Reaction {
                 self.reaction_targets
@@ -99,6 +105,11 @@ impl RumorCache {
                     .extend(rumor.tags.event_ids());
             }
         }
+    }
+
+    pub fn unread_count(&self, room: u64, reads: &crate::unread::ReadStore) -> usize {
+        self.incoming_positions.read().unwrap().get(&room)
+            .map(|messages| reads.count(room, messages)).unwrap_or(0)
     }
 
     pub fn search_messages(&self, room: u64) -> Vec<Arc<crate::SearchMessage>> {
@@ -320,6 +331,27 @@ mod tests {
             .finalize_unsigned(sender.public_key());
         rumor.ensure_id();
         rumor
+    }
+
+    #[test]
+    fn unread_index_excludes_own_messages_and_reactions() {
+        let owner = Keys::generate();
+        let peer = Keys::generate();
+        let cache = RumorCache::with_keys(Client::default(), owner.public_key(), Keys::generate());
+        let root = tempfile::tempdir().unwrap();
+        let reads = crate::unread::ReadStore::open(root.path(), owner.public_key()).unwrap();
+        let mut own = EventBuilder::new(Kind::PrivateDirectMessage, "sent")
+            .tag(Tag::public_key(peer.public_key())).finalize_unsigned(owner.public_key());
+        own.ensure_id(); cache.note(&own);
+        assert_eq!(cache.unread_count(own.uniq_id(), &reads), 0);
+        let mut incoming = EventBuilder::new(Kind::PrivateDirectMessage, "received")
+            .tag(Tag::public_key(owner.public_key())).finalize_unsigned(peer.public_key());
+        incoming.ensure_id(); cache.note(&incoming); cache.note(&incoming);
+        assert_eq!(cache.unread_count(incoming.uniq_id(), &reads), 1);
+        let mut reaction = EventBuilder::new(Kind::Reaction, "+")
+            .tag(Tag::event(incoming.id.unwrap())).finalize_unsigned(peer.public_key());
+        reaction.ensure_id(); cache.note(&reaction);
+        assert_eq!(cache.unread_count(incoming.uniq_id(), &reads), 1);
     }
 
     #[tokio::test]

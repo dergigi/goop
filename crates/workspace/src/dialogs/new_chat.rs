@@ -55,10 +55,16 @@ fn classify_query(query: &str) -> Query {
     Query::Text
 }
 
+#[cfg(test)]
 fn matches_contact(person: &Person, query: &str) -> bool {
+    matches_contact_with_self(person, query, false)
+}
+
+fn matches_contact_with_self(person: &Person, query: &str, is_self: bool) -> bool {
     let metadata = person.metadata();
     let text = format!(
-        "{} {} {} {} {}",
+        "{} {} {} {} {} {}",
+        if is_self { "note to self yourself" } else { "" },
         person.name(),
         metadata.name.unwrap_or_default(),
         metadata.nip05.unwrap_or_default(),
@@ -203,11 +209,14 @@ impl NewChat {
                 .cloned()
                 .unwrap_or_else(|| Person::from(*key))
         };
-        self.visible = self
-            .contacts
-            .iter()
-            .copied()
-            .filter(|key| matches_contact(&person(key), &query))
+        let owner = NostrRegistry::global(cx).read(cx).current_user();
+        let mut candidates = self.contacts.clone();
+        if !self.group_mode && let Some(owner) = owner {
+            candidates.retain(|key| *key != owner);
+            candidates.insert(0, owner);
+        }
+        self.visible = candidates.into_iter()
+            .filter(|key| matches_contact_with_self(&person(key), &query, Some(*key) == owner))
             .collect();
         self.visible
             .sort_by_cached_key(|key| (person(key).name().to_lowercase(), key.to_hex()));
@@ -349,7 +358,7 @@ impl NewChat {
                 let person = people.read(cx).get(&key, cx);
                 RoomEntry::new(range.start + index)
                     .public_key(key)
-                    .name(person.name())
+                    .name(if Some(key) == NostrRegistry::global(cx).read(cx).current_user() { "Note to self".into() } else { person.name() })
                     .avatar(person.avatar())
                     .selected(self.selected.contains(&key))
                     .highlighted(self.highlighted == Some(key))
@@ -360,6 +369,15 @@ impl NewChat {
             })
             .collect()
     }
+}
+
+pub fn open_self(window: &mut Window, cx: &mut App) {
+    let Some(owner) = NostrRegistry::global(cx).read(cx).current_user() else { return; };
+    let candidate = cx.new(|_| Room::new(owner, [owner]).organize(&owner).kind(RoomKind::Ongoing));
+    let chat = ChatRegistry::global(cx);
+    let room = chat.read(cx).room(&candidate.read(cx).id, cx)
+        .and_then(|room| room.upgrade()).unwrap_or(candidate);
+    chat.update(cx, |chat, cx| chat.emit_room(&room, window, cx));
 }
 
 pub fn open(window: &mut Window, cx: &mut App) {
@@ -477,6 +495,16 @@ impl Render for NewChat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn self_aliases_are_only_added_for_the_current_account() {
+        let person = Person::new(Keys::generate().public_key(), Metadata::new().name("alice"));
+        for query in ["self", "Yourself", "note to self", "alice self"] {
+            assert!(matches_contact_with_self(&person, query, true));
+            assert!(!matches_contact_with_self(&person, query, false));
+        }
+        assert!(matches_contact_with_self(&person, "alice", true));
+    }
 
     #[test]
     fn keyboard_selection_survives_reordering_and_clamps_to_results() {

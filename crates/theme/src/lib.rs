@@ -34,7 +34,7 @@ pub const TITLEBAR_HEIGHT: Pixels = px(36.0);
 pub const TABBAR_HEIGHT: Pixels = px(44.0);
 
 /// Defines default sidebar width
-pub const SIDEBAR_WIDTH: Pixels = px(240.);
+pub const SIDEBAR_WIDTH: Pixels = px(280.);
 
 pub fn init(cx: &mut App) {
     Theme::sync_system_appearance(None, cx);

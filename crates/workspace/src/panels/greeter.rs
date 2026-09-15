@@ -90,13 +90,13 @@ impl Render for GreeterPanel {
                                     ),
                                     (
                                         "new-chat",
-                                        "New Chat",
+                                        "Start a new chat",
                                         IconName::Plus,
                                         Command::NewConversation,
                                     ),
                                     (
                                         "search",
-                                        "Search Conversations",
+                                        "Search past conversations",
                                         IconName::Search,
                                         Command::SearchConversations,
                                     ),

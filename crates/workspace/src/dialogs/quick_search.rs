@@ -20,6 +20,7 @@ use ui::{WindowExtension, h_flex, v_flex};
 enum Target {
     Conversation(Entity<Room>),
     Profile(PublicKey),
+    NoteToSelf,
 }
 
 struct Entry {
@@ -90,19 +91,25 @@ fn snippet(content: &str, query: &str) -> String {
 }
 
 pub fn open(profiles: bool, window: &mut Window, cx: &mut App) {
-    let people: HashMap<_, _> = PersonRegistry::global(cx)
+    let owner = state::NostrRegistry::global(cx).read(cx).current_user();
+    let mut people: HashMap<_, _> = PersonRegistry::global(cx)
         .read(cx)
         .loaded(cx)
         .into_iter()
         .map(|person| (person.public_key(), person))
         .collect();
+    if let Some(owner) = owner {
+        people.entry(owner).or_insert_with(|| Person::from(owner));
+    }
     let mut entries = Vec::new();
     if profiles {
         for person in people.values() {
             entries.push(Entry {
                 name: person.name(),
-                detail: person.public_key().to_bech32().unwrap_or_default().into(),
-                text: profile_text(person),
+                detail: if Some(person.public_key()) == owner { "Yourself".into() }
+                    else { person.public_key().to_bech32().unwrap_or_default().into() },
+                text: format!("{} {}", profile_text(person),
+                    if Some(person.public_key()) == owner { "note to self yourself" } else { "" }),
                 messages: Vec::new(),
                 target: Target::Profile(person.public_key()),
             });
@@ -118,8 +125,20 @@ pub fn open(profiles: bool, window: &mut Window, cx: &mut App) {
         let mut rooms = chat.read(cx).rooms(&RoomKind::Ongoing, cx);
         rooms.extend(chat.read(cx).rooms(&RoomKind::Request, cx));
         rooms.sort_by_key(|room| std::cmp::Reverse(room.read(cx).created_at));
+        if let Some(owner) = owner {
+            let self_room = chat.read(cx).rooms(&RoomKind::Ongoing, cx).into_iter()
+                .chain(chat.read(cx).rooms(&RoomKind::Archived, cx))
+                .find(|room| room.read(cx).members() == [owner]);
+            entries.push(Entry {
+                name: "Note to self".into(), detail: "Yourself".into(),
+                text: format!("note to self yourself {}", profile_text(&people[&owner])),
+                messages: self_room.as_ref().map(|room| chat.read(cx).search_messages(room.read(cx).id)).unwrap_or_default(),
+                target: Target::NoteToSelf,
+            });
+        }
         for room in rooms {
             let data = room.read(cx);
+            if owner.is_some_and(|owner| data.members() == [owner]) { continue; }
             let members: Vec<_> = data
                 .members()
                 .iter()
@@ -238,11 +257,9 @@ impl QuickSearch {
         let target = self.entries[ix.entry].target.clone();
         window.close_modal(cx);
         match target {
+            Target::NoteToSelf => super::new_chat::open_self(window, cx),
             Target::Profile(key) => {
-                let view = super::screening::init(key, window, cx);
-                window.open_modal(cx, move |modal, _, _| {
-                    modal.title("Profile").show_close(true).child(view.clone())
-                });
+                window.dispatch_action(Box::new(crate::Command::OpenProfile(key)), cx);
             }
             Target::Conversation(room) => {
                 let data = room.read(cx);
@@ -257,6 +274,7 @@ impl QuickSearch {
                         modal
                             .confirm()
                             .title("Message request")
+                                .child("This person wants to start a conversation with you.")
                             .child(view.clone())
                             .button_props(
                                 ModalButtonProps::default()

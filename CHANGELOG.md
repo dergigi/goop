@@ -7,6 +7,32 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-15
+
+Goop 2.4 adds Note to self, Amethyst-compatible pinned chats, and local unread counts, with smoother keyboard navigation and a quieter sidebar. Pin compatibility is checked against Amethyst's source and relay fixtures; live cross-client testing remains pending.
+
+### Added
+
+- Open Note to self from the sidebar or Cmd/Ctrl+Shift+S. Find your account by typing “self” in conversation search, profile search, or New Chat.
+- Pin chats above the date groups and sync pins through Amethyst's self-encrypted kind-30078 `AmethystSettings` document, preserving other settings fields.
+- Show blue unread-count badges on chats and an Inbox dot when an Inbox chat has unread incoming messages. Read positions persist on this device; sent messages and reactions do not count. Opening a chat in the active window marks its loaded messages read. Existing history starts unread until viewed; no read receipts are published.
+
+### Changed
+
+- Show pin and archive buttons only while hovering a chat row, replacing the overflow button. Group Leave/Rejoin remains available by right-clicking the row.
+- Move Archived into the footer between Relays and Help, widen the default sidebar to 280 px, and add a divider below Inbox/Requests.
+- Align chat actions against a fixed-width time column, keeping them steady as duration labels change.
+- Use “Start a new chat” and “Search past conversations” on Get Started. Replace the README shortcut list with a link to the user manual.
+
+### Fixed
+
+- Focus the message box when opening or switching to a chat, including an already-open Note to self tab.
+- Open profile-search results in the right sidepane and show conversation-request wording only in request dialogs.
+- Restore sidebar focus before opening Settings so clicking the gear after Help works.
+- Show the Requests dot only for unseen requests still in the request list; ordinary chat activity cannot trigger it.
+- Restore Welcome after the final center tab is closed, including Close All Tabs.
+- Refresh unread counts when new messages leave chat ordering unchanged and when the application regains focus.
+
 ## [2.3.0] - 2026-09-15
 
 Goop 2.3 adds interoperable chat archiving, local group leave/rejoin, clearer delivery indicators and safer reporting. Archive compatibility is tested against Nospeak’s source format and local relay fixtures; live cross-app testing remains pending.
@@ -178,7 +204,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/dergigi/goop/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/dergigi/goop/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/dergigi/goop/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/dergigi/goop/compare/v2.0.0...v2.1.0

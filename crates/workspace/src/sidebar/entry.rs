@@ -12,13 +12,15 @@ use theme::ActiveTheme;
 use ui::avatar::Avatar;
 use ui::dock::ClosePanel;
 use ui::modal::ModalButtonProps;
-use ui::{Icon, IconName, Selectable, Sizable, StyledExt, WindowExtension, h_flex};
+use ui::{Icon, IconName, Selectable, Sizable, StyledExt, WindowExtension, h_flex, v_flex};
 
 use crate::dialogs::screening;
 
 #[derive(IntoElement)]
 pub struct RoomEntry {
     ix: usize,
+    actions: Option<gpui::AnyElement>,
+    unread_count: usize,
     room_id: Option<u64>,
     public_key: Option<PublicKey>,
     name: Option<SharedString>,
@@ -35,6 +37,8 @@ impl RoomEntry {
     pub fn new(ix: usize) -> Self {
         Self {
             ix,
+            actions: None,
+            unread_count: 0,
             room_id: None,
             public_key: None,
             name: None,
@@ -45,6 +49,16 @@ impl RoomEntry {
             selected: false,
             highlighted: false,
         }
+    }
+
+    pub fn actions(mut self, actions: impl IntoElement) -> Self {
+        self.actions = Some(actions.into_any_element());
+        self
+    }
+
+    pub fn unread_count(mut self, count: usize) -> Self {
+        self.unread_count = count;
+        self
     }
 
     pub fn room_id(mut self, id: u64) -> Self {
@@ -116,6 +130,7 @@ impl RenderOnce for RoomEntry {
 
         h_flex()
             .id(self.ix)
+            .group("chat-row")
             .h_9()
             .w_full()
             .px_1p5()
@@ -131,6 +146,7 @@ impl RenderOnce for RoomEntry {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .flex()
                     .items_center()
                     .justify_between()
@@ -159,7 +175,20 @@ impl RenderOnce for RoomEntry {
                             .flex_shrink_0()
                             .text_xs()
                             .text_color(cx.theme().text_placeholder)
-                            .when_some(self.created_at, |this, created_at| this.child(created_at)),
+                            .when_some(self.actions, |this, actions| this.child(
+                                h_flex().gap_1().invisible()
+                                    .group_hover("chat-row", |style| style.visible())
+                                    .child(actions)))
+                            .when_some(self.created_at, |this, created_at| this.child(
+                                v_flex().w_12().flex_shrink_0().items_end().child(created_at)
+                                    .when(self.unread_count > 0, |column| column.child(
+                                        h_flex().h_4().min_w_4().px_1().rounded_full()
+                                            .justify_center().items_center()
+                                            .bg(cx.theme().cursor).text_color(gpui::white())
+                                            .text_xs().font_semibold()
+                                            .child(if self.unread_count > 99 { "99+".to_owned() }
+                                                else { self.unread_count.to_string() })
+                                    )))),
                     ),
             )
             .hover(|this| this.bg(cx.theme().elevated_surface_background))
@@ -176,6 +205,7 @@ impl RenderOnce for RoomEntry {
                         window.open_modal(cx, move |this, _window, _cx| {
                             this.confirm()
                                 .title("Message request")
+                                .child("This person wants to start a conversation with you.")
                                 .child(screening.clone())
                                 .button_props(
                                     ModalButtonProps::default()

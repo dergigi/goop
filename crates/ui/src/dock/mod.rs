@@ -429,6 +429,13 @@ impl DockArea {
         cx.notify();
     }
 
+    /// Read the live center tree, excluding the sidebar and auxiliary docks.
+    pub fn center_is_empty(&self, cx: &App) -> bool {
+        let mut tabs = Vec::new();
+        Self::collect_tabs(self.items.view(), cx, &mut tabs);
+        tabs.iter().all(|tab| tab.read(cx).panel_ids(cx).is_empty())
+    }
+
     pub fn active_panels(&self, cx: &App) -> Vec<Arc<dyn PanelView>> {
         self.tab_groups(cx)
             .into_iter()

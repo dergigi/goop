@@ -4,34 +4,18 @@ A simple NIP-17 client that just works.
 
 Goop is Gigi's fork of [Coop](https://git.reya.info/reya/coop), available for macOS, Windows, and Linux.
 
-[Download the latest release](https://github.com/dergigi/goop/releases/latest) · [Usage guide](https://dergigi.com/goop/).
+[Download the latest release](https://github.com/dergigi/goop/releases/latest) · [User manual](https://dergigi.com/goop/).
 
 Goop is designed for people who love the keyboard and would rather reach for a shortcut than a mouse.
 
-### Keyboard shortcuts
+### Features
 
-Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
+- Encrypted direct and group chats, attachments, and Note to self.
+- Search conversations, message contents, and profiles.
+- Archive and pin chats, with conversations grouped by date.
+- A keyboard-friendly interface with tabs and resizable sidebars.
 
-- **?** — open Keyboard Shortcuts when you aren’t typing (also available in Help).
-- **Cmd/Ctrl+B** — show or hide the conversation sidebar.
-- **Cmd/Ctrl+K** — search loaded conversations and message contents, including message requests; names match first.
-- **Cmd/Ctrl+P** — instantly search loaded profiles by name, Nostr address, or public key.
-- **↑ / ↓**, **Enter**, **Esc** — choose a quick-search result, open it, or return to your previous focus.
-- **Cmd/Ctrl+F** — find text in the current chat; **Enter / Shift+Enter** move between matching messages, and **Esc** closes the find bar and restores focus.
-- **Cmd/Ctrl+1 / 2 / 3** — open Inbox, open Requests, or focus the current chat’s message box. Hold Cmd/Ctrl to reveal the numbered hints.
-- **Cmd/Ctrl+N** (or **Cmd/Ctrl+T**) — open New Chat to start a direct or group conversation.
-- **Cmd/Ctrl+Shift+N** — open New Group.
-- **Cmd/Ctrl+W**, **Cmd/Ctrl+Shift+W**, **Cmd/Ctrl+Shift+T** — close the current tab, close all tabs, or restore a closed tab.
-- **Ctrl+Tab / Ctrl+Shift+Tab** (all platforms) — next / previous tab.
-- **Cmd/Ctrl+R** — reload messaging and rescan history.
-- **Cmd/Ctrl+Shift+C** — open Contacts.
-- **Cmd/Ctrl+Shift+P** — open your Profile.
-- **Cmd/Ctrl+Shift+M** — open Messaging Relays.
-- **Cmd/Ctrl+Shift+G** — open Gossip Relays.
-- **Cmd/Ctrl+,** — open settings.
-- **Enter / Shift+Enter** — send a message / insert a newline.
-
-Quick search filters an in-memory snapshot of loaded items without querying relays as you type. Opening a profile can refresh its details. The sidebar buttons and account menu also expose the quick-search shortcuts.
+For setup, everyday use, and keyboard shortcuts, see the [user manual](https://dergigi.com/goop/).
 
 ### Versioning and changelog
 

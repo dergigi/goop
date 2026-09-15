@@ -1,4 +1,4 @@
-use chat::{ChatEvent, ChatRegistry, Room, RoomKind};
+use chat::{ChatRegistry, Room, RoomKind};
 use chrono::{DateTime, Local, NaiveDate};
 use common::{TimestampExt, goop_cache};
 use entry::RoomEntry;
@@ -14,19 +14,19 @@ use theme::{ActiveTheme};
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::scroll::Scrollbar;
-use ui::menu::DropdownMenu;
+use ui::menu::{DropdownMenu, ContextMenuExt};
 use ui::{WindowExtension, IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
 pub(crate) mod entry;
 
 #[derive(gpui::Action, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = sidebar, no_json)]
-enum ChatAction { Archive(u64, bool), Leave(u64, bool) }
+enum ChatAction { Pin(u64, bool), Archive(u64, bool), Leave(u64, bool) }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum DateGroup { Today, Yesterday, LastWeek, Older }
+enum DateGroup { Pinned, Today, Yesterday, LastWeek, Older }
 impl DateGroup {
     fn label(self) -> &'static str {
-        match self { Self::Today => "Today", Self::Yesterday => "Yesterday",
+        match self { Self::Pinned => "Pinned", Self::Today => "Today", Self::Yesterday => "Yesterday",
             Self::LastWeek => "Last 7 Days", Self::Older => "Older" }
     }
 }
@@ -40,11 +40,25 @@ fn date_group(date: NaiveDate, today: NaiveDate) -> DateGroup {
 }
 enum SidebarRow { Heading(DateGroup), Chat(Entity<Room>) }
 
+#[derive(Default)]
+struct RequestBadge {
+    owner: Option<nostr_sdk::prelude::PublicKey>,
+    seen: std::collections::HashSet<u64>,
+}
+impl RequestBadge {
+    fn update(&mut self, owner: Option<nostr_sdk::prelude::PublicKey>, requests: &[u64], viewing: bool) -> bool {
+        if self.owner != owner { self.owner = owner; self.seen.clear(); }
+        if owner.is_none() { return false; }
+        if viewing { self.seen.extend(requests.iter().copied()); }
+        requests.iter().any(|id| !self.seen.contains(id))
+    }
+}
+
 pub struct Sidebar {
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     filter: Entity<RoomKind>,
-    new_requests: bool,
+    request_badge: RequestBadge,
     _subscriptions: Vec<Subscription>,
     _date_refresh: gpui::Task<()>,
 }
@@ -54,18 +68,12 @@ impl Sidebar {
         let subscriptions = vec![
             cx.observe(&NostrRegistry::global(cx), |_, _, cx| cx.notify()),
             cx.observe(&chat, |_, _, cx| cx.notify()),
-            cx.subscribe(&chat, |this, _, event, cx| {
-                if event == &ChatEvent::Ping {
-                    this.new_requests = true;
-                    cx.notify();
-                }
-            }),
         ];
         Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
             filter: cx.new(|_| RoomKind::Ongoing),
-            new_requests: false,
+            request_badge: RequestBadge::default(),
             _subscriptions: subscriptions,
             _date_refresh: cx.spawn(async move |this, cx| {
                 loop {
@@ -77,7 +85,6 @@ impl Sidebar {
     }
     pub fn set_filter(&mut self, kind: RoomKind, window: &mut Window, cx: &mut Context<Self>) {
         self.filter.update(cx, |filter, _| *filter = kind);
-        self.new_requests = false;
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
@@ -89,6 +96,7 @@ impl Sidebar {
         let action = action.clone();
         let apply = move |window: &mut Window, cx: &mut App| {
             let result = ChatRegistry::global(cx).update(cx, |chat, cx| match action {
+                ChatAction::Pin(id, value) => chat.set_pinned(id, value, cx),
                 ChatAction::Archive(id, value) => chat.set_archived(id, value, cx),
                 ChatAction::Leave(id, value) => chat.leave_locally(id, value, cx),
             });
@@ -136,6 +144,14 @@ impl Sidebar {
                             }),
                     )
                     .child(
+                        Button::new("sidebar-archive")
+                            .icon(IconName::Archive).small().ghost().tooltip("Archived chats")
+                            .selected(self.current_filter(&RoomKind::Archived, cx))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_filter(RoomKind::Archived, window, cx)
+                            })),
+                    )
+                    .child(
                         Button::new("sidebar-help")
                             .icon(IconName::Help).small().ghost().tooltip("Help")
                             .dropdown_menu_with_anchor(gpui::Anchor::BottomRight, |menu, _, _| {
@@ -148,9 +164,10 @@ impl Sidebar {
                     .child(
                         Button::new("sidebar-settings")
                             .icon(IconName::Settings).small().ghost().tooltip("Settings")
-                            .on_click(|_, window, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.focus_handle.focus(window, cx);
                                 window.dispatch_action(Box::new(crate::Command::ShowSettings), cx)
-                            }),
+                            })),
                     ),
             )
     }
@@ -160,11 +177,14 @@ impl Sidebar {
         let today = Local::now().date_naive();
         let mut rows = Vec::new();
         let mut previous = None;
-        for room in chat.read(cx).rooms(self.filter.read(cx), cx) {
+        let mut rooms = chat.read(cx).rooms(self.filter.read(cx), cx);
+        rooms.sort_by_key(|room| !chat.read(cx).is_pinned(room.read(cx)));
+        for room in rooms {
             let date = i64::try_from(room.read(cx).created_at.as_secs()).ok()
                 .and_then(|secs| DateTime::from_timestamp(secs, 0))
                 .map(|date| date.with_timezone(&Local).date_naive());
-            let group = date.map(|date| date_group(date, today)).unwrap_or(DateGroup::Older);
+            let group = if chat.read(cx).is_pinned(room.read(cx)) { DateGroup::Pinned }
+                else { date.map(|date| date_group(date, today)).unwrap_or(DateGroup::Older) };
             if previous != Some(group) { rows.push(SidebarRow::Heading(group)); previous = Some(group); }
             rows.push(SidebarRow::Chat(room));
         }
@@ -203,23 +223,37 @@ impl Sidebar {
                 let archived = chat::ChatRegistry::global(cx).read(cx).is_archived(room);
                 let left = chat::ChatRegistry::global(cx).read(cx).has_left(room);
                 let group = room.is_group();
+                let pinned = ChatRegistry::global(cx).read(cx).is_pinned(room);
                 let entry = RoomEntry::new(range.start + ix)
                     .room_id(room.id)
+                    .unread_count(ChatRegistry::global(cx).read(cx).unread_count(room.id))
                     .name(room.display_name(cx))
                     .avatar(room.display_image(cx))
                     .public_key(public_key)
                     .kind(room.kind)
                     .created_at(room.created_at.to_ago())
                     .on_click(handler);
-                h_flex().h_9().w_full()
-                    .child(div().flex_1().min_w_0().child(entry))
-                    .child(Button::new(("chat-menu", id)).icon(IconName::Ellipsis).xsmall().ghost()
-                        .tooltip("Chat actions")
-                        .dropdown_menu(move |menu, _, _| {
-                            menu.when(!left, |menu| menu.menu(if archived { "Unarchive" } else { "Archive" }, Box::new(ChatAction::Archive(id, !archived))))
-                                .when(group, |menu| menu.menu(if left { "Rejoin" } else { "Leave locally…" }, Box::new(ChatAction::Leave(id, !left))))
-                        }))
-                    .into_any_element()
+                let actions = h_flex().gap_1()
+                    .child(Button::new(("pin-chat", id)).icon(IconName::Pin).xsmall().ghost()
+                        .selected(pinned).tooltip(if pinned { "Unpin chat" } else { "Pin chat" })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.chat_action(&ChatAction::Pin(id, !pinned), window, cx);
+                        })))
+                    .when(!left, |row| row.child(Button::new(("archive-chat", id))
+                        .icon(IconName::Archive).xsmall().ghost()
+                        .tooltip(if archived { "Unarchive chat" } else { "Archive chat" })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.chat_action(&ChatAction::Archive(id, !archived), window, cx);
+                        }))));
+                let entry = entry.actions(actions);
+                if group {
+                    div().child(entry).context_menu(move |menu, _, _| {
+                        menu.menu(if left { "Rejoin" } else { "Leave locally…" },
+                            Box::new(ChatAction::Leave(id, !left)))
+                    }).into_any_element()
+                } else { entry.into_any_element() }
             })
             .collect()
     }
@@ -246,6 +280,12 @@ impl Render for Sidebar {
         let restoring = nostr.read(cx).identity_loading();
         let loading = restoring || (chat.read(cx).loading() && logged_in);
 
+        let requests: Vec<_> = chat.read(cx).rooms(&RoomKind::Request, cx)
+            .iter().map(|room| room.read(cx).id).collect();
+        let viewing_requests = self.current_filter(&RoomKind::Request, cx);
+        let new_requests = self.request_badge.update(nostr.read(cx).current_user(), &requests, viewing_requests);
+        let unread_inbox = chat.read(cx).rooms(&RoomKind::Ongoing, cx).iter()
+            .any(|room| chat.read(cx).has_unread(room.read(cx).id));
         let total_rooms = chat.read(cx).count(self.filter.read(cx), cx);
         let show_hints = window.is_window_active() && window.modifiers().secondary();
 
@@ -263,6 +303,12 @@ impl Render for Sidebar {
                             "New Chat",
                             IconName::Plus,
                             crate::Command::NewConversation,
+                        ),
+                        (
+                            "note-to-self",
+                            "Note to self",
+                            IconName::Book,
+                            crate::Command::NoteToSelf,
                         ),
                         (
                             "search",
@@ -299,6 +345,11 @@ impl Render for Sidebar {
             )
             .child(
                 h_flex()
+                    .w_full()
+                    .flex_shrink_0()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .pb_2()
                     .px_2()
                     .gap_2()
                     .justify_center()
@@ -312,6 +363,8 @@ impl Render for Sidebar {
                                 }
                             })
                             .label("Inbox")
+                            .when(unread_inbox, |button| button.child(
+                                div().size_1().rounded_full().bg(cx.theme().cursor)))
                             .small()
                             .tooltip("All ongoing conversations")
                             .ghost_alt()
@@ -342,7 +395,7 @@ impl Render for Sidebar {
                             .font_semibold()
                             .w_full()
                             .selected(self.current_filter(&RoomKind::Request, cx))
-                            .when(self.new_requests, |this| {
+                            .when(new_requests, |this| {
                                 this.child(div().size_1().rounded_full().bg(cx.theme().cursor))
                             })
                             .on_click(cx.listener(|this, _ev, window, cx| {
@@ -354,15 +407,12 @@ impl Render for Sidebar {
                         })
                     })),
             )
-            .child(h_flex().px_2().gap_1()
-                .child(Button::new("archived").label("Archived").small().ghost()
-                    .selected(self.current_filter(&RoomKind::Archived, cx))
-                    .on_click(cx.listener(|this, _, window, cx| this.set_filter(RoomKind::Archived, window, cx))))
-                .when_some(chat.read(cx).archive_error.as_ref(), |row, error| {
-                    row.child(Button::new("retry-archives").label("Retry sync").small().ghost()
+            .when_some(chat.read(cx).archive_error.as_ref(), |view, error| {
+                view.child(h_flex().px_2().gap_1()
+                    .child(Button::new("retry-archives").label("Retry sync").small().ghost()
                         .tooltip(error.clone())
-                        .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_archives(cx))))
-                }))
+                        .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_archives(cx)))))
+            })
             .when(!loading && total_rooms == 0, |this| {
                 this.child(
                     div().w_full().px_2().child(
@@ -408,6 +458,23 @@ impl Render for Sidebar {
 #[cfg(test)]
 mod date_tests {
     use super::*;
+    #[test]
+    fn request_badge_tracks_unseen_requests_and_resets_for_accounts() {
+        use nostr_sdk::prelude::Keys;
+        let owner = Some(Keys::generate().public_key());
+        let mut badge = RequestBadge::default();
+        assert!(!badge.update(owner, &[], false));
+        assert!(badge.update(owner, &[1], false));
+        assert!(!badge.update(owner, &[], false)); // removed/archived before viewing
+        assert!(badge.update(owner, &[1], false));
+        assert!(!badge.update(owner, &[1], true)); // viewed requests
+        assert!(!badge.update(owner, &[1], false)); // other chat activity cannot re-light it
+        assert!(badge.update(owner, &[1, 2], false));
+        assert!(!badge.update(owner, &[1], false)); // new request accepted elsewhere
+        assert!(badge.update(Some(Keys::generate().public_key()), &[1], false));
+        assert!(!badge.update(None, &[1], false));
+    }
+
     #[test]
     fn groups_use_calendar_dates_and_non_overlapping_week_boundaries() {
         let today = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();

@@ -56,7 +56,6 @@ pub fn init(room: WeakEntity<Room>, window: &mut Window, cx: &mut App) -> Entity
 /// Chat Panel
 pub struct ChatPanel {
     id: SharedString,
-    focus_handle: FocusHandle,
 
     /// Chat Room
     room: WeakEntity<Room>,
@@ -161,6 +160,7 @@ impl ChatPanel {
         // Define subscriptions
         let mut subscriptions = smallvec![];
         subscriptions.push(cx.observe(&ChatRegistry::global(cx), |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
 
         subscriptions.push(
             // Subscribe the chat input event
@@ -208,7 +208,6 @@ impl ChatPanel {
         });
 
         Self {
-            focus_handle: cx.focus_handle(),
             id,
             messages,
             message_index: HashMap::new(),
@@ -1801,13 +1800,31 @@ impl Panel for ChatPanel {
 impl EventEmitter<PanelEvent> for ChatPanel {}
 
 impl Focusable for ChatPanel {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        // Dock activation (including an already-open chat) should put keyboard
+        // input directly in the composer rather than on an unfocused panel.
+        self.input.read(cx).focus_handle(cx)
     }
 }
 
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if window.is_window_active()
+            && let Some(owner) = NostrRegistry::global(cx).read(cx).current_user()
+            && let Ok(room_id) = self.room.read_with(cx, |room, _| room.id)
+        {
+            let mut position = chat::ReadPosition::default();
+            for message in self.messages.iter().filter(|message| message.author != owner) {
+                position.note(message.created_at, message.id);
+            }
+            // Only rendered chat panels advance their read position; background
+            // tabs and inactive windows leave incoming messages unread.
+            cx.defer_in(window, move |_, window, cx| {
+                if window.is_window_active() {
+                    ChatRegistry::global(cx).update(cx, |chat, cx| chat.mark_read(owner, room_id, &position, cx));
+                }
+            });
+        }
         let show_hints = window.is_window_active() && window.modifiers().secondary();
         let left_room = self.room.upgrade().and_then(|room| {
             let room = room.read(cx);

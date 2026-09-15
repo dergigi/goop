@@ -24,6 +24,8 @@ use cache::RumorCache;
 mod decryption;
 mod history;
 mod inbox;
+mod unread;
+pub use unread::ReadPosition;
 mod archive;
 mod outgoing;
 #[cfg(test)]
@@ -110,6 +112,7 @@ pub struct ChatRegistry {
     pub archive_error: Option<String>,
     incoming: Option<RumorCache>,
     inbox: Option<inbox::Inbox>,
+    reads: Option<unread::ReadStore>,
     contacts: HashSet<PublicKey>,
     classification_ready: bool,
     outgoing_reports: HashMap<EventId, Vec<SendReport>>,
@@ -223,6 +226,7 @@ impl ChatRegistry {
             archive_error: None,
             incoming: None,
             inbox: None,
+            reads: None,
             contacts: HashSet::new(),
             classification_ready: false,
             outgoing_reports: HashMap::new(),
@@ -243,6 +247,10 @@ impl ChatRegistry {
         let signer = nostr.read(cx).signer();
         let Some(user) = nostr.read(cx).current_user() else {
             return;
+        };
+        self.reads = match unread::ReadStore::open(&common::config_dir(), user) {
+            Ok(reads) => Some(reads),
+            Err(error) => { cx.emit(ChatEvent::Error(format!("Could not load read state: {error}"))); None }
         };
         self.inbox = match inbox::Inbox::open(common::config_dir(), user) {
             Ok(inbox) => Some(inbox),
@@ -374,6 +382,23 @@ impl ChatRegistry {
     }
 
     /// Snapshot already loaded message text without disk or relay access.
+    pub fn has_unread(&self, room: u64) -> bool { self.unread_count(room) > 0 }
+    pub fn unread_count(&self, room: u64) -> usize {
+        match (&self.reads, &self.incoming) {
+            (Some(reads), Some(cache)) => cache.unread_count(room, reads),
+            _ => 0,
+        }
+    }
+    pub fn mark_read(&mut self, owner: PublicKey, room: u64, position: &ReadPosition, cx: &mut Context<Self>) {
+        if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return; }
+        if let Some(reads) = &mut self.reads {
+            match reads.mark(room, position) {
+                Ok(true) => cx.notify(),
+                Ok(false) => {},
+                Err(error) => cx.emit(ChatEvent::Error(format!("Could not save read state: {error}"))),
+            }
+        }
+    }
     pub fn search_messages(&self, room: u64) -> Vec<Arc<SearchMessage>> {
         self.incoming.as_ref().map(|cache| cache.search_messages(room)).unwrap_or_default()
     }
@@ -418,6 +443,16 @@ impl ChatRegistry {
     }
     pub fn retry_archives(&mut self, cx: &mut Context<Self>) {
         if let Some(store) = &self.archives { store.retry(); } else { self.start_archives(cx); }
+    }
+    pub fn is_pinned(&self, room: &Room) -> bool {
+        self.archives.as_ref().is_some_and(|store| store.is_pinned(room.members()))
+    }
+    pub fn set_pinned(&mut self, id: u64, pinned: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
+        let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before pinning"))?;
+        store.pin(room.members(), pinned)?;
+        cx.notify();
+        Ok(())
     }
     pub fn is_archived(&self, room: &Room) -> bool {
         self.archives.as_ref().is_some_and(|store| store.contains(room.members()) || store.has_left(room.members()))
@@ -917,6 +952,7 @@ impl ChatRegistry {
         self.archive_error = None;
         self.incoming = None;
         self.inbox = None;
+        self.reads = None;
         self.contacts.clear();
         self.classification_ready = false;
         self.outgoing_reports.clear();
@@ -1153,6 +1189,8 @@ impl ChatRegistry {
                 self.add_room(message.rumor, cx);
             }
         }
+        // Unread counts and timestamps can change without reordering rooms.
+        cx.notify();
     }
 
     /// Trigger a refresh of the opened chat rooms by their IDs

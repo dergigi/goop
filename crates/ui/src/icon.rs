@@ -20,6 +20,8 @@ impl<T: IconNamed> From<T> for Icon {
 
 #[derive(IntoElement, Clone)]
 pub enum IconName {
+    Archive,
+    Pin,
     ArrowLeft,
     ArrowRight,
     Boom,
@@ -122,6 +124,8 @@ impl IconNamed for IconName {
             Self::History => "icons/history.svg",
             Self::Info => "icons/info.svg",
             Self::Invite => "icons/invite.svg",
+            Self::Pin => "icons/pin.svg",
+            Self::Archive => "icons/archive.svg",
             Self::Inbox => "icons/inbox.svg",
             Self::InboxFill => "icons/inbox-fill.svg",
             Self::Link => "icons/link.svg",

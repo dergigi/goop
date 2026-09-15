@@ -21,7 +21,7 @@ use theme::{ActiveTheme, Appearance, SIDEBAR_WIDTH, Theme};
 use ui::avatar::Avatar;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{
-    CloseAllPanels, ClosePanel, DockArea, DockItem, DockPlacement, NextPanel, PanelView,
+    CloseAllPanels, ClosePanel, DockArea, DockEvent, DockItem, DockPlacement, NextPanel, PanelView,
     PreviousPanel, ReopenClosedPanel,
 };
 use ui::indicator::Indicator;
@@ -71,6 +71,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         KeyBinding::new(&format!("{modifier}-t"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-n"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-shift-n"), Command::NewGroup, None),
+        KeyBinding::new(&format!("{modifier}-shift-s"), Command::NoteToSelf, None),
         KeyBinding::new(&format!("{modifier}-w"), ClosePanel, None),
         KeyBinding::new(&format!("{modifier}-shift-w"), CloseAllPanels, None),
         KeyBinding::new(&format!("{modifier}-shift-t"), ReopenClosedPanel, None),
@@ -97,6 +98,7 @@ pub enum Command {
     ShowRequests,
     FocusComposer,
     NewConversation,
+    NoteToSelf,
     NewGroup,
     UsageGuide,
     KeyboardShortcuts,
@@ -114,6 +116,7 @@ pub enum Command {
     ShowRelayList,
     ShowMessaging,
     ShowProfile,
+    OpenProfile(PublicKey),
     ShowSettings,
     ShowContactList,
 }
@@ -145,6 +148,19 @@ impl Workspace {
 
         let mut subscriptions = smallvec![];
         subscriptions.push(cx.observe(&nostr, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe_in(&dock, window, |_, _, event, window, cx| {
+            if matches!(event, DockEvent::LayoutChanged) {
+                // Wait until close/drag/close-all has finished changing the live tree.
+                cx.defer_in(window, |this, window, cx| {
+                    if this.dock.read(cx).center_is_empty(cx) {
+                        let welcome = greeter::init(window, cx);
+                        this.dock.update(cx, |dock, cx| {
+                            dock.add_panel(Arc::new(welcome), DockPlacement::Center, window, cx);
+                        });
+                    }
+                });
+            }
+        }));
         subscriptions.push(cx.observe(&chat, |_, _, cx| cx.notify()));
 
         subscriptions.push(
@@ -411,6 +427,7 @@ impl Workspace {
             Command::NewConversation => {
                 dialogs::new_chat::open(window, cx);
             }
+            Command::NoteToSelf => dialogs::new_chat::open_self(window, cx),
             Command::NewGroup => dialogs::new_chat::open_group(window, cx),
             Command::UsageGuide => cx.open_url("https://dergigi.com/goop/"),
             Command::KeyboardShortcuts => dialogs::shortcuts::open(window, cx),
@@ -441,6 +458,16 @@ impl Workspace {
                         );
                     });
                 }
+            }
+            Command::OpenProfile(public_key) => {
+                self.dock.update(cx, |dock, cx| {
+                    dock.add_panel(
+                        Arc::new(panels::person_profile::init(*public_key, window, cx)),
+                        DockPlacement::Right,
+                        window,
+                        cx,
+                    );
+                });
             }
             Command::ShowContactList => {
                 self.dock.update(cx, |this, cx| {

@@ -289,6 +289,10 @@ impl Room {
 
     /// Gets the display name for the room
     pub fn display_name(&self, cx: &App) -> SharedString {
+        if NostrRegistry::global(cx).read(cx).current_user()
+            .is_some_and(|owner| self.members() == [owner]) {
+            return "Note to self".into();
+        }
         if let Some(value) = self.subject.clone() {
             value
         } else {
@@ -609,6 +613,16 @@ mod delivery_tests {
 #[cfg(test)]
 mod classification_tests {
     use super::*;
+    #[test]
+    fn self_conversation_has_one_member_and_a_stable_id() {
+        let owner = Keys::generate().public_key();
+        let room = Room::new(owner, [owner]).organize(&owner);
+        assert_eq!(room.members(), &[owner]);
+        assert!(!room.is_group());
+        assert_eq!(room.id, Room::new(owner, [owner]).id);
+        assert_eq!(room.id, Room::new(owner, []).id);
+    }
+
     fn room(time: u64, kind: RoomKind) -> Room {
         let event = EventBuilder::new(Kind::PrivateDirectMessage, "message")
             .custom_created_at(Timestamp::from(time))
