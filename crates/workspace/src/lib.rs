@@ -767,9 +767,12 @@ impl Workspace {
                                     IconName::Settings,
                                     Box::new(Command::ShowSettings),
                                 )
-                                .menu_element(Box::new(Command::Logout), |_, cx| {
-                                    div().text_color(cx.theme().text_danger).child("Log out")
-                                })
+                                .separator()
+                                .menu_element_with_icon(
+                                    Icon::new(IconName::Door).text_color(cx.theme().text_danger),
+                                    Box::new(Command::Logout),
+                                    |_, cx| div().text_color(cx.theme().text_danger).child("Log out"),
+                                )
                         }),
                 )
             })
