@@ -214,7 +214,7 @@ impl Sidebar {
                             .text_sm().text_color(cx.theme().text_muted)
                             .child(group.label())
                             .when(range.start + ix == 0, |heading| heading.child(
-                                Button::new("chat-list-menu").icon(IconName::Ellipsis)
+                                Button::new("chat-list-menu").icon(IconName::EllipsisVertical)
                                     .xsmall().ghost().tooltip("Chat list actions")
                                     .dropdown_menu(move |menu, _, _| {
                                         menu.action_context(focus_handle.clone())
