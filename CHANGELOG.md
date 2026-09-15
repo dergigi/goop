@@ -7,6 +7,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-09-15
+
 ### Added
 
 - Add “Found a bug? Feature request? DM Goop!” as the fifth Get Started option, opening a direct chat with Goop.
@@ -16,6 +18,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 - Use a single double-checkmark icon for fully accepted outgoing messages, with matching icons in delivery details.
 - Show each blocked user's Unblock button only while hovering over their row.
+- Highlight the Get Started feedback action in Goop purple.
+- Update the Note to self placeholder to “Write a note to your future self” and the Goop chat placeholder to “Message Goop to suggest a feature, report a bug, or just to say hi”.
 
 ## [2.8.0] - 2026-09-15
 
@@ -319,7 +323,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.8.1...HEAD
+[2.8.1]: https://github.com/dergigi/goop/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/dergigi/goop/compare/v2.7.1...v2.8.0
 [2.7.1]: https://github.com/dergigi/goop/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/dergigi/goop/compare/v2.6.0...v2.7.0
