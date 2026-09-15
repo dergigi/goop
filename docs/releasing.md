@@ -56,3 +56,17 @@ new GitHub release bodies come from the matching changelog section.
 
 A manual workflow dispatch with `create_release: false` remains available for
 build-only validation without requiring a finalized changelog entry.
+
+## Homebrew tap
+
+The macOS cask lives in [dergigi/homebrew-goop](https://github.com/dergigi/homebrew-goop) and uses the published release's architecture-specific DMGs and SHA-256 checksums. Its homepage is https://goop.dergigi.com/.
+
+After publishing and verifying a stable release, run the tap's **Update cask** workflow for an immediate update:
+
+```sh
+gh workflow run update.yml --repo dergigi/homebrew-goop
+```
+
+An hourly scheduled run also checks for updates; GitHub may delay scheduled jobs. The updater ignores drafts and prereleases, refuses downgrades, and checks both DMG checksums against SHA256SUMS and GitHub's asset digests. It uses only the tap repository's standard GitHub Actions token. Monitor the workflow result after each release.
+
+The cask declares that Goop updates itself. An explicit Homebrew upgrade uses `brew upgrade --cask --greedy dergigi/goop/goop`. The tap preserves user data on uninstall and does not bypass Gatekeeper. Developer ID signing and notarization remain separate release-packaging work.

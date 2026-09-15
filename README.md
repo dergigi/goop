@@ -4,9 +4,17 @@ A simple NIP-17 client that just works.
 
 Goop is Gigi's fork of [Coop](https://git.reya.info/reya/coop), available for macOS, Windows, and Linux.
 
-[Download the latest release](https://github.com/dergigi/goop/releases/latest) · [User manual](https://dergigi.com/goop/).
+[Website](https://goop.dergigi.com/) · [Download the latest release](https://github.com/dergigi/goop/releases/latest) · [User manual](https://dergigi.com/goop/).
 
 Goop is designed for people who love the keyboard and would rather reach for a shortcut than a mouse.
+
+### Install with Homebrew (macOS)
+
+```sh
+brew install --cask dergigi/goop/goop
+```
+
+The [Goop tap](https://github.com/dergigi/homebrew-goop) supports Apple Silicon and Intel Macs and tracks published stable releases. Current macOS builds are ad-hoc signed and not notarized; installation through Homebrew does not remove macOS's first-launch security checks.
 
 ### Features
 
