@@ -1,6 +1,6 @@
-# Crash reports (next release)
+# Crash reports
 
-Goop installs crash capture before initializing its window, fonts, signer, or database. A Rust panic or an unhandled Windows exception writes a minimal report in the app's support directory:
+Starting with Goop 2.10.0, Goop installs crash capture before initializing its window, fonts, signer, or database. A Rust panic or an unhandled Windows exception writes a minimal report in the app's support directory:
 
 - Windows: `%LOCALAPPDATA%\goop\crashes`
 - macOS: `~/Library/Application Support/Goop/crashes`
