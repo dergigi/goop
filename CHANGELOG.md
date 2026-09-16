@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Add Mute, Block, and Report to direct-chat context menus, using the existing moderation dialogs.
+
 - Remember recently chosen emoji across restarts and offer a Recent section in both emoji pickers.
 - Save minimal Rust panic and Windows exception diagnostics locally; offer a preview and optional encrypted DM to Goop on the next launch.
 

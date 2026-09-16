@@ -273,7 +273,10 @@ impl Sidebar {
                 let entry = entry.actions(actions);
                 let unread = ChatRegistry::global(cx).read(cx).has_unread(id);
                 let focus_handle = self.focus_handle.clone();
-                div().child(entry).context_menu_with_id(("chat-context-menu", id), move |menu, _, _| {
+                div().child(entry).context_menu_with_id(("chat-context-menu", id), move |menu, _, cx| {
+                    let owner = NostrRegistry::global(cx).read(cx).current_user();
+                    let muted = ChatRegistry::global(cx).read(cx).is_muted(public_key);
+                    let blocked = ChatRegistry::global(cx).read(cx).is_blocked(public_key);
                     menu.action_context(focus_handle.clone())
                         .when(!group, |menu| menu
                             .item(ui::menu::PopupMenuItem::new("View profile")
@@ -291,6 +294,30 @@ impl Sidebar {
                         .separator()
                         .menu(if unread { "Mark as read" } else { "Mark as unread" },
                             Box::new(ChatAction::SetRead(id, unread)))
+                        .when(!group && owner.is_some_and(|owner| owner != public_key), |menu| {
+                            [
+                                (if muted { "Unmute" } else { "Mute" }, IconName::Mute, 0),
+                                (if blocked { "Unblock" } else { "Block" }, IconName::Block, 1),
+                                ("Report", IconName::Flag, 2),
+                            ].into_iter().fold(menu.separator(), |menu, (label, icon, action)| {
+                                menu.item(ui::menu::PopupMenuItem::new(label).icon(icon)
+                                    .on_click(move |_, window, cx| {
+                                        // Let the context menu restore focus before opening a modal.
+                                        window.defer(cx, move |window, cx| {
+                                            if NostrRegistry::global(cx).read(cx).current_user() != owner { return; }
+                                            match action {
+                                                0 => crate::dialogs::moderation::mute(public_key, window, cx),
+                                                1 => crate::dialogs::moderation::block(public_key, window, cx),
+                                                _ => {
+                                                    let name = person::PersonRegistry::global(cx).read(cx)
+                                                        .get(&public_key, cx).name();
+                                                    crate::dialogs::report::open(public_key, name, window, cx);
+                                                }
+                                            }
+                                        });
+                                    }))
+                            })
+                        })
                         .when(group, |menu| menu.separator().menu(if left { "Rejoin" } else { "Leave locally…" },
                             Box::new(ChatAction::Leave(id, !left))))
                 }).into_any_element()
