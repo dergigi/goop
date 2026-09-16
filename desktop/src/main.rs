@@ -16,6 +16,7 @@ mod menus;
 fn main() {
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     if workspace::qr_camera::run_if_requested() { return; }
+    let _crash_guard = common::crash_report::install(env!("CARGO_PKG_VERSION"), workspace::build_revision());
     // Initialize logging
     tracing_subscriber::fmt::init();
 

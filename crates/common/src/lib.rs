@@ -15,3 +15,5 @@ mod media_extractor;
 mod parser;
 mod paths;
 mod range;
+
+pub mod crash_report;

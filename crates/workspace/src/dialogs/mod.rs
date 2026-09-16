@@ -13,3 +13,5 @@ pub mod moderation;
 mod qr_scanner;
 
 pub mod pair_signer;
+
+pub mod crash_report;

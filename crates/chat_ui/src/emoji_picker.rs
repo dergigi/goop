@@ -10,6 +10,7 @@ use gpui::{
     uniform_list,
 };
 use theme::ActiveTheme;
+use settings::AppSettings;
 use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
 use ui::popover::Popover;
@@ -110,6 +111,8 @@ struct EmojiPicker {
     input: Entity<InputState>,
     grid_focus: FocusHandle,
     group: Option<Group>,
+    recent: bool,
+    recent_emojis: Vec<&'static Emoji>,
     tone: Option<SkinTone>,
     visible: Vec<&'static Emoji>,
     selected: usize,
@@ -125,19 +128,27 @@ impl EmojiPicker {
             _ => {}
         });
         input.update(cx, |input, cx| input.focus(window, cx));
+        let recent: Vec<_> = AppSettings::emoji_history(cx).recent.iter()
+            .filter_map(|s| emojis::get(s)).collect();
+        let show_recent = !recent.is_empty();
         Self {
             input,
             grid_focus: cx.focus_handle(),
             group: None,
+            recent: show_recent,
+            recent_emojis: recent.clone(),
             tone: Some(SkinTone::Default),
-            visible: results("", None, Some(SkinTone::Default)),
+            visible: if show_recent { recent } else { results("", None, Some(SkinTone::Default)) },
             selected: 0,
             scroll: UniformListScrollHandle::new(),
             _input_subscription: subscription,
         }
     }
     fn filter(&mut self, cx: &mut Context<Self>) {
-        self.visible = results(self.input.read(cx).value().as_ref(), self.group, self.tone);
+        let query = self.input.read(cx).value();
+        self.visible = if self.recent && query.trim().is_empty() {
+            self.recent_emojis.clone()
+        } else { results(query.as_ref(), self.group, self.tone) };
         self.selected = 0;
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
@@ -184,7 +195,7 @@ impl EmojiPicker {
 }
 impl Render for EmojiPicker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let grid_height = (window.viewport_size().height - px(230.))
+        let grid_height = (window.viewport_size().height - px(260.))
             .min(px(252.))
             .max(px(72.));
         let current_group = self.group;
@@ -231,6 +242,16 @@ impl Render for EmojiPicker {
                 }
             }))
             .child(Input::new(&self.input).small())
+            .child(Button::new("recent-emoji")
+                .label("Recent")
+                .small().ghost().selected(self.recent)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.recent = true;
+                    this.group = None;
+                    this.input.update(cx, |input, cx| input.set_value("", window, cx));
+                    this.filter(cx);
+                    this.input.update(cx, |input, cx| input.focus(window, cx));
+                })))
             .child(
                 h_flex()
                     .w_full()
@@ -240,10 +261,11 @@ impl Render for EmojiPicker {
                             .tooltip("All emoji")
                             .xsmall()
                             .ghost()
-                            .selected(current_group.is_none())
+                            .selected(current_group.is_none() && !self.recent)
                             .w_7()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.group = None;
+                                this.recent = false;
                                 this.input
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                                 this.filter(cx);
@@ -261,6 +283,7 @@ impl Render for EmojiPicker {
                                 .selected(current_group == Some(group))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.group = Some(group);
+                                    this.recent = false;
                                     this.input
                                         .update(cx, |input, cx| input.set_value("", window, cx));
                                     this.filter(cx);
@@ -306,7 +329,7 @@ impl Render for EmojiPicker {
                                 .p_4()
                                 .text_sm()
                                 .text_color(cx.theme().text_muted)
-                                .child("No matching emoji"),
+                                .child(if self.recent && self.input.read(cx).value().is_empty() { "No recent emoji yet" } else { "No matching emoji" }),
                         )
                     })
                     .when(!self.visible.is_empty(), |view| {
@@ -382,6 +405,7 @@ impl RenderOnce for EmojiPopover {
                         popover
                             .update(cx, |popover, cx| popover.dismiss(window, cx))
                             .ok();
+                        if let Some(emoji) = choice.0 { AppSettings::record_emoji(emoji, false, cx); }
                         callback(choice.0, window, cx);
                     })
                     .detach();
@@ -561,6 +585,31 @@ mod interaction_tests {
         assert_eq!(*choices.borrow(), vec![Some("🚀"), None, None]);
         cx.simulate_input("?");
         cx.update(|_, cx| assert_eq!(input.read(cx).value().as_ref(), "A🚀!?B"));
+    }
+
+    #[gpui::test]
+    fn recent_preserves_chosen_skin_tones_and_search_still_covers_catalog(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            theme::init(cx);
+            ui::init(cx);
+            let picker = cx.new(|cx| EmojiPicker::new(window, cx));
+            ui::Root::new(picker.into(), window, cx)
+        });
+        cx.update(|window, cx| {
+            let picker = root.read(cx).view().clone().downcast::<EmojiPicker>().unwrap();
+            picker.update(cx, |picker, cx| {
+                picker.recent_emojis = ["🤙🏽", "👩🏿‍💻"].into_iter().map(|e| emojis::get(e).unwrap()).collect();
+                picker.recent = true;
+                picker.filter(cx);
+                assert_eq!(picker.visible.iter().map(|e| e.as_str()).collect::<Vec<_>>(), ["🤙🏽", "👩🏿‍💻"]);
+                picker.input.update(cx, |input, cx| input.set_value("rocket", window, cx));
+                picker.filter(cx);
+                assert!(picker.visible.iter().any(|e| e.as_str() == "🚀"));
+                picker.input.update(cx, |input, cx| input.set_value("", window, cx));
+                picker.filter(cx);
+                assert_eq!(picker.visible[0].as_str(), "🤙🏽");
+            });
+        });
     }
 
     #[gpui::test]

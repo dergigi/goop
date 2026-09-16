@@ -7,6 +7,15 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Remember recently chosen emoji across restarts and offer a Recent section in both emoji pickers.
+- Save minimal Rust panic and Windows exception diagnostics locally; offer a preview and optional encrypted DM to Goop on the next launch.
+
+### Changed
+
+- Start quick reactions with 🤙, 🧡, and 👀, then adapt them to the most frequently used emoji in the last 100 sent reactions.
+
 ## [2.9.0] - 2026-09-16
 
 ### Added

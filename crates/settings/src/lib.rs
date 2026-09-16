@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use theme::{Appearance, Theme};
 
+pub mod emoji_history;
+
 pub fn init(window: &mut Window, cx: &mut App) {
     AppSettings::set_global(cx.new(|cx| AppSettings::new(window, cx)), cx)
 }
@@ -71,6 +73,9 @@ impl RoomConfig {
 /// Settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub emoji_history: emoji_history::EmojiHistory,
+
     /// Missing in legacy settings: migrate to following the system.
     #[serde(default)]
     pub appearance: Appearance,
@@ -105,6 +110,7 @@ fn default_render_markdown() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            emoji_history: Default::default(),
             appearance: Appearance::System,
             hide_avatar: false,
             render_markdown: default_render_markdown(),
@@ -131,11 +137,29 @@ pub struct AppSettings {
     /// Settings
     inner: Entity<Settings>,
 
+    save_task: Option<Task<()>>,
+
     /// Event subscriptions
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
 
 impl AppSettings {
+    pub fn emoji_history(cx: &App) -> emoji_history::EmojiHistory {
+        cx.try_global::<GlobalAppSettings>()
+            .map(|settings| settings.0.read(cx).inner.read(cx).emoji_history.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn record_emoji(emoji: &str, reaction: bool, cx: &mut App) {
+        let Some(settings) = cx.try_global::<GlobalAppSettings>().map(|s| s.0.clone()) else { return; };
+        settings.update(cx, |settings, cx| {
+            settings.inner.update(cx, |inner, cx| {
+                inner.emoji_history.record(emoji, reaction);
+                cx.notify();
+            });
+        });
+    }
+
     /// Retrieve the global settings instance
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalAppSettings>().0.clone()
@@ -165,6 +189,7 @@ impl AppSettings {
 
         Self {
             inner,
+            save_task: None,
             _subscriptions: subscriptions,
         }
     }
@@ -208,11 +233,16 @@ impl AppSettings {
         let settings = self.inner.read(cx);
         if let Ok(content) = serde_json::to_string(&settings) {
             #[cfg(not(target_arch = "wasm32"))]
-            cx.background_spawn(async move {
-                let path = config_dir().join(".settings");
-                smol::fs::write(&path, content).await.ok();
-            })
-            .detach();
+            {
+                let previous = self.save_task.take();
+                self.save_task = Some(cx.background_spawn(async move {
+                    if let Some(previous) = previous { previous.await; }
+                    let directory = config_dir();
+                    if smol::fs::create_dir_all(directory).await.is_ok() {
+                        smol::fs::write(directory.join(".settings"), content).await.ok();
+                    }
+                }));
+            }
         }
     }
 

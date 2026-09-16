@@ -34,8 +34,6 @@ use ui::{
 
 use crate::text::RenderedText;
 
-const COMPACT_REACTION_EMOJIS: &[&str] = &["👍", "❤️", "👀"];
-
 mod actions;
 mod encrypted_media;
 mod delivery_status;
@@ -505,6 +503,9 @@ impl ChatPanel {
                 match result {
                     Ok(reports) => {
                         if reaction {
+                            if let Some(emoji) = emojis::get(content.trim()) {
+                                AppSettings::record_emoji(emoji.as_str(), true, cx);
+                            }
                             this.insert_reaction(&rumor, cx);
                         } else {
                             this.insert_message(&rumor, true, cx);
@@ -1537,15 +1538,15 @@ impl ChatPanel {
             .children({
                 let mut items = vec![];
 
-                for emoji in COMPACT_REACTION_EMOJIS {
+                for emoji in AppSettings::emoji_history(cx).quick_reactions() {
+                    let Some(emoji) = emojis::get(&emoji).map(|e| e.as_str()) else { continue; };
                     items.push(
-                        Button::new(*emoji)
-                            .label(*emoji)
-                            .tooltip(*emoji)
+                        Button::new(emoji)
+                            .label(emoji)
+                            .tooltip(emoji)
                             .small()
                             .ghost()
                             .on_click({
-                                let emoji = *emoji;
                                 let id = *id;
                                 cx.listener(move |this, _event, window, cx| {
                                     this.send_reaction(emoji, &id, window, cx);

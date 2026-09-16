@@ -18,3 +18,9 @@ log.workspace = true
 dirs = "5.0"
 qrcode = "0.14.1"
 regex = "1.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_Foundation"] }
+
+[dev-dependencies]
+tempfile = "3.10"

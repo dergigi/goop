@@ -31,6 +31,8 @@ use crate::dialogs::settings;
 use crate::panels::{contact_list, greeter, messaging_relays, profile, relay_list};
 use crate::sidebar::Sidebar;
 
+pub fn build_revision() -> &'static str { env!("GOOP_BUILD_REVISION") }
+
 mod build_info;
 mod dialogs;
 mod panels;
@@ -280,6 +282,7 @@ impl Workspace {
                 this.set_center(center, window, cx);
                 this.set_left_dock(sidebar, Some(SIDEBAR_WIDTH), true, window, cx);
             });
+            dialogs::crash_report::offer(window, cx);
             // Startup state may have settled before this window subscribed.
             if NostrRegistry::global(cx).read(cx).needs_signer_setup() {
                 window.close_all_modals(cx);
