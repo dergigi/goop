@@ -18,7 +18,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
-- Offer an explicit private local credential file on Linux when the system credential service is unavailable, so signer login does not require a Secret portal. Keep connection errors visible and avoid saving a new bunker URL when its client key cannot be loaded.
+- Keep signer connection errors visible, allow another attempt after a connection failure, and avoid saving a new bunker URL when its client key cannot be loaded.
 - Recognize complete flag and joined emoji sequences when replying with an emoji reaction, without treating plain numbers as emoji.
 
 ## [2.8.1] - 2026-09-15

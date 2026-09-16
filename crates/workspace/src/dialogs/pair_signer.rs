@@ -187,7 +187,7 @@ impl PairSigner {
                     this.clear_image(window);
                     this.link = None;
                     cx.notify();
-                    Ok(state::credentials::write(cx, USER_KEYRING, "bunker", bunker.to_string().as_bytes()))
+                    Ok(cx.write_credentials(USER_KEYRING, "bunker", bunker.to_string().as_bytes()))
                 })??;
                 save.await?;
                 this.update(cx, |this, cx| {
