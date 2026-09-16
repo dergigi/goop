@@ -439,7 +439,7 @@ impl Render for ConnectionStatus {
                 .when(nostr.read(cx).needs_signer_setup(), |view| view.child(
                     Button::new("setup-status-signer").label("Connect your signer").small().primary()
                         .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::ConnectSigner), cx))))
-                .child(Button::new("retry-status-signer").label("Reconnect signer").small().ghost().disabled(!signer_needs_retry)
+                .child(Button::new("retry-status-signer").icon(IconName::Refresh).label("Reconnect signer").small().ghost().disabled(!signer_needs_retry)
                     .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx)))))
             .child(v_flex().gap_2()
                 .child(h_flex().gap_2().child(Icon::new(IconName::UserKey).small()).child("Signer"))
