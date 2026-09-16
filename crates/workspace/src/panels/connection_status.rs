@@ -297,6 +297,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
             Ok(())
         });
         ConnectionStatus {
+            show_troubleshooting: false,
             scroll: gpui::ScrollHandle::new(),
             owner,
             relays: None,
@@ -310,6 +311,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
 }
 
 pub struct ConnectionStatus {
+    show_troubleshooting: bool,
     scroll: gpui::ScrollHandle,
     owner: Option<PublicKey>,
     relays: Option<Vec<RelayState>>,
@@ -506,6 +508,14 @@ impl Render for ConnectionStatus {
                                 progress.error.clone(), cx).into_any_element()
                         })))
             }))
+            .child(h_flex().child(Button::new("toggle-status-troubleshooting")
+                .icon(if self.show_troubleshooting { IconName::CaretDown } else { IconName::CaretRight })
+                .label("Troubleshooting").small().ghost()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_troubleshooting = !this.show_troubleshooting;
+                    cx.notify();
+                }))))
+            .when(self.show_troubleshooting, |view| view.child(v_flex().gap_3()
             .child(h_flex().gap_2().flex_wrap()
                 .child(Button::new("manage-status-relays").label("Manage messaging relays").small().ghost()
                     .on_click(|_, window, cx| {
@@ -544,7 +554,7 @@ impl Render for ConnectionStatus {
                 .child(Button::new("status-send").label("Retry pending sends").small().ghost().disabled(!signed_in || !send_pending)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).read(cx).retry_outgoing())))
             .child(gpui::div().text_xs().text_color(cx.theme().text_muted)
-                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."));
+                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))));
         status_viewport(content, &self.scroll)
     }
 }
