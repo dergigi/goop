@@ -124,7 +124,7 @@ impl ImportIdentity {
         self.tasks.push(cx.spawn_in(window, async move |this, cx| {
             let result: Result<(), Error> = async {
                 let keys = master_keys.await?;
-                cx.update(|_, cx| cx.write_credentials(USER_KEYRING, "bunker", password.as_bytes()))?.await?;
+                cx.update(|_, cx| state::credentials::write(cx, USER_KEYRING, "bunker", password.as_bytes()))?.await?;
                 let timeout = Duration::from_secs(30);
 
                 // Construct the nostr connect signer

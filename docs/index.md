@@ -26,6 +26,8 @@ Camera images are decoded on your device, never uploaded or saved. Scanning also
 
 Only bunker connection QR codes are accepted here; an `nsec` private key or a website QR code is not a signer connection.
 
+On Linux, Goop uses the desktop credential service. Sandboxed installations prefer the Secret portal; when that interface is missing, Goop tries Secret Service instead. The Flatpak includes permission to access `org.freedesktop.secrets`. A working, unlocked credential service (such as GNOME Keyring, KDE Wallet, or KeePassXC with Secret Service enabled) is still required.
+
 ## Emoji and reactions
 
 Use the composer’s emoji button to browse or search by name, shortcode, or emoji. Categories and skin-tone controls include an **All** option for mixed-tone variants. Choose an emoji to insert it at the cursor.

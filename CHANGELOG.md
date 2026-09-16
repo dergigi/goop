@@ -18,6 +18,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Use upstream oo7 0.7.0-alpha for Linux credentials so a missing Secret portal falls back to Secret Service. Grant Flatpak access to that service while preserving existing credential labels and encrypted storage.
 - Keep signer connection errors visible, allow another attempt after a connection failure, and avoid saving a new bunker URL when its client key cannot be loaded.
 - Recognize complete flag and joined emoji sequences when replying with an emoji reaction, without treating plain numbers as emoji.
 

@@ -116,6 +116,7 @@ sdk-extensions:
 command: goop
 finish-args:
   - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.freedesktop.secrets
   - --device=dri
   - --share=ipc
   - --share=network

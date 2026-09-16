@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+oo7 = { version = "=0.7.0-alpha", default-features = false, features = ["async-std", "native_crypto"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+oo7 = { version = "=0.7.0-alpha", default-features = false, features = ["async-std", "native_crypto"] }
+oo7_previous = { package = "oo7", version = "=0.6.0", default-features = false, features = ["async-std", "native_crypto"] }
+tempfile = "3.10"
+
 [dependencies]
 common = { path = "../common" }
 

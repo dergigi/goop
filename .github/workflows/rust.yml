@@ -51,3 +51,13 @@ jobs:
           cargo test --locked -p ui --features test-support --lib dock::viewport_tests
           cargo test --locked -p ui --features test-support --lib menu::context_menu::tests
           cargo test --locked -p chat_ui --features test-support --lib emoji_picker::interaction_tests
+
+      - name: Check Linux credential portal fallback on an isolated bus
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get install -y dbus python3-dbus python3-gi
+          test ! -e /.flatpak-info
+          sudo touch /.flatpak-info
+          trap 'sudo rm -f /.flatpak-info' EXIT
+          dbus-run-session -- /usr/bin/python3 script/test-credential-portal.py missing
+          dbus-run-session -- /usr/bin/python3 script/test-credential-portal.py denied

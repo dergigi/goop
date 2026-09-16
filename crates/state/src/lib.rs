@@ -13,6 +13,7 @@ use nostr_sdk::prelude::*;
 mod blossom;
 pub mod encrypted_file;
 mod constants;
+pub mod credentials;
 mod nip05;
 mod profiles;
 mod signer;
@@ -240,12 +241,12 @@ impl NostrRegistry {
             return Task::ready(Err(anyhow!("Log out is already in progress")));
         }
         self.logging_out = true;
-        let credentials = cx.read_credentials(USER_KEYRING);
+        let credentials = credentials::read(cx, USER_KEYRING);
         cx.spawn(async move |this, cx| {
             let result: Result<(), Error> = async {
                 // Keychain deletion reports an error for absent entries on macOS.
                 if credentials.await?.is_some() {
-                    this.update(cx, |_, cx| cx.delete_credentials(USER_KEYRING))?.await?;
+                    this.update(cx, |_, cx| credentials::delete(cx, USER_KEYRING))?.await?;
                 }
                 Ok(())
             }.await;
@@ -402,7 +403,7 @@ impl NostrRegistry {
 
     /// Check the user's credential and set the signer if valid
     fn get_user_credential(&mut self, cx: &mut Context<Self>) {
-        let user_keyring = cx.read_credentials(USER_KEYRING);
+        let user_keyring = credentials::read(cx, USER_KEYRING);
         self.identity_loading = true;
         self.connection_error = None;
         self.connection_task = None;
@@ -475,15 +476,15 @@ impl NostrRegistry {
 
     /// Get the master key that used for Nostr Connect
     pub fn get_master_key(&self, cx: &App, create_if_missing: bool) -> Task<Result<Keys, Error>> {
-        let task = cx.read_credentials(MASTER_KEYRING);
+        let task = credentials::read(cx, MASTER_KEYRING);
         let create_if_missing = create_if_missing && self.remembered_user.is_none();
         cx.spawn(async move |cx| {
             let saved = task.await?.map(|(_, secret)| secret);
             let (keys, created) = connection_keys(saved, create_if_missing)?;
             if created {
                 let save = cx.update(|cx| {
-                    cx.write_credentials(
-                        MASTER_KEYRING,
+                    credentials::write(
+                        cx, MASTER_KEYRING,
                         &keys.public_key().to_hex(),
                         &keys.secret_key().to_secret_bytes(),
                     )
