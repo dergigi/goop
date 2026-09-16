@@ -16,6 +16,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 - Start quick reactions with 🤙, 🧡, and 👀, then adapt them to the most frequently used emoji in the last 100 sent reactions.
 
+### Fixed
+
+- Embed the Goop icon in the Windows executable for Explorer, shortcuts, and the taskbar, and launch as a GUI application without an extra console window.
+
 ## [2.9.0] - 2026-09-16
 
 ### Added

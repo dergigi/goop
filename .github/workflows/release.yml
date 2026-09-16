@@ -96,6 +96,11 @@ jobs:
             cargo packager --release
           fi
 
+      - name: Verify packaged Windows executable
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python script/check-windows-executable.py target/release/goop.exe
+
       - name: Seal macOS bundles and rebuild disk images
         if: runner.os == 'macOS'
         run: bash script/sign-macos-dmg dist/Goop.app

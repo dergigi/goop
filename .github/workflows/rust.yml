@@ -41,6 +41,10 @@ jobs:
       - name: Build
         run: cargo build --locked --verbose
 
+      - name: Verify Windows GUI subsystem and application icon
+        if: matrix.os == 'windows-latest'
+        run: python script/check-windows-executable.py target/debug/goop.exe
+
       - name: Run tests
         run: cargo test --locked --verbose
 

@@ -1,0 +1,2 @@
+// GPUI's Windows window class loads icon resource ID 1.
+1 ICON "resources/icon.ico"
