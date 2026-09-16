@@ -384,7 +384,6 @@ impl Render for Screening {
                             view.cursor_pointer().on_click(cx.listener(|this, _, window, cx| {
                                 let profile = this.profile(cx);
                                 ui::image_preview::open(
-                                    format!("{} — Profile picture", profile.name()),
                                     profile.avatar(), |_, _| Vec::new(), window, cx,
                                 );
                             }))
