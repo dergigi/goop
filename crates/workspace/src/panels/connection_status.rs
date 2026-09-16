@@ -16,7 +16,7 @@ use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
 use ui::scroll::{Scrollbar, ScrollableElement};
-use ui::{StyledExt, Disableable, Icon, IconName, Sizable, WindowExtension, h_flex, v_flex};
+use ui::{Disableable, Icon, IconName, Sizable, WindowExtension, h_flex, v_flex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RelayState {
@@ -433,8 +433,15 @@ impl Panel for ConnectionStatus {
     fn panel_id(&self) -> SharedString {
         "connection-status".into()
     }
-    fn title(&self, _: &App) -> AnyElement {
-        "Connection status".into_any_element()
+    fn title(&self, cx: &App) -> AnyElement {
+        let title = match self.relays.as_deref() {
+            Some(relays) => {
+                let connected = relays.iter().filter(|relay| relay.status == Some(RelayStatus::Connected)).count();
+                format!("Connection status: {connected}/{}", relays.len())
+            }
+            None => "Connection status".into(),
+        };
+        h_flex().gap_2().items_center().child(self.indicator(cx)).child(title).into_any_element()
     }
 }
 impl EventEmitter<PanelEvent> for ConnectionStatus {}
@@ -468,17 +475,15 @@ impl Render for ConnectionStatus {
         let send_pending = delivery.pending + delivery.paused + delivery.failed > 0
             || chat.outgoing_error().is_some();
         let content = v_flex().w_full().min_w_0().p_4().gap_3().flex_shrink_0()
-            .child(h_flex().gap_2().items_center().child(self.indicator(cx))
-                .child(gpui::div().text_sm().font_medium().child(self.summary(cx))))
-            .child(h_flex().gap_2().flex_wrap()
-                .when(nostr.read(cx).needs_signer_setup(), |view| view.child(
-                    Button::new("setup-status-signer").label("Connect your signer").small().primary()
-                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::ConnectSigner), cx))))
-                .child(Button::new("retry-status-signer").icon(IconName::Refresh).label("Reconnect signer").small().ghost().disabled(!signer_needs_retry)
-                    .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx)))))
             .child(v_flex().gap_2()
                 .child(h_flex().gap_2().child(Icon::new(IconName::UserKey).small()).child("Signer"))
-                .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(signer_detail)))
+                .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(signer_detail))
+                .child(h_flex().gap_2().flex_wrap()
+                    .when(nostr.read(cx).needs_signer_setup(), |view| view.child(
+                        Button::new("setup-status-signer").label("Connect your signer").small().primary()
+                            .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::ConnectSigner), cx))))
+                    .child(Button::new("retry-status-signer").icon(IconName::Refresh).label("Reconnect signer").small().ghost().disabled(!signer_needs_retry)
+                        .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx))))))
             .when(signed_in && !relay_urls.is_empty(), |view| view.child(
                 v_flex().gap_2()
                     .child(h_flex().gap_2().child(Icon::new(IconName::Relay).small()).child("Messaging relays"))
