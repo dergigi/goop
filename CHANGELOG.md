@@ -7,34 +7,29 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-09-16
+
 ### Added
 
-- Browse loaded chat images and draft attachments in a title-free gallery with previous/next buttons and Left/Right arrow keys; open it from View → Gallery when images are available.
-
-- Open profile pictures in the shared image viewer when clicked in the profile pane.
-
-- Add Mute, Block, and Report to direct-chat context menus, using the existing moderation dialogs.
-
+- Browse loaded chat images and draft attachments in a gallery with previous/next controls and Left/Right arrow keys. Open it by clicking an image or choosing View → Gallery.
+- Open profile pictures in the shared gallery from the profile pane.
+- Add Mute, Block, and Report to direct-chat context menus.
 - Remember recently chosen emoji across restarts and offer a Recent section in both emoji pickers.
 - Save minimal Rust panic and Windows exception diagnostics locally; offer a preview and optional encrypted DM to Goop on the next launch.
 
 ### Changed
 
-- Add subtle connection dots and a signer reconnect shortcut to the top bar; simplify the connection-status pane.
-
-- Show gallery controls in a compact hover overlay, with a download icon and no image frame.
-
-- Add icons to chat context-menu pin, archive, and read/unread actions.
-
 - Start quick reactions with 🤙, 🧡, and 👀, then adapt them to the most frequently used emoji in the last 100 sent reactions.
+- Use a frameless, title-free gallery with a dimmed backdrop and compact hover controls, including a download icon.
+- Add icons to chat context-menu pin, archive, and read/unread actions.
+- Show subtle connection indicators and relay counts in the top bar and connection-status tab title.
+- Show signer reconnect controls only when reconnection is needed; group recovery tools under Troubleshooting and remove Copy status.
 
 ### Fixed
 
 - Keep long connection-status details scrollable in short windows.
-
 - Open the gallery only when clicking a chat image, not empty space beside it.
-
-- Embed the Goop icon in the Windows executable for Explorer, shortcuts, and the taskbar, and launch as a GUI application without an extra console window.
+- Embed the Goop icon in the Windows executable for Explorer, shortcuts, and the taskbar, and launch without an extra console window.
 
 ## [2.9.0] - 2026-09-16
 
@@ -371,7 +366,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.9.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.10.0...HEAD
+[2.10.0]: https://github.com/dergigi/goop/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/dergigi/goop/compare/v2.8.1...v2.9.0
 [2.8.1]: https://github.com/dergigi/goop/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/dergigi/goop/compare/v2.7.1...v2.8.0
