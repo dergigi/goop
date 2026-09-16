@@ -4,7 +4,7 @@ use gpui::{App, AppContext, Context, Image, ImageFormat, InteractiveElement, Int
     ObjectFit, ParentElement, Render, StatefulInteractiveElement, Styled, StyledImage, Task, Window, div, img, px};
 use state::encrypted_file::EncryptedFile;
 use theme::ActiveTheme;
-use ui::{Icon, IconName, Sizable, WindowExtension, v_flex};
+use ui::{IconName, Sizable, WindowExtension, v_flex};
 use ui::button::{Button, ButtonVariants};
 use ui::notification::Notification;
 
@@ -102,23 +102,25 @@ impl EncryptedMedia {
 
 impl Render for EncryptedMedia {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().gap_2()
+        v_flex().gap_2().items_start()
             .when_some(self.attachment.clone(), |view, attachment| {
-                let click_attachment = attachment.clone();
                 let chat = self.chat.clone();
                 let gallery_key = self.gallery_key.clone();
-                view.child(div().id("encrypted-media-preview").cursor_pointer()
-                    .when_some(attachment.image.clone(), |view, image| {
-                        view.child(img(image).max_w_full().h(px(250.)).object_fit(ObjectFit::Contain))
-                    })
-                    .when(attachment.image.is_none(), |view| {
-                        view.child(Icon::new(IconName::Upload)).child("Open attachment")
-                    })
-                    .on_click(move |_, window, cx| {
-                        if click_attachment.image.is_some() {
+                if let Some(image) = attachment.image.clone() {
+                    view.child(img(image).id("encrypted-media-preview").cursor_pointer()
+                        .max_w_full().h(px(250.)).object_fit(ObjectFit::Contain)
+                        .on_click(move |_, window, cx| {
                             let _ = chat.update(cx, |chat, cx| chat.open_gallery(Some(gallery_key.clone()), window, cx));
-                        } else { preview(click_attachment.clone(), window, cx); }
-                    }))
+                            cx.stop_propagation();
+                        }))
+                } else {
+                    view.child(Button::new("attachment-preview").icon(IconName::Upload)
+                        .label("Open attachment").ghost()
+                        .on_click(move |_, window, cx| {
+                            preview(attachment.clone(), window, cx);
+                            cx.stop_propagation();
+                        }))
+                }
             })
             .when(self.attachment.is_none() && self.error.is_none(), |view| {
                 view.child(ui::indicator::Indicator::new().small()).child("Decrypting attachment…")

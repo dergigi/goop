@@ -1223,11 +1223,14 @@ impl ChatPanel {
     fn render_media(&self, message_id: EventId, media: &[SharedUri], cx: &Context<Self>) -> impl IntoElement {
         div().flex().flex_wrap().gap_2().children(media.iter().enumerate().map(|(ix, uri)| {
             let selected = format!("{message_id}:{ix}");
-            div().id(format!("media-{ix}")).cursor_pointer()
-                .child(img(uri.clone()).h(px(if media.len() == 1 { 250. } else { 128. }))
-                    .border_1().border_color(cx.theme().border_variant)
-                    .object_fit(ObjectFit::Cover).rounded(cx.theme().radius))
-                .on_click(cx.listener(move |this, _, window, cx| this.open_gallery(Some(selected.clone()), window, cx)))
+            img(uri.clone()).id(format!("media-{ix}")).cursor_pointer()
+                .h(px(if media.len() == 1 { 250. } else { 128. }))
+                .border_1().border_color(cx.theme().border_variant)
+                .object_fit(ObjectFit::Cover).rounded(cx.theme().radius)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_gallery(Some(selected.clone()), window, cx);
+                    cx.stop_propagation();
+                }))
         }))
     }
 

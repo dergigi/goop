@@ -28,6 +28,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Open the gallery only when clicking a chat image, not empty space beside it.
+
 - Embed the Goop icon in the Windows executable for Explorer, shortcuts, and the taskbar, and launch as a GUI application without an extra console window.
 
 ## [2.9.0] - 2026-09-16
