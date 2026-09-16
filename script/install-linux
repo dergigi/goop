@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Install the latest published Goop Flatpak for the current desktop user.
+set -euo pipefail
+
+fail() { printf 'Goop installer: %s\n' "$*" >&2; exit 1; }
+[[ $(uname -s) == Linux ]] || fail 'This installer is for Linux.'
+[[ $(id -u) != 0 ]] || fail 'Run this as your desktop user, without sudo. It will request sudo only if system packages are missing.'
+case $(uname -m) in
+    x86_64) asset_arch=x64; runtime_arch=x86_64 ;;
+    aarch64|arm64) asset_arch=arm64; runtime_arch=aarch64 ;;
+    *) fail 'Supported architectures are x86_64 and ARM64.' ;;
+esac
+
+missing=()
+for dependency in flatpak curl python3; do
+    command -v "$dependency" >/dev/null || missing+=("$dependency")
+done
+if ((${#missing[@]})); then
+    command -v apt-get >/dev/null || fail "Install these packages first: ${missing[*]}"
+    command -v sudo >/dev/null || fail "Install these packages as administrator first: ${missing[*]}"
+    printf 'Installing required system packages: %s\n' "${missing[*]}"
+    sudo apt-get update
+    sudo apt-get install -y "${missing[@]}" ca-certificates
+fi
+
+work_dir=$(mktemp -d)
+trap 'rm -rf -- "$work_dir"' EXIT
+fetch() { curl --fail --location --retry 3 --connect-timeout 15 --max-time 600 --output "$2" "$1"; }
+
+printf '\nFinding the latest Goop release…\n'
+fetch https://api.github.com/repos/dergigi/goop/releases/latest "$work_dir/release.json"
+release_tag=$(python3 - "$work_dir/release.json" <<'PY'
+import json, re, sys
+release = json.load(open(sys.argv[1]))
+tag = release.get("tag_name", "")
+if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+    sys.exit("Could not identify a published stable Goop release.")
+print(tag)
+PY
+)
+asset="goop-linux-${asset_arch}.flatpak"
+base="https://github.com/dergigi/goop/releases/download/$release_tag"
+printf '\nDownloading Goop %s (%s)…\n' "$release_tag" "$asset_arch"
+fetch "$base/$asset" "$work_dir/$asset"
+fetch "$base/SHA256SUMS" "$work_dir/SHA256SUMS"
+python3 - "$work_dir" "$asset" <<'PY'
+import hashlib, pathlib, re, sys
+folder, name = pathlib.Path(sys.argv[1]), sys.argv[2]
+expected = []
+for line in (folder / "SHA256SUMS").read_text().splitlines():
+    parts = line.split(maxsplit=1)
+    if len(parts) == 2 and parts[1].lstrip("*") == name:
+        expected.append(parts[0].lower())
+if len(expected) != 1 or not re.fullmatch(r"[0-9a-f]{64}", expected[0]):
+    sys.exit("Missing or ambiguous release checksum; installation stopped.")
+with (folder / name).open("rb") as source:
+    actual = hashlib.file_digest(source, "sha256").hexdigest() if hasattr(hashlib, "file_digest") else None
+    if actual is None:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: source.read(1024 * 1024), b""): digest.update(chunk)
+        actual = digest.hexdigest()
+if actual != expected[0]:
+    sys.exit("Release checksum mismatch; installation stopped.")
+print("Release checksum verified.")
+PY
+
+# Read the runtime from the same release, so old bundles without runtime-repo
+# metadata also install correctly and future runtime upgrades need no guessing.
+fetch "https://raw.githubusercontent.com/dergigi/goop/$release_tag/desktop/resources/flatpak/manifest-template.json" "$work_dir/manifest.json"
+runtime=$(python3 - "$work_dir/manifest.json" "$runtime_arch" <<'PY'
+import json, re, sys
+manifest = json.load(open(sys.argv[1]))
+name, branch = manifest["runtime"], manifest["runtime-version"]
+if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.]+", name) or not re.fullmatch(r"[A-Za-z0-9_.-]+", branch):
+    sys.exit("Invalid runtime metadata; installation stopped.")
+print(f"{name}/{sys.argv[2]}/{branch}")
+PY
+)
+
+printf '\nInstalling the runtime and Goop for your user account…\n'
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user --noninteractive --or-update -y flathub "$runtime"
+flatpak install --user --noninteractive --or-update -y "$work_dir/$asset"
+printf '\nGoop %s is installed. Open Goop from the app launcher, or run:\n\n  flatpak run com.dergigi.goop\n\n' "$release_tag"

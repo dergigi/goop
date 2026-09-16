@@ -16,6 +16,16 @@ brew install --cask dergigi/goop/goop
 
 The [Goop tap](https://github.com/dergigi/homebrew-goop) supports Apple Silicon and Intel Macs and tracks published stable releases. Current macOS builds are ad-hoc signed and not notarized; installation through Homebrew does not remove macOS's first-launch security checks.
 
+### Install on Ubuntu / Debian
+
+Run as your desktop user (without `sudo`):
+
+```sh
+wget -O /tmp/goop-install.sh https://raw.githubusercontent.com/dergigi/goop/master/script/install-linux && bash /tmp/goop-install.sh
+```
+
+The [installer](script/install-linux) installs missing system tools via `sudo`, downloads the latest stable release for Intel/AMD or ARM64, verifies its release checksum, and installs the matching Flatpak runtime and Goop for your user account. Run it again to install a newer release. Open Goop from your application launcher or run `flatpak run com.dergigi.goop`.
+
 ### Features
 
 - Encrypted direct and group chats, attachments, and Note to self.

@@ -20,7 +20,8 @@ jobs:
       - name: Check release tooling
         run: |
           python3 script/test-release.py
-          bash -n script/release script/sign-macos-dmg
+          python3 script/test-install-linux.py
+          bash -n script/release script/sign-macos-dmg script/install-linux script/flatpak/bundle-flatpak
 
   build:
     strategy:

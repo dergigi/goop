@@ -9,6 +9,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Add an Ubuntu/Debian installer that sets up Flatpak, verifies the latest release download, and installs the matching runtime automatically.
 - Add a full searchable Unicode emoji picker to the composer and message reactions, with categories, skin-tone variants, and keyboard navigation.
 
 ### Changed
@@ -18,6 +19,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Include the Flathub runtime repository in Flatpak bundles so installers can locate runtime dependencies.
 - Use upstream oo7 0.7.0-alpha for Linux credentials so a missing Secret portal falls back to Secret Service. Grant Flatpak access to that service while preserving existing credential labels and encrypted storage.
 - Keep signer connection errors visible, allow another attempt after a connection failure, and avoid saving a new bunker URL when its client key cannot be loaded.
 - Recognize complete flag and joined emoji sequences when replying with an emoji reaction, without treating plain numbers as emoji.

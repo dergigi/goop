@@ -36,5 +36,6 @@ flatpak-builder --user --install --force-clean build "$APP_ID.json"
 
 # Create bundle with architecture suffix
 OUTPUT_FILE="target/release/${APP_ID}_${ARCH_SUFFIX}.flatpak"
-flatpak build-bundle ~/.local/share/flatpak/repo "$OUTPUT_FILE" "$APP_ID"
+flatpak build-bundle ~/.local/share/flatpak/repo "$OUTPUT_FILE" "$APP_ID" \
+    --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
 echo "Created '$OUTPUT_FILE'"
