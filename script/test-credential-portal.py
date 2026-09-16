@@ -31,6 +31,12 @@ class Portal(dbus.service.Object):
             )
         return dbus.UInt32(1)
 
+    @dbus.service.method("org.freedesktop.DBus.Properties", in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface):
+        # zbus fills its property cache with GetAll before attempting Get.
+        # Missing interfaces must fail identically through both methods.
+        return {"version": self.Get(interface, "version")}
+
     @dbus.service.method("org.freedesktop.portal.Secret", in_signature="ha{sv}", out_signature="o")
     def RetrieveSecret(self, fd, options):
         raise dbus.exceptions.DBusException(
