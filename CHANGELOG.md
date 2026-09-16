@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Browse loaded chat images and draft attachments in a title-free gallery with previous/next buttons and Left/Right arrow keys; open it from View → Gallery when images are available.
+
 - Open profile pictures in the shared image viewer when clicked in the profile pane.
 
 - Add Mute, Block, and Report to direct-chat context menus, using the existing moderation dialogs.
@@ -17,6 +19,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 - Save minimal Rust panic and Windows exception diagnostics locally; offer a preview and optional encrypted DM to Goop on the next launch.
 
 ### Changed
+
+- Add icons to chat context-menu pin, archive, and read/unread actions.
 
 - Start quick reactions with 🤙, 🧡, and 👀, then adapt them to the most frequently used emoji in the last 100 sent reactions.
 

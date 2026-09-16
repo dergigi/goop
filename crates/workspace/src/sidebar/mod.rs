@@ -288,11 +288,11 @@ impl Sidebar {
                                     });
                                 }))
                             .separator())
-                        .menu(if pinned { "Unpin" } else { "Pin" }, Box::new(ChatAction::Pin(id, !pinned)))
-                        .when(!left, |menu| menu.menu(if archived { "Unarchive" } else { "Archive" },
+                        .menu_with_icon(if pinned { "Unpin" } else { "Pin" }, IconName::Pin, Box::new(ChatAction::Pin(id, !pinned)))
+                        .when(!left, |menu| menu.menu_with_icon(if archived { "Unarchive" } else { "Archive" }, IconName::Archive,
                             Box::new(ChatAction::Archive(id, !archived))))
                         .separator()
-                        .menu(if unread { "Mark as read" } else { "Mark as unread" },
+                        .menu_with_icon(if unread { "Mark as read" } else { "Mark as unread" }, if unread { IconName::Check } else { IconName::Inbox },
                             Box::new(ChatAction::SetRead(id, unread)))
                         .when(!group && owner.is_some_and(|owner| owner != public_key), |menu| {
                             [

@@ -23,7 +23,7 @@ impl Attachment {
     }
 }
 
-fn save(attachment: Attachment, window: &mut Window, cx: &mut App) {
+pub(super) fn save(attachment: Attachment, window: &mut Window, cx: &mut App) {
     let extension = ImageFormat::from_mime_type(&attachment.file.mime)
         .map(|format| format.extension()).unwrap_or("bin");
     let filename = format!("attachment.{extension}");
@@ -68,14 +68,16 @@ pub(super) fn preview(attachment: Attachment, window: &mut Window, cx: &mut App)
 
 pub(super) struct EncryptedMedia {
     file: EncryptedFile,
-    attachment: Option<Attachment>,
+    pub(super) attachment: Option<Attachment>,
+    chat: gpui::WeakEntity<super::ChatPanel>,
+    gallery_key: String,
     error: Option<String>,
     task: Option<Task<()>>,
 }
 
 impl EncryptedMedia {
-    pub fn new(file: EncryptedFile, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut view = Self { file, attachment: None, error: None, task: None };
+    pub fn new(file: EncryptedFile, chat: gpui::WeakEntity<super::ChatPanel>, gallery_key: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut view = Self { file, chat, gallery_key, attachment: None, error: None, task: None };
         view.load(window, cx);
         view
     }
@@ -85,11 +87,12 @@ impl EncryptedMedia {
         let file = self.file.clone();
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = state::encrypted_file::download(file.clone(), cx).await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(bytes) => this.attachment = Some(Attachment::new(file, bytes)),
                     Err(_) => this.error = Some("Could not download or decrypt attachment".into()),
                 }
+                window.refresh();
                 cx.notify();
             });
         }));
@@ -102,6 +105,8 @@ impl Render for EncryptedMedia {
         v_flex().gap_2()
             .when_some(self.attachment.clone(), |view, attachment| {
                 let click_attachment = attachment.clone();
+                let chat = self.chat.clone();
+                let gallery_key = self.gallery_key.clone();
                 view.child(div().id("encrypted-media-preview").cursor_pointer()
                     .when_some(attachment.image.clone(), |view, image| {
                         view.child(img(image).max_w_full().h(px(250.)).object_fit(ObjectFit::Contain))
@@ -109,7 +114,11 @@ impl Render for EncryptedMedia {
                     .when(attachment.image.is_none(), |view| {
                         view.child(Icon::new(IconName::Upload)).child("Open attachment")
                     })
-                    .on_click(move |_, window, cx| preview(click_attachment.clone(), window, cx)))
+                    .on_click(move |_, window, cx| {
+                        if click_attachment.image.is_some() {
+                            let _ = chat.update(cx, |chat, cx| chat.open_gallery(Some(gallery_key.clone()), window, cx));
+                        } else { preview(click_attachment.clone(), window, cx); }
+                    }))
             })
             .when(self.attachment.is_none() && self.error.is_none(), |view| {
                 view.child(ui::indicator::Indicator::new().small()).child("Decrypting attachment…")

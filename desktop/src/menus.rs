@@ -58,6 +58,7 @@ fn application_menus() -> Vec<Menu> {
             MenuItem::action("Inbox", Command::ShowInbox),
             MenuItem::action("Requests", Command::ShowRequests),
             MenuItem::action("Focus Message Box", Command::FocusComposer),
+            MenuItem::action("Gallery", workspace::ShowGallery),
             MenuItem::separator(),
             MenuItem::action("Reload", Command::RefreshMessagingRelays),
             MenuItem::action("Toggle Full Screen", Command::ToggleFullScreen),

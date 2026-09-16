@@ -38,7 +38,7 @@ mod dialogs;
 mod panels;
 mod sidebar;
 
-gpui::actions!(workspace, [FindInChat, ToggleChatPin, ToggleChatArchive, MarkChatRead, MarkChatUnread, LeaveChat]);
+gpui::actions!(workspace, [ShowGallery, FindInChat, ToggleChatPin, ToggleChatArchive, MarkChatRead, MarkChatUnread, LeaveChat]);
 
 enum ChatMenuOperation { TogglePin, ToggleArchive, MarkRead, MarkUnread, Leave }
 
@@ -745,6 +745,7 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_room = self.active_chat_panel(window, cx).and_then(|panel| panel.read(cx).room());
         let chat_actions_available = active_room.is_some() && !Root::read(window, cx).has_active_modals();
+        let gallery_available = chat_actions_available && self.active_chat_panel(window, cx).is_some_and(|panel| panel.read(cx).has_gallery_images(cx));
         let group_active = active_room.is_some_and(|room| room.read(cx).is_group());
         let modal_layer = Root::render_modal_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
@@ -754,6 +755,11 @@ impl Render for Workspace {
             .key_context("Workspace")
             .on_modifiers_changed(|_, window, _| window.refresh())
             .on_action(cx.listener(Self::on_command))
+            .when(gallery_available, |view| view.on_action(cx.listener(|this, _: &ShowGallery, window, cx| {
+                if let Some(panel) = this.active_chat_panel(window, cx) {
+                    panel.update(cx, |chat, cx| chat.open_gallery(None, window, cx));
+                }
+            })))
             .when(chat_actions_available, |view| view
                 .on_action(cx.listener(|this, _: &FindInChat, window, cx| {
                     if let Some(panel) = this.active_chat_panel(window, cx) {

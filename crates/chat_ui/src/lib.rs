@@ -1035,8 +1035,9 @@ impl ChatPanel {
     ) -> AnyElement {
         if let Some(message) = self.messages.get(ix) {
             if let Some(Ok(file)) = &message.encrypted_file {
+                let chat = cx.entity().downgrade();
                 self.encrypted_views.entry(message.id).or_insert_with(|| {
-                    cx.new(|cx| encrypted_media::EncryptedMedia::new(file.clone(), window, cx))
+                    cx.new(|cx| encrypted_media::EncryptedMedia::new(file.clone(), chat, message.id.to_string(), window, cx))
                 });
             }
             let persons = PersonRegistry::global(cx);
@@ -1138,7 +1139,7 @@ impl ChatPanel {
                                 this.children(self.render_message_replies(replies, cx))
                             })
                             .child(rendered_text)
-                            .child(self.render_media(&message.media, cx))
+                            .child(self.render_media(message.id, &message.media, cx))
                             .when_some(self.encrypted_views.get(&message.id), |view, media| {
                                 view.child(media.clone())
                             })
@@ -1185,53 +1186,49 @@ impl ChatPanel {
             .into_any_element()
     }
 
-    fn render_media(&self, media: &[SharedUri], cx: &Context<Self>) -> impl IntoElement {
-        // No media: return empty div
-        if media.is_empty() {
-            return div();
-        };
-
-        // Single media item: render full-width image
-        if media.len() == 1 {
-            return div().child(
-                img(media[0].clone())
-                    .border_1()
-                    .border_color(cx.theme().border_variant)
-                    .h(px(250.))
-                    .object_fit(ObjectFit::Cover)
-                    .rounded(cx.theme().radius),
-            );
+    fn gallery_images(&self, cx: &App) -> Vec<(String, gpui::ImageSource, Option<encrypted_media::Attachment>)> {
+        let mut images = Vec::new();
+        for message in &self.messages {
+            for (index, uri) in message.media.iter().enumerate() {
+                images.push((format!("{}:{index}", message.id), uri.clone().into(), None));
+            }
+            if let Some(attachment) = self.encrypted_views.get(&message.id)
+                .and_then(|view| view.read(cx).attachment.clone())
+                && let Some(image) = attachment.image.clone()
+            {
+                images.push((message.id.to_string(), image.into(), Some(attachment)));
+            }
         }
+        images
+    }
 
-        // Multiple media items: render in a row
-        div()
-            .w_full()
-            .flex_1()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .gap_2()
-            .children({
-                let mut items = vec![];
+    pub fn has_gallery_images(&self, cx: &App) -> bool {
+        self.messages.iter().any(|message| !message.media.is_empty()
+            || self.encrypted_views.get(&message.id).is_some_and(|view|
+                view.read(cx).attachment.as_ref().is_some_and(|attachment| attachment.image.is_some())))
+    }
 
-                for (ix, item) in media.iter().enumerate() {
-                    items.push(
-                        div()
-                            .id(format!("media-{ix}"))
-                            .flex_grow_0()
-                            .flex_shrink_0()
-                            .child(
-                                img(item.clone())
-                                    .h_32()
-                                    .border_1()
-                                    .border_color(cx.theme().border_variant)
-                                    .rounded(cx.theme().radius),
-                            ),
-                    );
-                }
+    pub fn open_gallery(&self, selected: Option<String>, window: &mut Window, cx: &mut App) {
+        let items = self.gallery_images(cx);
+        let index = selected.and_then(|url| items.iter().position(|item| item.0 == url)).unwrap_or(0);
+        let images = items.iter().map(|item| item.1.clone()).collect();
+        ui::image_preview::open_gallery(images, index, move |index, _, _| {
+            items[index].2.clone().map(|attachment| Button::new("save-attachment")
+                .label("Save decrypted file…")
+                .on_click(move |_, window, cx| encrypted_media::save(attachment.clone(), window, cx)))
+                .into_iter().collect()
+        }, window, cx);
+    }
 
-                items
-            })
+    fn render_media(&self, message_id: EventId, media: &[SharedUri], cx: &Context<Self>) -> impl IntoElement {
+        div().flex().flex_wrap().gap_2().children(media.iter().enumerate().map(|(ix, uri)| {
+            let selected = format!("{message_id}:{ix}");
+            div().id(format!("media-{ix}")).cursor_pointer()
+                .child(img(uri.clone()).h(px(if media.len() == 1 { 250. } else { 128. }))
+                    .border_1().border_color(cx.theme().border_variant)
+                    .object_fit(ObjectFit::Cover).rounded(cx.theme().radius))
+                .on_click(cx.listener(move |this, _, window, cx| this.open_gallery(Some(selected.clone()), window, cx)))
+        }))
     }
 
     fn render_message_replies(
@@ -1627,10 +1624,19 @@ impl ChatPanel {
                     view.child(img(image).size_16().rounded(cx.theme().radius).object_fit(ObjectFit::ScaleDown))
                 })
                 .when(attachment.image.is_none(), |view| view.child(Icon::new(IconName::Upload)))
-                .on_click(move |_, window, cx| {
-                    encrypted_media::preview(preview_attachment.clone(), window, cx);
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if preview_attachment.image.is_some() {
+                        let attachments: Vec<_> = this.attachments.read(cx).iter().filter(|a| a.image.is_some()).cloned().collect();
+                        let index = attachments.iter().position(|a| a.file.url == preview_attachment.file.url).unwrap_or(0);
+                        let images = attachments.iter().map(|a| a.image.clone().unwrap().into()).collect();
+                        ui::image_preview::open_gallery(images, index, move |index, _, _| {
+                            let attachment = attachments[index].clone();
+                            vec![Button::new("save-attachment").label("Save decrypted file…")
+                                .on_click(move |_, window, cx| encrypted_media::save(attachment.clone(), window, cx))]
+                        }, window, cx);
+                    } else { encrypted_media::preview(preview_attachment.clone(), window, cx); }
                     cx.stop_propagation();
-                }))
+                })))
             .child(Button::new("remove-attachment").icon(IconName::Close).xsmall().danger()
                 .rounded_full().absolute().top_0().right_0().tooltip("Remove attachment")
                 .on_click(cx.listener(move |this, _, window, cx| {
