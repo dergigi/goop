@@ -292,7 +292,7 @@ impl Render for EmojiPicker {
                         },
                     )),
             )
-            .child(
+            .when(!self.recent, |view| view.child(
                 h_flex()
                     .w_full()
                     .gap_1()
@@ -317,7 +317,7 @@ impl Render for EmojiPicker {
                                 this.input.update(cx, |input, cx| input.focus(window, cx));
                             }))
                     })),
-            )
+            ))
             .child(
                 div()
                     .debug_selector(|| "emoji-picker-grid".into())
