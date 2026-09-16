@@ -91,6 +91,7 @@ pub struct Modal {
     on_cancel: OnCancel,
 
     overlay: bool,
+    overlay_color: Option<gpui::Hsla>,
     overlay_closable: bool,
     keyboard: bool,
     show_close: bool,
@@ -114,6 +115,7 @@ impl Modal {
             width: px(380.),
             max_width: None,
             overlay: true,
+            overlay_color: None,
             keyboard: true,
             layer_ix: 0,
             overlay_visible: false,
@@ -238,6 +240,12 @@ impl Modal {
     /// Set the overlay of the modal, defaults to `true`.
     pub fn overlay(mut self, overlay: bool) -> Self {
         self.overlay = overlay;
+        self
+    }
+
+    /// Override the backdrop color for this modal.
+    pub fn overlay_color(mut self, color: gpui::Hsla) -> Self {
+        self.overlay_color = Some(color);
         self
     }
 
@@ -382,7 +390,7 @@ impl RenderOnce for Modal {
                     .w(view_size.width)
                     .h(view_size.height)
                     .when(self.overlay_visible, |this| {
-                        this.occlude().bg(cx.theme().overlay)
+                        this.occlude().bg(self.overlay_color.unwrap_or(cx.theme().overlay))
                     })
                     .when(self.overlay_closable, |this| {
                         // Only the last modal owns the `mouse down - close modal` event.

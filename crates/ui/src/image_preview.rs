@@ -29,6 +29,7 @@ pub fn open_gallery(
     let focus = gallery.read(cx).focus.clone();
     window.open_modal(cx, move |modal, window, _| {
         modal.show_close(false).margin_top(px(24.)).p_0()
+            .overlay_color(gpui::black().opacity(0.85))
             .bg(gpui::transparent_black()).border_0().rounded_none().shadow(Vec::new())
             .width((window.viewport_size().width - px(48.)).min(px(1400.)))
             .child(gallery.clone())
