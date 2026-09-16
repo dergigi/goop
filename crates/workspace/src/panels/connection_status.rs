@@ -15,8 +15,8 @@ use state::{NostrRegistry, USER_GIFTWRAP};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::dock::{Panel, PanelEvent};
-use ui::scroll::ScrollableElement;
-use ui::{Disableable, Icon, IconName, Sizable, WindowExtension, h_flex, v_flex};
+use ui::scroll::{Scrollbar, ScrollableElement};
+use ui::{StyledExt, Disableable, Icon, IconName, Sizable, WindowExtension, h_flex, v_flex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RelayState {
@@ -210,6 +210,31 @@ fn connection_summary(
     message.into()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConnectionHealth { Connected, Connecting, Attention, Offline }
+
+fn connection_health(loading: bool, signer_error: bool, signed_in: bool,
+    relays: Option<&[RelayState]>, error: bool) -> ConnectionHealth {
+    if signer_error { return ConnectionHealth::Attention; }
+    if loading { return ConnectionHealth::Connecting; }
+    if !signed_in { return ConnectionHealth::Offline; }
+    if error { return ConnectionHealth::Attention; }
+    match relays {
+        Some(relays) if relays.iter().any(|relay| relay.status == Some(RelayStatus::Connected)) => ConnectionHealth::Connected,
+        Some(relays) if relays.iter().any(|relay| matches!(relay.status,
+            Some(RelayStatus::Initialized | RelayStatus::Pending | RelayStatus::Connecting))) => ConnectionHealth::Connecting,
+        Some(_) => ConnectionHealth::Attention,
+        None => ConnectionHealth::Connecting,
+    }
+}
+
+fn status_viewport(content: impl IntoElement, scroll: &gpui::ScrollHandle) -> impl IntoElement {
+    gpui::div().size_full().min_h_0().min_w_0().relative().overflow_hidden()
+        .child(gpui::div().id("connection-status-scroll").size_full().overflow_y_scroll()
+            .track_scroll(scroll).child(content))
+        .child(Scrollbar::vertical(scroll))
+}
+
 pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
     cx.new(|cx| {
         let nostr = NostrRegistry::global(cx);
@@ -272,6 +297,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
             Ok(())
         });
         ConnectionStatus {
+            scroll: gpui::ScrollHandle::new(),
             owner,
             relays: None,
             history_relays: Vec::new(),
@@ -284,6 +310,7 @@ pub fn init(cx: &mut App) -> Entity<ConnectionStatus> {
 }
 
 pub struct ConnectionStatus {
+    scroll: gpui::ScrollHandle,
     owner: Option<PublicKey>,
     relays: Option<Vec<RelayState>>,
     history_relays: Vec<RelayState>,
@@ -294,6 +321,19 @@ pub struct ConnectionStatus {
 }
 
 impl ConnectionStatus {
+    pub fn indicator(&self, cx: &App) -> impl IntoElement + use<> {
+        let nostr = NostrRegistry::global(cx);
+        let nostr = nostr.read(cx);
+        let health = connection_health(nostr.identity_loading(), nostr.signer_connection_error().is_some(),
+            self.owner.is_some(), self.relays.as_deref(), self.error.is_some());
+        let color = match health {
+            ConnectionHealth::Connected => gpui::rgb(0x22a34a).into(),
+            ConnectionHealth::Attention => cx.theme().text_warning,
+            ConnectionHealth::Connecting | ConnectionHealth::Offline => cx.theme().icon_muted,
+        };
+        gpui::div().size(gpui::px(6.)).flex_shrink_0().rounded_full().bg(color)
+    }
+
     pub fn summary(&self, cx: &App) -> String {
         let nostr = NostrRegistry::global(cx);
         let nostr = nostr.read(cx);
@@ -427,7 +467,9 @@ impl Render for ConnectionStatus {
             .is_some_and(|relays| !relays.is_empty());
         let send_pending = delivery.pending + delivery.paused + delivery.failed > 0
             || chat.outgoing_error().is_some();
-        v_flex().size_full().min_h_0().p_4().gap_4().overflow_y_scrollbar()
+        let content = v_flex().w_full().min_w_0().p_4().gap_3().flex_shrink_0()
+            .child(h_flex().gap_2().items_center().child(self.indicator(cx))
+                .child(gpui::div().text_sm().font_medium().child(self.summary(cx))))
             .child(h_flex().gap_2().flex_wrap()
                 .when(nostr.read(cx).needs_signer_setup(), |view| view.child(
                     Button::new("setup-status-signer").label("Connect your signer").small().primary()
@@ -497,7 +539,8 @@ impl Render for ConnectionStatus {
                 .child(Button::new("status-send").label("Retry pending sends").small().ghost().disabled(!signed_in || !send_pending)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).read(cx).retry_outgoing())))
             .child(gpui::div().text_xs().text_color(cx.theme().text_muted)
-                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))
+                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."));
+        status_viewport(content, &self.scroll)
     }
 }
 
@@ -736,5 +779,57 @@ mod tests {
         let result = Delivery::collect(reports.iter());
         assert_eq!((result.pending, result.paused, result.failed), (1, 1, 1));
         assert_eq!(result.reasons.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+    #[test]
+    fn partial_relay_connectivity_stays_positive_but_signer_failure_takes_priority() {
+        let relays = [RelayState { url: RelayUrl::parse("wss://example.com").unwrap(),
+            status: Some(RelayStatus::Connected), auth: None, closed: None },
+            RelayState { url: RelayUrl::parse("wss://other.example.com").unwrap(),
+            status: Some(RelayStatus::Disconnected), auth: None, closed: None }];
+        assert_eq!(connection_health(false, false, true, Some(&relays), false), ConnectionHealth::Connected);
+        assert_eq!(connection_health(false, true, true, Some(&relays), false), ConnectionHealth::Attention);
+        assert_eq!(connection_health(true, false, false, None, false), ConnectionHealth::Connecting);
+        assert_eq!(connection_health(false, false, false, None, false), ConnectionHealth::Offline);
+        assert_eq!(connection_health(false, false, true, Some(&relays[1..]), false), ConnectionHealth::Attention);
+        assert_eq!(connection_health(false, false, true, None, false), ConnectionHealth::Connecting);
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod scroll_tests {
+    use super::*;
+    use gpui::{point, px, size, TestAppContext};
+
+    struct ScrollHarness { scroll: gpui::ScrollHandle }
+    impl Render for ScrollHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            status_viewport(v_flex().w_full().children((0..40).map(|index| {
+                gpui::div().h(px(40.)).flex_shrink_0().child(format!("Relay {index}"))
+            })), &self.scroll)
+        }
+    }
+
+    #[gpui::test]
+    fn long_status_content_scrolls_in_short_viewport(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let scroll = gpui::ScrollHandle::new();
+        let view = window.update(|_, cx| {
+            theme::init(cx); ui::init(cx);
+            cx.new(|_| ScrollHarness { scroll: scroll.clone() })
+        });
+        let draw = |_: &mut Window, _: &mut App| view.clone().into_any_element();
+        window.draw(point(px(0.), px(0.)), size(px(280.), px(240.)), draw);
+        assert!(scroll.max_offset().y > px(1000.), "the content must overflow the viewport");
+        scroll.set_offset(point(px(0.), -scroll.max_offset().y));
+        window.draw(point(px(0.), px(0.)), size(px(280.), px(240.)), draw);
+        assert!(scroll.offset().y < px(-1000.), "the bottom must be reachable");
+        scroll.set_offset(point(px(0.), px(0.)));
+        window.draw(point(px(0.), px(0.)), size(px(280.), px(240.)), draw);
+        assert_eq!(scroll.offset().y, px(0.), "the header must remain reachable");
     }
 }

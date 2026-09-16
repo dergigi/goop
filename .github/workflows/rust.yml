@@ -56,6 +56,7 @@ jobs:
           cargo test --locked -p ui --features test-support --lib dock::viewport_tests
           cargo test --locked -p ui --features test-support --lib menu::context_menu::tests
           cargo test --locked -p chat_ui --features test-support --lib emoji_picker::interaction_tests
+          cargo test --locked -p workspace --features test-support --lib panels::connection_status::scroll_tests
 
       - name: Check Linux credential portal fallback on an isolated bus
         if: matrix.os == 'ubuntu-latest'

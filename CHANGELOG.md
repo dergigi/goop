@@ -20,6 +20,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Add subtle connection dots and a signer reconnect shortcut to the top bar; simplify the connection-status pane.
+
 - Show gallery controls in a compact hover overlay, with a download icon and no image frame.
 
 - Add icons to chat context-menu pin, archive, and read/unread actions.
@@ -27,6 +29,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 - Start quick reactions with 🤙, 🧡, and 👀, then adapt them to the most frequently used emoji in the last 100 sent reactions.
 
 ### Fixed
+
+- Keep long connection-status details scrollable in short windows.
 
 - Open the gallery only when clicking a chat image, not empty space beside it.
 

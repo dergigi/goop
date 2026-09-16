@@ -645,7 +645,9 @@ impl Workspace {
             })
             .child(
                 Button::new("connection-status-summary")
-                    .label(if nostr.read(cx).needs_signer_setup() { "Connect your signer".into() } else { self.connection_status.read(cx).summary(cx) })
+                    .child(h_flex().gap_2().items_center()
+                        .child(self.connection_status.read(cx).indicator(cx))
+                        .child(if nostr.read(cx).needs_signer_setup() { "Connect your signer".into() } else { self.connection_status.read(cx).summary(cx) }))
                     .tooltip(if nostr.read(cx).needs_signer_setup() { "Set up your signer" } else { "Connection status and recovery" })
                     .small().ghost()
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -720,7 +722,10 @@ impl Workspace {
             )
             .child(
                 Button::new("connection-status")
-                    .icon(IconName::Activity)
+                    .child(div().relative().size_4().child(Icon::new(IconName::Activity).small())
+                        .child(div().absolute().bottom_0().right_0().rounded_full()
+                            .border_1().border_color(cx.theme().background)
+                            .child(self.connection_status.read(cx).indicator(cx))))
                     .tooltip(format!("Connection status ({shortcut})\n{status}"))
                     .small().ghost()
                     .on_click(cx.listener(|this, _, window, cx| {
