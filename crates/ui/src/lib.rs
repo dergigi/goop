@@ -21,6 +21,7 @@ pub mod dock;
 pub mod group_box;
 pub mod history;
 pub mod indicator;
+pub mod image_preview;
 pub mod input;
 pub mod list;
 pub mod menu;

@@ -9,6 +9,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Open profile pictures in the shared image viewer when clicked in the profile pane.
+
 - Add Mute, Block, and Report to direct-chat context menus, using the existing moderation dialogs.
 
 - Remember recently chosen emoji across restarts and offer a Recent section in both emoji pickers.

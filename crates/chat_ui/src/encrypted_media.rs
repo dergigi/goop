@@ -43,18 +43,21 @@ fn save(attachment: Attachment, window: &mut Window, cx: &mut App) {
 }
 
 pub(super) fn preview(attachment: Attachment, window: &mut Window, cx: &mut App) {
+    if let Some(image) = attachment.image.clone() {
+        ui::image_preview::open("Attachment preview", image, move |_, _| {
+            let attachment = attachment.clone();
+            vec![Button::new("save-attachment").label("Save decrypted file…")
+                .on_click(move |_, window, cx| save(attachment.clone(), window, cx))]
+        }, window, cx);
+        return;
+    }
     window.open_modal(cx, move |modal, window, _| {
         let size = window.viewport_size();
         let save_attachment = attachment.clone();
         modal.title("Attachment preview").show_close(true)
             .width((size.width - px(64.)).min(px(1000.)))
             .child(v_flex().items_center().justify_center()
-                .when_some(attachment.image.clone(), |view, image| {
-                    view.child(img(image).w_full().h(size.height * 0.7).object_fit(ObjectFit::Contain))
-                })
-                .when(attachment.image.is_none(), |view| {
-                    view.child("Encrypted attachment").child(attachment.file.mime.clone())
-                }))
+                .child("Encrypted attachment").child(attachment.file.mime.clone()))
             .footer(move |_, _, _, _| {
                 let attachment = save_attachment.clone();
                 vec![Button::new("save-attachment").label("Save decrypted file…")

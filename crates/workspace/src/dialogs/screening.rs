@@ -5,7 +5,7 @@ use common::TimestampExt;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, AppContext, Context, Div, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window, div, px, relative, uniform_list,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px, relative, uniform_list,
 };
 use instant::Duration;
 use nostr_sdk::prelude::*;
@@ -378,7 +378,17 @@ impl Render for Screening {
                     .items_center()
                     .justify_center()
                     .text_center()
-                    .child(Avatar::new(profile.avatar()).large())
+                    .child(div().id("profile-picture")
+                        .child(Avatar::new(profile.avatar()).large())
+                        .when(profile.metadata().picture.as_ref().is_some_and(|picture| !picture.trim().is_empty()), |view| {
+                            view.cursor_pointer().on_click(cx.listener(|this, _, window, cx| {
+                                let profile = this.profile(cx);
+                                ui::image_preview::open(
+                                    format!("{} — Profile picture", profile.name()),
+                                    profile.avatar(), |_, _| Vec::new(), window, cx,
+                                );
+                            }))
+                        }))
                     .when(self.profile_loading, |this| {
                         this.child(
                             h_flex().gap_2().child(Indicator::new().small()).child(
