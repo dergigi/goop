@@ -1,8 +1,9 @@
 //! Shared, title-free image gallery used by chats and profile pictures.
 use gpui::{App, AppContext, Context, FocusHandle, ImageSource, InteractiveElement, KeyDownEvent,
-    ObjectFit, ParentElement, Render, Styled, StyledImage, Window, img, px};
+    ObjectFit, ParentElement, Render, Styled, StyledImage, Window, div, img, px};
 use gpui::prelude::FluentBuilder;
-use crate::{Disableable, IconName, WindowExtension, button::Button, h_flex, v_flex};
+use crate::button::{ButtonCustomVariant, ButtonVariants};
+use crate::{Sizable, Disableable, IconName, WindowExtension, button::Button, h_flex};
 
 type Footer = Box<dyn Fn(usize, &mut Window, &mut App) -> Vec<Button>>;
 
@@ -24,11 +25,12 @@ pub fn open_gallery(
 ) {
     if images.is_empty() { return; }
     let selected = selected.min(images.len() - 1);
-    let gallery = cx.new(|cx| Gallery { images, selected, footer: Box::new(footer), focus: cx.focus_handle() });
+    let gallery = cx.new(|cx| Gallery { images, selected, footer: Box::new(footer), keyboard_controls: false, focus: cx.focus_handle() });
     let focus = gallery.read(cx).focus.clone();
     window.open_modal(cx, move |modal, window, _| {
-        modal.show_close(true).margin_top(px(16.))
-            .width((window.viewport_size().width - px(64.)).min(px(1000.)))
+        modal.show_close(false).margin_top(px(24.)).p_0()
+            .bg(gpui::transparent_black()).border_0().rounded_none().shadow(Vec::new())
+            .width((window.viewport_size().width - px(48.)).min(px(1400.)))
             .child(gallery.clone())
     });
     focus.focus(window, cx);
@@ -39,6 +41,7 @@ struct Gallery {
     selected: usize,
     footer: Footer,
     focus: FocusHandle,
+    keyboard_controls: bool,
 }
 
 fn adjacent(index: usize, count: usize, forward: bool) -> usize {
@@ -56,8 +59,17 @@ impl Gallery {
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let size = window.viewport_size();
-        v_flex().track_focus(&self.focus).gap_3().items_center()
+        let control_style = ButtonCustomVariant::new(window, cx)
+            .color(gpui::transparent_black()).foreground(gpui::white())
+            .hover(gpui::white().opacity(0.16)).active(gpui::white().opacity(0.24));
+        let downloads = (self.footer)(self.selected, window, cx);
+        div().relative().group("gallery").track_focus(&self.focus)
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                if this.keyboard_controls { this.keyboard_controls = false; cx.notify(); }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.keyboard_controls = true;
+                cx.notify();
                 match event.keystroke.key.as_str() {
                     "left" => this.navigate(false, cx),
                     "right" => this.navigate(true, cx),
@@ -67,17 +79,26 @@ impl Render for Gallery {
                 cx.stop_propagation();
             }))
             .child(img(self.images[self.selected].clone()).w_full()
-                .h((size.height - px(180.)).max(px(64.)).min(size.height * 0.7))
+                .h((size.height - px(64.)).max(px(64.)))
                 .object_fit(ObjectFit::Contain))
-            .when(self.images.len() > 1, |view| view.child(h_flex().gap_3().items_center()
-                .child(Button::new("previous-image").icon(IconName::ArrowLeft)
-                    .tooltip("Previous image (←)").disabled(self.selected == 0)
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate(false, cx))))
-                .child(format!("{} / {}", self.selected + 1, self.images.len()))
-                .child(Button::new("next-image").icon(IconName::ArrowRight)
-                    .tooltip("Next image (→)").disabled(self.selected + 1 == self.images.len())
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate(true, cx))))))
-            .child(h_flex().gap_2().children((self.footer)(self.selected, window, cx)))
+            .child(h_flex().absolute().bottom_4().left_0().w_full().justify_center()
+                .when(!self.keyboard_controls, |view| view.invisible().group_hover("gallery", |style| style.visible()))
+                .child(h_flex().items_center().gap_1().p_1().rounded_full()
+                    .bg(gpui::black().opacity(0.72)).text_color(gpui::white()).text_sm()
+                    .when(self.images.len() > 1, |view| view
+                        .child(Button::new("previous-image").icon(IconName::ArrowLeft).small()
+                            .custom(control_style).rounded_full()
+                            .tooltip("Previous image (←)").disabled(self.selected == 0)
+                            .on_click(cx.listener(|this, _, _, cx| this.navigate(false, cx))))
+                        .child(div().px_2().child(format!("{} / {}", self.selected + 1, self.images.len())))
+                        .child(Button::new("next-image").icon(IconName::ArrowRight).small()
+                            .custom(control_style).rounded_full()
+                            .tooltip("Next image (→)").disabled(self.selected + 1 == self.images.len())
+                            .on_click(cx.listener(|this, _, _, cx| this.navigate(true, cx)))))
+                    .children(downloads.into_iter().map(|button| button.small().custom(control_style).rounded_full()))
+                    .child(Button::new("close-gallery").icon(IconName::Close).small()
+                        .custom(control_style).rounded_full().tooltip("Close (Esc)")
+                        .on_click(|_, window, cx| window.close_modal(cx)))))
     }
 }
 
@@ -97,7 +118,7 @@ mod tests {
 #[cfg(all(test, feature = "test-support"))]
 mod interaction_tests {
     use super::*;
-    use crate::Root;
+    use crate::{Root, v_flex};
     use std::{cell::Cell, rc::Rc};
 
     struct Harness;

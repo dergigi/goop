@@ -20,6 +20,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- Show gallery controls in a compact hover overlay, with a download icon and no image frame.
+
 - Add icons to chat context-menu pin, archive, and read/unread actions.
 
 - Start quick reactions with 🤙, 🧡, and 👀, then adapt them to the most frequently used emoji in the last 100 sent reactions.
