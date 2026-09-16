@@ -26,6 +26,12 @@ Camera images are decoded on your device, never uploaded or saved. Scanning also
 
 Only bunker connection QR codes are accepted here; an `nsec` private key or a website QR code is not a signer connection.
 
+### Linux credential storage
+
+If login reports a missing Secret portal or another system credential-store error, choose **Use local credential file**, then connect with a QR code or bunker URL. This explicitly switches Goop to `~/.config/goop/credentials/signer.json` (or your XDG config directory). The file is unencrypted, with permissions limited to your user account: directory `700`, file `600`. It contains the signer connection and Goop’s client key, not your account’s signing key. Keep it private.
+
+Goop preserves accessible credentials when switching. If an existing account’s client key is unavailable, restore access to the system credential store first; Goop will not silently generate a replacement. Logging out removes the saved login from the selected store while retaining the client key and local history.
+
 ## Emoji and reactions
 
 Use the composer’s emoji button to browse or search by name, shortcode, or emoji. Categories and skin-tone controls include an **All** option for mixed-tone variants. Choose an emoji to insert it at the cursor.

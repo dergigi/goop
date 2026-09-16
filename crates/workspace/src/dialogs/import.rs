@@ -60,7 +60,12 @@ impl ImportIdentity {
             loading: false,
             tasks: vec![],
             _subscription: Some(input_subscription),
-            _state_subscription: cx.observe(&NostrRegistry::global(cx), |_, _, cx| cx.notify()),
+            _state_subscription: cx.observe(&NostrRegistry::global(cx), |this, state, cx| {
+                if state.read(cx).signer_connection_error().is_some() && !state.read(cx).identity_loading() {
+                    this.loading = false;
+                }
+                cx.notify();
+            }),
         }
     }
 
@@ -95,11 +100,35 @@ impl ImportIdentity {
         cx.notify();
     }
 
+    #[cfg(target_os = "linux")]
+    fn use_local_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading { return; }
+        let registry = NostrRegistry::global(cx);
+        if registry.read(cx).identity_loading() { return; }
+        let known_account = registry.read(cx).displayed_user().is_some();
+        self.set_loading(true, cx);
+        let enable = state::credentials::enable_local(cx, known_account);
+        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
+            match enable.await {
+                Ok(()) => {
+                    this.update(cx, |this, cx| {
+                        this.set_loading(false, cx);
+                        this.error.update(cx, |error, cx| { *error = None; cx.notify(); });
+                    })?;
+                    registry.update(cx, |registry, cx| registry.retry_signer(cx));
+                }
+                Err(error) => this.update(cx, |this, cx| this.set_error(error.to_string(), cx))?,
+            }
+            Ok(())
+        }));
+    }
+
     fn login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.loading || self.pairing.is_some() { return; }
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if self.scanner.is_some() { return; }
         let value = self.key_input.read(cx).value();
+        self.error.update(cx, |error, cx| { *error = None; cx.notify(); });
         self.set_loading(true, cx);
         match NostrConnectUri::parse(value.trim()) {
             Ok(uri @ NostrConnectUri::Bunker { .. }) => self.bunker(uri, window, cx),
@@ -114,12 +143,11 @@ impl ImportIdentity {
         let nostr = NostrRegistry::global(cx);
         let master_keys = nostr.read(cx).get_master_key(cx, true);
         let password = uri.to_string();
-        let save = cx.write_credentials(USER_KEYRING, "bunker", password.as_bytes());
 
         self.tasks.push(cx.spawn_in(window, async move |this, cx| {
             let result: Result<(), Error> = async {
                 let keys = master_keys.await?;
-                save.await?;
+                cx.update(|_, cx| state::credentials::write(cx, USER_KEYRING, "bunker", password.as_bytes()))?.await?;
                 let timeout = Duration::from_secs(30);
 
                 // Construct the nostr connect signer
@@ -159,20 +187,6 @@ impl ImportIdentity {
             *this = Some(message.into());
             cx.notify();
         });
-
-        // Clear the error message after 3 secs
-        self.tasks.push(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(3)).await;
-
-            this.update(cx, |this, cx| {
-                this.error.update(cx, |this, cx| {
-                    *this = None;
-                    cx.notify();
-                });
-            })?;
-
-            Ok(())
-        }));
     }
 }
 
@@ -184,8 +198,29 @@ impl Render for ImportIdentity {
         const BUNKER_WARN: &str = "Keep Goop and your signer connected while message history loads.";
         let bunker_warning = self.key_input.read(cx).value().starts_with("bunker://");
 
+        #[cfg(target_os = "linux")]
+        let local_storage = {
+            let selected = state::credentials::local_enabled().unwrap_or(true);
+            let state = NostrRegistry::global(cx);
+            let failed = self.error.read(cx).is_some() || state.read(cx).signer_connection_error().is_some();
+            v_flex().gap_2().when(selected, |view| view.child(
+                div().text_xs().text_color(cx.theme().text_muted).child("Credentials saved locally on this device.")
+            )).when(!selected && failed, |view| view
+                .child(Button::new("local-credentials").label("Use local credential file").ghost()
+                    .disabled(self.loading || state.read(cx).identity_loading())
+                    .on_click(cx.listener(|this, _, window, cx| this.use_local_credentials(window, cx))))
+                .child(div().text_xs().text_color(cx.theme().text_muted)
+                    .child("Saves your signer connection unencrypted in a file accessible only to your user account.")))
+        };
+
         v_flex()
             .size_full()
+            .map(|view| {
+                #[cfg(target_os = "linux")]
+                { view.child(local_storage) }
+                #[cfg(not(target_os = "linux"))]
+                { view }
+            })
             .gap_4()
             .text_sm()
             .when_some(NostrRegistry::global(cx).read(cx).signer_connection_error().map(str::to_owned), |view, error| view
