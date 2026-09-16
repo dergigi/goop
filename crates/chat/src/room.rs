@@ -401,12 +401,15 @@ impl Room {
         let cache = registry.read(cx).incoming_cache();
         let outgoing = registry.read(cx).outgoing_queue();
         cx.background_spawn(async move {
-            let mut messages = match cache {
-                Some(cache) => cache.all().await?,
+            let mut messages = match outgoing {
+                Some(outgoing) => outgoing.messages(room_id).await?,
                 None => vec![],
             };
-            if let Some(outgoing) = outgoing {
-                messages.extend(outgoing.messages(room_id).await?);
+            if let Some(cache) = cache {
+                let targets: Vec<_> = messages.iter()
+                    .filter(|message| crate::cache::is_chat(message.kind))
+                    .filter_map(|message| message.id).collect();
+                messages.extend(cache.for_room(room_id, &targets).await?);
             }
             Ok(crate::cache::for_room(messages, room_id))
         })

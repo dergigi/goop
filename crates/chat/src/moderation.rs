@@ -21,6 +21,28 @@ struct Data {
     newest: Option<(Timestamp, EventId)>,
     pending: BTreeMap<PublicKey, bool>,
     mutes: BTreeMap<PublicKey, u64>,
+    #[serde(skip)]
+    blocked_index: Arc<BTreeSet<PublicKey>>,
+}
+impl Data {
+    fn reindex(&mut self, owner: PublicKey) {
+        let data = &*self;
+        let mut keys: BTreeSet<_> = data
+            .public
+            .iter()
+            .chain(&data.private)
+            .filter_map(|tag| key(tag))
+            .collect();
+        for (key, value) in &data.pending {
+            if *value {
+                keys.insert(*key);
+            } else {
+                keys.remove(key);
+            }
+        }
+        keys.remove(&owner);
+        self.blocked_index = Arc::new(keys);
+    }
 }
 fn key(tag: &[String]) -> Option<PublicKey> {
     (tag.first()?.as_str() == "p")
@@ -58,11 +80,12 @@ impl ModerationStore {
         let path = root
             .join("goop-moderation-v1")
             .join(format!("{owner}.json"));
-        let data = match std::fs::read(&path) {
+        let mut data: Data = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Data::default(),
             Err(e) => return Err(e.into()),
         };
+        data.reindex(owner);
         let (wake, receiver) = flume::bounded(1);
         Ok((
             Self {
@@ -96,22 +119,13 @@ impl ModerationStore {
         Ok(())
     }
     pub fn blocked(&self) -> BTreeSet<PublicKey> {
-        let data = self.data.read().unwrap();
-        let mut keys: BTreeSet<_> = data
-            .public
-            .iter()
-            .chain(&data.private)
-            .filter_map(|tag| key(tag))
-            .collect();
-        for (key, value) in &data.pending {
-            if *value {
-                keys.insert(*key);
-            } else {
-                keys.remove(key);
-            }
-        }
-        keys.remove(&self.owner);
-        keys
+        (*self.blocked_snapshot()).clone()
+    }
+    pub fn blocked_snapshot(&self) -> Arc<BTreeSet<PublicKey>> {
+        self.data.read().unwrap().blocked_index.clone()
+    }
+    pub fn is_blocked(&self, key: PublicKey) -> bool {
+        self.data.read().unwrap().blocked_index.contains(&key)
     }
     pub fn pending(&self) -> bool {
         !self.data.read().unwrap().pending.is_empty()
@@ -138,6 +152,7 @@ impl ModerationStore {
                 updated.mutes.remove(&key);
             }
         }
+        updated.reindex(self.owner);
         self.persist(&updated)?;
         *data = updated;
         Ok(())
@@ -148,6 +163,7 @@ impl ModerationStore {
         let mut data = self.data.write().unwrap();
         let mut updated = data.clone();
         updated.pending.insert(key, value);
+        updated.reindex(self.owner);
         self.persist(&updated)?;
         *data = updated;
         self.retry();
@@ -211,6 +227,7 @@ impl ModerationStore {
                     .collect();
                 updated.private = private;
                 updated.newest = Some(stamp);
+                updated.reindex(self.owner);
                 self.persist(&updated)?;
                 *data = updated;
             }
@@ -264,6 +281,7 @@ impl ModerationStore {
                 updated.pending.remove(&key);
             }
         }
+        updated.reindex(self.owner);
         self.persist(&updated)?;
         *data = updated;
         Ok(())
@@ -273,6 +291,24 @@ impl ModerationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn block_index_snapshots_survive_updates_and_rebuild_on_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = Keys::generate().public_key();
+        let peer = Keys::generate().public_key();
+        let (store, _) = ModerationStore::open(root.path(), owner).unwrap();
+        store.block(peer, true).unwrap();
+        let blocked = store.blocked_snapshot();
+        assert!(Arc::ptr_eq(&blocked, &store.blocked_snapshot()));
+        assert!(store.is_blocked(peer));
+        let (restarted, _) = ModerationStore::open(root.path(), owner).unwrap();
+        assert!(restarted.is_blocked(peer));
+        store.block(peer, false).unwrap();
+        assert!(!store.is_blocked(peer));
+        assert!(blocked.contains(&peer));
+        assert!(!store.is_blocked(owner));
+    }
+
     #[test]
     fn preserves_other_entries_and_moves_blocks_to_private() {
         let target = Keys::generate().public_key();

@@ -40,10 +40,20 @@ impl ReadStore {
         Ok(Self { path, positions })
     }
     pub fn count(&self, room: u64, incoming: &BTreeSet<(Timestamp, EventId)>) -> usize {
+        self.count_filtered(room, incoming, |_| true)
+    }
+    /// Filter only unread candidates; never copy the room's complete history.
+    pub fn count_filtered(
+        &self,
+        room: u64,
+        incoming: &BTreeSet<(Timestamp, EventId)>,
+        mut visible: impl FnMut(&EventId) -> bool,
+    ) -> usize {
         let default = ReadPosition::default();
         let read = self.positions.get(&room).unwrap_or(&default);
-        let count = incoming.range((read.timestamp, EventId::from_slice(&[0; 32]).unwrap())..)
-            .filter(|(time, id)| *time > read.timestamp || !read.ids.contains(id)).count();
+        let count = incoming.range((read.timestamp, EventId::from_byte_array([0; 32]))..)
+            .filter(|(time, id)| (*time > read.timestamp || !read.ids.contains(id)) && visible(id))
+            .count();
         count.max(usize::from(read.marked_unread))
     }
     #[cfg(test)]
@@ -88,6 +98,22 @@ impl ReadStore {
 mod tests {
     use super::*;
     fn id(n: u8) -> EventId { EventId::from_slice(&[n; 32]).unwrap() }
+    #[test]
+    fn filtering_only_visits_unread_candidates_in_large_histories() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = ReadStore::open(root.path(), Keys::generate().public_key()).unwrap();
+        let incoming: BTreeSet<_> = (1..=100_000).map(|time| (Timestamp::from(time), id(1))).collect();
+        let mut position = ReadPosition::default();
+        position.note(Timestamp::from(99_990), id(1));
+        store.mark(1, &position).unwrap();
+        let mut visited = 0;
+        assert_eq!(store.count_filtered(1, &incoming, |_| { visited += 1; true }), 10);
+        assert_eq!(visited, 10);
+        assert_eq!(store.count_filtered(1, &incoming, |_| false), 0);
+        store.mark_unread(1).unwrap();
+        assert_eq!(store.count_filtered(1, &incoming, |_| false), 1);
+    }
+
     #[test]
     fn manual_unread_survives_restart_and_clears_for_self_chats_too() {
         let root = tempfile::tempdir().unwrap();

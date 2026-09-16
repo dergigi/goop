@@ -133,8 +133,9 @@ impl RumorCache {
         if blocked.is_empty() { return self.unread_count(room, reads); }
         let incoming = self.incoming_positions.read().unwrap();
         let authors = self.authors.read().unwrap();
-        let visible = incoming.get(&room).into_iter().flatten().filter(|(_, id)| authors.get(id).is_none_or(|author| !blocked.contains(author))).copied().collect();
-        reads.count(room, &visible)
+        reads.count_filtered(room, incoming.get(&room).unwrap_or(&BTreeSet::new()), |id| {
+            authors.get(id).is_none_or(|author| !blocked.contains(author))
+        })
     }
 
     pub fn search_messages(&self, room: u64) -> Vec<Arc<crate::SearchMessage>> {
@@ -282,6 +283,37 @@ impl RumorCache {
         Ok(())
     }
 
+    /// Loading a tab must not reload every conversation's plaintext history.
+    /// Existing cache records already carry room and kind tags. Reactions predate
+    /// a target index, so query those separately and retain only this room's targets.
+    pub async fn for_room(&self, room: u64, outgoing_targets: &[EventId]) -> Result<Vec<UnsignedEvent>> {
+        let records = self.client.database().query(
+            self.filter().custom_tag(SingleLetterTag::LOWERCASE_R, room.to_string()),
+        ).await?;
+        let mut messages = Vec::with_capacity(records.len());
+        let mut targets: BTreeSet<_> = outgoing_targets.iter().copied().collect();
+        for record in records {
+            let rumor = self.parse(&record)?;
+            if is_chat(rumor.kind) && rumor.uniq_id() == room {
+                targets.insert(rumor.id.unwrap());
+                self.note(&rumor);
+                messages.push(rumor);
+            }
+        }
+        let reactions = self.client.database().query(
+            self.filter().custom_tag(SingleLetterTag::LOWERCASE_K, Kind::Reaction.to_string()),
+        ).await?;
+        for record in reactions {
+            let rumor = self.parse(&record)?;
+            if rumor.kind == Kind::Reaction
+                && rumor.tags.event_ids().last().is_some_and(|id| targets.contains(&id)) {
+                self.note(&rumor);
+                messages.push(rumor);
+            }
+        }
+        Ok(messages)
+    }
+
     pub async fn all(&self) -> Result<Vec<UnsignedEvent>> {
         let records = self.client.database().query(self.filter()).await?;
         let mut messages = BTreeMap::new();
@@ -356,6 +388,46 @@ mod tests {
             .finalize_unsigned(sender.public_key());
         rumor.ensure_id();
         rumor
+    }
+
+    #[tokio::test]
+    async fn room_loading_keeps_reactions_and_outgoing_targets_without_loading_other_chats() {
+        let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
+        let owner = Keys::generate();
+        let peer = Keys::generate();
+        let other = Keys::generate();
+        let local = Keys::generate();
+        let cache = RumorCache::with_keys(client.clone(), owner.public_key(), local.clone());
+        let incoming = message(&peer, &[owner.public_key()], Kind::PrivateDirectMessage, "in");
+        let outgoing = message(&owner, &[peer.public_key()], Kind::PrivateDirectMessage, "out");
+        let unrelated = message(&other, &[owner.public_key()], Kind::PrivateDirectMessage, "other");
+        let reaction = |target| {
+            let mut event = EventBuilder::new(Kind::Reaction, "🤙")
+                .tag(Tag::event(target)).finalize_unsigned(peer.public_key());
+            event.ensure_id(); event
+        };
+        let incoming_reaction = reaction(incoming.id.unwrap());
+        let outgoing_reaction = reaction(outgoing.id.unwrap());
+        let other_reaction = reaction(unrelated.id.unwrap());
+        for (i, rumor) in [&incoming, &unrelated, &incoming_reaction, &outgoing_reaction, &other_reaction].into_iter().enumerate() {
+            cache.put(EventId::from_byte_array([i as u8; 32]), rumor).await.unwrap();
+        }
+        let room = incoming.uniq_id();
+        let mut expected = cache.all().await.unwrap();
+        expected.push(outgoing.clone());
+        let expected = for_room(expected, room);
+        // No in-memory index is required after restarting. An unrelated malformed
+        // plaintext record must not be parsed when opening this conversation.
+        let bad = EventBuilder::new(Kind::ApplicationSpecificData, "invalid JSON")
+            .tags([Tag::public_key(owner.public_key()), Tag::custom("r", [unrelated.uniq_id().to_string()])])
+            .finalize(&local).unwrap();
+        client.database().save_event(&bad).await.unwrap();
+        let restarted = RumorCache::with_keys(client.clone(), owner.public_key(), local);
+        let mut actual = restarted.for_room(room, &[outgoing.id.unwrap()]).await.unwrap();
+        actual.push(outgoing);
+        assert_eq!(for_room(actual, room), expected);
+        assert!(restarted.search_messages(unrelated.uniq_id()).is_empty());
+        client.shutdown().await;
     }
 
     #[test]

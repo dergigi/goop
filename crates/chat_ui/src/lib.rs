@@ -103,6 +103,7 @@ pub struct ChatPanel {
 
     /// Async operations
     tasks: Vec<Task<Result<(), Error>>>,
+    history_load: Option<Task<Result<(), Error>>>,
 
     /// Event subscriptions
     subscriptions: SmallVec<[Subscription; 3]>,
@@ -260,6 +261,7 @@ impl ChatPanel {
             current_upload: None,
             subscriptions,
             tasks: vec![],
+            history_load: None,
         }
     }
 
@@ -321,14 +323,30 @@ impl ChatPanel {
             return;
         };
 
-        self.tasks.push(cx.spawn(async move |this, cx| {
+        // Parsing mentions and media is CPU work; do it off the UI thread.
+        // Replacing the task also cancels stale reloads of the same panel.
+        let prepared = cx.background_spawn(async move {
             let events = get_messages.await?;
-
-            // Update message list
-            this.update(cx, |this, cx| {
-                this.insert_messages(&events, cx);
-            })?;
-
+            Ok::<_, Error>(events.into_iter().map(|event| {
+                if event.kind == Kind::Reaction { Err(event) }
+                else { Ok(Message::from(&event)) }
+            }).collect::<Vec<_>>())
+        });
+        self.history_load = Some(cx.spawn(async move |this, cx| {
+            let mut messages = prepared.await?.into_iter();
+            loop {
+                let batch: Vec<_> = messages.by_ref().take(64).collect();
+                if batch.is_empty() { break; }
+                this.update(cx, |this, cx| {
+                    for message in batch {
+                        match message {
+                            Ok(message) => this.insert_message(message, false, cx),
+                            Err(reaction) => this.insert_reaction(&reaction, cx),
+                        }
+                    }
+                })?;
+                cx.background_executor().timer(std::time::Duration::from_millis(1)).await;
+            }
             Ok(())
         }));
     }
@@ -577,18 +595,6 @@ impl ChatPanel {
             }
 
             cx.notify();
-        }
-    }
-
-    /// Convert and insert a vector of nostr events into the chat panel
-    fn insert_messages(&mut self, events: &[UnsignedEvent], cx: &mut Context<Self>) {
-        for event in events.iter() {
-            if event.kind == Kind::Reaction {
-                self.insert_reaction(event, cx);
-                continue;
-            }
-            // Bulk inserting messages, so no need to scroll to the latest message
-            self.insert_message(event, false, cx);
         }
     }
 

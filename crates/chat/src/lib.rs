@@ -181,7 +181,7 @@ impl ChatRegistry {
     /// Create a new chat registry instance
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nostr = NostrRegistry::global(cx);
-        let (tx, rx) = flume::unbounded::<Signal>();
+        let (tx, rx) = flume::bounded::<Signal>(256);
         let mut subscriptions = smallvec![];
 
         subscriptions.push(
@@ -325,6 +325,8 @@ impl ChatRegistry {
         }));
         let rx = self.signal_rx.clone();
         self.signal_consumer = Some(cx.spawn(async move |this, cx| {
+            let mut slice = std::time::Instant::now();
+            let mut processed = 0;
             while let Ok(signal) = rx.recv_async().await {
                 this.update(cx, |this, cx| {
                     match signal {
@@ -363,6 +365,14 @@ impl ChatRegistry {
                     }
                     cx.notify();
                 })?;
+                processed += 1;
+                // A ready channel does not yield. History replay must leave time
+                // for input and painting even while producers keep filling it.
+                if processed >= 32 || slice.elapsed() >= Duration::from_millis(4) {
+                    cx.background_executor().timer(Duration::from_millis(1)).await;
+                    slice = std::time::Instant::now();
+                    processed = 0;
+                }
             }
             Ok(())
         }));
@@ -395,7 +405,10 @@ impl ChatRegistry {
     pub fn has_unread(&self, room: u64) -> bool { self.unread_count(room) > 0 }
     pub fn unread_count(&self, room: u64) -> usize {
         match (&self.reads, &self.incoming) {
-            (Some(reads), Some(cache)) => cache.unread_count_filtered(room, reads, &self.blocked_users()),
+            (Some(reads), Some(cache)) => match &self.moderation {
+                Some(store) => cache.unread_count_filtered(room, reads, &store.blocked_snapshot()),
+                None => cache.unread_count(room, reads),
+            },
             _ => 0,
         }
     }
@@ -475,8 +488,8 @@ impl ChatRegistry {
         cx.notify();
     }
     pub fn blocked_users(&self) -> BTreeSet<PublicKey> { self.moderation.as_ref().map(|store| store.blocked()).unwrap_or_default() }
-    pub fn is_blocked(&self, key: PublicKey) -> bool { self.blocked_users().contains(&key) }
-    pub fn room_blocked(&self, room: &Room) -> bool { moderation::hides_room(&self.blocked_users(), room.members()) }
+    pub fn is_blocked(&self, key: PublicKey) -> bool { self.moderation.as_ref().is_some_and(|store| store.is_blocked(key)) }
+    pub fn room_blocked(&self, room: &Room) -> bool { self.moderation.as_ref().is_some_and(|store| moderation::hides_room(&store.blocked_snapshot(), room.members())) }
     pub fn is_muted(&self, key: PublicKey) -> bool { self.moderation.as_ref().is_some_and(|store| store.muted(key)) }
     pub fn moderation_pending(&self) -> bool { self.moderation.as_ref().is_some_and(|store| store.pending()) }
     pub fn mute_user(&mut self, key: PublicKey, seconds: Option<u64>, cx: &mut Context<Self>) -> Result<(), Error> {
@@ -1073,7 +1086,7 @@ impl ChatRegistry {
         self.history.clear();
         self.seen = Arc::default();
         self.event_map = Arc::default();
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = flume::bounded(256);
         self.signal_tx = tx;
         self.signal_rx = rx;
         self.rooms.clear();
