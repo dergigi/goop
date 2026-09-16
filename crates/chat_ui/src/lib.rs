@@ -220,8 +220,9 @@ impl ChatPanel {
                 this.list_state
                     .splice(0..this.messages.len(), this.messages.len());
                 this.list_state.scroll_to(scroll_top);
-                cx.notify();
             }
+            // Emoji preferences also affect the quick actions in every open chat.
+            cx.notify();
         }));
 
         // Define all functions that will run after the current cycle
