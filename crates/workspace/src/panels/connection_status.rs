@@ -406,11 +406,6 @@ impl Focusable for ConnectionStatus {
 impl Render for ConnectionStatus {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let details = self.details(cx);
-        let copy = details
-            .iter()
-            .map(|(heading, detail)| format!("{heading}\n{detail}"))
-            .collect::<Vec<_>>()
-            .join("\n\n");
         let relay_urls: BTreeSet<String> = self.relays.as_ref().into_iter().flatten()
             .map(|relay| relay.url.to_string()).collect();
         let mut details = details.into_iter();
@@ -434,8 +429,6 @@ impl Render for ConnectionStatus {
             || chat.outgoing_error().is_some();
         v_flex().size_full().min_h_0().p_4().gap_4().overflow_y_scrollbar()
             .child(h_flex().gap_2().flex_wrap()
-                .child(Button::new("copy-status").label("Copy status").small().ghost()
-                    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))
                 .when(nostr.read(cx).needs_signer_setup(), |view| view.child(
                     Button::new("setup-status-signer").label("Connect your signer").small().primary()
                         .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::ConnectSigner), cx))))

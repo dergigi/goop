@@ -24,7 +24,7 @@ use ui::dock::{
 };
 use ui::menu::{DropdownMenu, PopupMenuItem};
 use ui::notification::Notification;
-use ui::{Icon, IconName, Root, Sizable, TitleBar, WindowExtension, h_flex, v_flex};
+use ui::{Disableable, Icon, IconName, Root, Sizable, TitleBar, WindowExtension, h_flex, v_flex};
 
 use crate::dialogs::import::ImportIdentity;
 use crate::dialogs::settings;
@@ -567,6 +567,10 @@ impl Workspace {
     fn titlebar_left(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let nostr = NostrRegistry::global(cx);
         let displayed_user = nostr.read(cx).displayed_user();
+        let signer = nostr.read(cx);
+        let reconnecting = signer.identity_loading() && signer.signer_connection_error().is_none();
+        let show_reconnect = !signer.needs_signer_setup()
+            && (signer.current_user().is_none() || signer.identity_loading() || signer.signer_connection_error().is_some());
 
         h_flex()
             .flex_shrink_0()
@@ -651,6 +655,13 @@ impl Workspace {
                         this.on_command(&action, window, cx);
                     })),
             )
+            .when(show_reconnect, |bar| bar.child(
+                Button::new("titlebar-reconnect-signer")
+                    .icon(IconName::Refresh).small().ghost()
+                    .tooltip(if reconnecting { "Reconnecting to signer…" } else { "Reconnect signer" })
+                    .disabled(reconnecting)
+                    .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx))),
+            ))
     }
 
     fn active_chat_panel(&self, window: &Window, cx: &App) -> Option<Entity<chat_ui::ChatPanel>> {
