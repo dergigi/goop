@@ -9,9 +9,13 @@ use gpui::{
 };
 use gpui_platform::application;
 use state::{APP_ID, CLIENT_NAME};
-use ui::Root;
+use ui::{Root, WindowExtension, notification::Notification};
 
 actions!(goop, [Quit]);
+
+#[derive(Default)]
+struct QuitPending(bool);
+impl gpui::Global for QuitPending {}
 
 mod menus;
 
@@ -34,7 +38,9 @@ fn main() {
             cx.set_app_identity(APP_ID, CLIENT_NAME);
 
             // Register the `quit` function
+            cx.set_global(QuitPending::default());
             cx.on_action(quit);
+            init_persistence(cx);
 
             // Register the `quit` function with CMD+Q (macOS)
             #[cfg(target_os = "macos")]
@@ -121,7 +127,50 @@ fn load_embedded_fonts(cx: &App) {
         .unwrap();
 }
 
+fn save_error(message: String, cx: &mut App) {
+    log::error!("{message}");
+    for handle in cx.windows() {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.push_notification(Notification::error(message.clone()).autohide(false), cx);
+        });
+    }
+}
+
+fn init_persistence(cx: &mut App) {
+    // GPUI gives quit futures only 200 ms. Normal Quit flushes asynchronously
+    // below; this synchronous barrier also covers platform-initiated shutdown.
+    // Disk operations still run on the dedicated writer, never on this thread.
+    cx.on_app_quit(|_| {
+        if let Err(error) = common::persistence::global().shutdown_blocking() {
+            log::error!("Could not finish saving local state during shutdown: {error}");
+        }
+        async {}
+    }).detach();
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+            let errors = common::persistence::global().take_errors();
+            if errors.is_empty() { continue; }
+            cx.update(|cx| {
+                for error in errors {
+                    save_error(format!("Could not save local state: {error}. Changes remain in memory; Goop will retry."), cx);
+                }
+            });
+        }
+    }).detach();
+}
+
 fn quit(_ev: &Quit, cx: &mut App) {
-    log::info!("Gracefully quitting the application . . .");
-    cx.quit();
+    if cx.global::<QuitPending>().0 { return; }
+    cx.global_mut::<QuitPending>().0 = true;
+    cx.spawn(async move |cx| {
+        let result = common::persistence::global().flush().await;
+        cx.update(|cx| {
+            cx.global_mut::<QuitPending>().0 = false;
+            match result {
+                Ok(()) => cx.quit(),
+                Err(error) => save_error(format!("Could not save local state: {error}. Goop stayed open. Try quitting again after resolving the storage error."), cx),
+            }
+        });
+    }).detach();
 }

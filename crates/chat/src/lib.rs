@@ -30,6 +30,8 @@ mod moderation;
 mod outgoing;
 #[cfg(test)]
 mod test_signer;
+#[cfg(test)]
+mod test_state_dir;
 pub use history::RelayHistory;
 use outgoing::{OutgoingMessage, OutgoingQueue};
 

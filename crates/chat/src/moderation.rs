@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use state::UniversalSigner;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Write,
     path::{Path, PathBuf},
     sync::{
         Arc, RwLock,
@@ -80,11 +79,7 @@ impl ModerationStore {
         let path = root
             .join("goop-moderation-v1")
             .join(format!("{owner}.json"));
-        let mut data: Data = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Data::default(),
-            Err(e) => return Err(e.into()),
-        };
+        let mut data: Data = common::persistence::global().load(&path)?;
         data.reindex(owner);
         let (wake, receiver) = flume::bounded(1);
         Ok((
@@ -100,6 +95,8 @@ impl ModerationStore {
         ))
     }
     pub fn stop(&self) {
+        // Serialize stop with persist's active check and snapshot submission.
+        let _guard = self.data.write().unwrap();
         self.active.store(false, Ordering::SeqCst);
     }
     fn ensure_active(&self) -> Result<()> {
@@ -110,12 +107,8 @@ impl ModerationStore {
         Ok(())
     }
     fn persist(&self, data: &Data) -> Result<()> {
-        let dir = self.path.parent().unwrap();
-        std::fs::create_dir_all(dir)?;
-        let mut file = tempfile::NamedTempFile::new_in(dir)?;
-        file.write_all(&serde_json::to_vec(data)?)?;
-        file.as_file().sync_all()?;
-        file.persist(&self.path).map_err(|e| e.error)?;
+        self.ensure_active()?;
+        common::persistence::global().save(&self.path, data.clone())?;
         Ok(())
     }
     pub fn blocked(&self) -> BTreeSet<PublicKey> {
@@ -293,7 +286,7 @@ mod tests {
     use super::*;
     #[test]
     fn block_index_snapshots_survive_updates_and_rebuild_on_restart() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let owner = Keys::generate().public_key();
         let peer = Keys::generate().public_key();
         let (store, _) = ModerationStore::open(root.path(), owner).unwrap();
@@ -301,6 +294,7 @@ mod tests {
         let blocked = store.blocked_snapshot();
         assert!(Arc::ptr_eq(&blocked, &store.blocked_snapshot()));
         assert!(store.is_blocked(peer));
+        common::persistence::global().flush_blocking().unwrap();
         let (restarted, _) = ModerationStore::open(root.path(), owner).unwrap();
         assert!(restarted.is_blocked(peer));
         store.block(peer, false).unwrap();
@@ -335,7 +329,7 @@ mod tests {
     }
     #[test]
     fn local_changes_persist_and_are_account_scoped() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_state_dir::StateDir::new();
         let owner = Keys::generate().public_key();
         let peer = Keys::generate().public_key();
         let (store, _) = ModerationStore::open(dir.path(), owner).unwrap();
@@ -394,7 +388,7 @@ mod tests {
                 .and_connect()
                 .await
                 .unwrap();
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_state_dir::StateDir::new();
             let (store, _) = ModerationStore::open(root.path(), owner.public_key()).unwrap();
             // An edit made before initial sync must merge with both halves of the remote list.
             store.block(dave, true).unwrap();
@@ -428,7 +422,7 @@ mod tests {
                 .unwrap();
             let tags: Vec<Vec<String>> = serde_json::from_str(&plaintext).unwrap();
             assert!(tags.contains(&vec!["word".into(), "preserve".into()]));
-            let other_root = tempfile::tempdir().unwrap();
+            let other_root = crate::test_state_dir::StateDir::new();
             let (other, _) = ModerationStore::open(other_root.path(), owner.public_key()).unwrap();
             other.sync(&client, &signer).await.unwrap();
             assert_eq!(other.blocked(), store.blocked());
@@ -465,7 +459,7 @@ mod tests {
                 .and_connect()
                 .await
                 .unwrap();
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_state_dir::StateDir::new();
             let (store, _) = ModerationStore::open(root.path(), owner.public_key()).unwrap();
             store.block(peer, true).unwrap();
             assert!(
@@ -523,7 +517,7 @@ mod tests {
                 .unwrap();
             let owner = Keys::generate();
             let peer = Keys::generate().public_key();
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_state_dir::StateDir::new();
             let (store, _) = ModerationStore::open(root.path(), owner.public_key()).unwrap();
             store.block(peer, true).unwrap();
             assert!(
@@ -577,7 +571,7 @@ mod tests {
                 .await
                 .unwrap();
             let owner = Keys::generate();
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_state_dir::StateDir::new();
             let (store, _) = ModerationStore::open(root.path(), owner.public_key()).unwrap();
             store.block(Keys::generate().public_key(), true).unwrap();
             let refusing = crate::test_signer::RefusingSigner::new(owner);

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use state::UniversalSigner;
 use std::{
     collections::BTreeMap,
-    io::Write,
     path::{Path, PathBuf},
     sync::{
         Arc, RwLock,
@@ -112,11 +111,7 @@ pub(super) struct ArchiveStore {
 impl ArchiveStore {
     pub fn open(root: &Path, owner: PublicKey) -> Result<(Self, flume::Receiver<()>)> {
         let path = root.join("goop-archives-v1").join(format!("{owner}.json"));
-        let data = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Data::default(),
-            Err(error) => return Err(error.into()),
-        };
+        let data = common::persistence::global().load(&path)?;
         let (wake, receiver) = flume::bounded(1);
         Ok((
             Self {
@@ -131,6 +126,8 @@ impl ArchiveStore {
         ))
     }
     pub fn stop(&self) {
+        // Serialize stop with persist's active check and snapshot submission.
+        let _guard = self.data.write().unwrap();
         self.active.store(false, Ordering::SeqCst);
     }
     fn ensure_active(&self) -> Result<()> {
@@ -189,12 +186,8 @@ impl ArchiveStore {
         Ok(())
     }
     fn persist(&self, data: &Data) -> Result<()> {
-        let dir = self.path.parent().unwrap();
-        std::fs::create_dir_all(dir)?;
-        let mut file = tempfile::NamedTempFile::new_in(dir)?;
-        file.write_all(&serde_json::to_vec(data)?)?;
-        file.as_file().sync_all()?;
-        file.persist(&self.path).map_err(|e| e.error)?;
+        self.ensure_active()?;
+        common::persistence::global().save(&self.path, data.clone())?;
         Ok(())
     }
     pub fn set(&self, members: &[PublicKey], archived: bool) -> Result<()> {
@@ -406,9 +399,10 @@ mod tests {
         assert_eq!(pin_room(&[owner], owner), vec![owner.to_hex()]);
         let mut expected = vec![peer.to_hex(), other.to_hex()]; expected.sort();
         assert_eq!(pin_room(&[other, owner, peer, other], owner), expected);
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let (store, _) = ArchiveStore::open(root.path(), owner).unwrap();
         store.pin(&[owner, peer], true).unwrap();
+        common::persistence::global().flush_blocking().unwrap();
         let (restarted, _) = ArchiveStore::open(root.path(), owner).unwrap();
         assert!(restarted.is_pinned(&[peer, owner]));
         assert!(!ArchiveStore::open(root.path(), peer).unwrap().0.is_pinned(&[owner]));
@@ -482,11 +476,11 @@ mod tests {
                 .and_connect()
                 .await
                 .unwrap();
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_state_dir::StateDir::new();
             let (store, _) = ArchiveStore::open(root.path(), owner.public_key()).unwrap();
             store.sync(&client, &signer).await.unwrap();
             assert!(store.contains(&[bob]));
-            let other_root = tempfile::tempdir().unwrap();
+            let other_root = crate::test_state_dir::StateDir::new();
             let (other, _) = ArchiveStore::open(other_root.path(), owner.public_key()).unwrap();
             other.sync(&client, &signer).await.unwrap();
             assert!(other.contains(&[bob]));
@@ -560,11 +554,11 @@ mod tests {
                 .and_connect()
                 .await
                 .unwrap();
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::test_state_dir::StateDir::new();
             let (store, _) = ArchiveStore::open(root.path(), owner.public_key()).unwrap();
             store.sync_pins(&client, &signer).await.unwrap();
             assert!(store.is_pinned(&[bob]));
-            let other_root = tempfile::tempdir().unwrap();
+            let other_root = crate::test_state_dir::StateDir::new();
             let (other, _) = ArchiveStore::open(other_root.path(), owner.public_key()).unwrap();
             other.sync_pins(&client, &signer).await.unwrap();
             assert!(other.is_pinned(&[bob]));
@@ -607,7 +601,7 @@ mod tests {
 
     #[test]
     fn pending_archive_and_unarchive_survive_restart_and_accounts_are_isolated() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let owner = Keys::generate().public_key();
         let peer = Keys::generate().public_key();
         let (store, _) = ArchiveStore::open(root.path(), owner).unwrap();

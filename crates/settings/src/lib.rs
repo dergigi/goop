@@ -1,4 +1,4 @@
-use anyhow::{Error, anyhow};
+use anyhow::Error;
 use common::config_dir;
 use gpui::{App, AppContext, Context, Entity, Global, Subscription, Task, Window};
 use nostr_sdk::prelude::*;
@@ -137,8 +137,6 @@ pub struct AppSettings {
     /// Settings
     inner: Entity<Settings>,
 
-    save_task: Option<Task<()>>,
-
     /// Event subscriptions
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
@@ -189,7 +187,6 @@ impl AppSettings {
 
         Self {
             inner,
-            save_task: None,
             _subscriptions: subscriptions,
         }
     }
@@ -205,22 +202,18 @@ impl AppSettings {
     /// Load settings
     fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let task: Task<Result<Settings, Error>> = cx.background_spawn(async move {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let path = config_dir().join(".settings");
-                if let Ok(content) = smol::fs::read_to_string(&path).await {
-                    return Ok(serde_json::from_str(&content)?);
-                }
-            }
-            Err(anyhow!("Not found"))
+            Ok(common::persistence::global().load(&config_dir().join(".settings"))?)
         });
 
         cx.spawn_in(window, async move |this, cx| {
-            let settings = task.await.unwrap_or(Settings::default());
+            let settings = task.await;
 
             // Update settings
             this.update_in(cx, |this, window, cx| {
-                this.set_settings(settings, cx);
+                match settings {
+                    Ok(settings) => this.set_settings(settings, cx),
+                    Err(error) => log::error!("Could not load settings; keeping the existing file: {error}"),
+                }
                 this.apply_theme(window, cx);
             })
             .ok();
@@ -230,19 +223,9 @@ impl AppSettings {
 
     /// Save settings
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        let settings = self.inner.read(cx);
-        if let Ok(content) = serde_json::to_string(&settings) {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let previous = self.save_task.take();
-                self.save_task = Some(cx.background_spawn(async move {
-                    if let Some(previous) = previous { previous.await; }
-                    let directory = config_dir();
-                    if smol::fs::create_dir_all(directory).await.is_ok() {
-                        smol::fs::write(directory.join(".settings"), content).await.ok();
-                    }
-                }));
-            }
+        let settings = self.inner.read(cx).clone();
+        if let Err(error) = common::persistence::global().save(&config_dir().join(".settings"), settings) {
+            log::error!("Could not queue settings save: {error}");
         }
     }
 

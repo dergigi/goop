@@ -26,7 +26,7 @@ These are operation-count and correctness checks, not measured end-to-end startu
 
 1. Capture a macOS process sample during the actual stall; measure time to interactive and resident memory with a representative large account, before and after these changes. Do not include message content or credentials in diagnostic logs.
 2. Database initialization still uses foreground `block_on`. Move it behind an asynchronous startup state with proper error/retry handling.
-3. Read-position, Inbox, archive, and moderation persistence still contain synchronous filesystem writes. Move writes off the foreground thread without losing ordering or durability on logout/quit.
+3. Read-position, Inbox, archive, moderation, and settings writes now use the shared background writer; see [local-state persistence](local-state-persistence.md). Remaining synchronous startup reads and credential-file bookkeeping still merit profiling.
 4. Add a backward-compatible reaction-target index and page large conversation histories; current startup still indexes all cached message text for search.
 5. Coalesce profile/status invalidations; room-refresh coalescing and the profile dispatch budget are now implemented (see below).
 

@@ -2,7 +2,7 @@
 use anyhow::Result;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{collections::{BTreeMap, BTreeSet}, io::Write, path::{Path, PathBuf}};
+use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadPosition {
@@ -32,11 +32,7 @@ pub(super) struct ReadStore {
 impl ReadStore {
     pub fn open(root: &Path, owner: PublicKey) -> Result<Self> {
         let path = root.join("goop-read-v1").join(format!("{}.json", owner.to_hex()));
-        let positions = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(e) => return Err(e.into()),
-        };
+        let positions = common::persistence::global().load(&path)?;
         Ok(Self { path, positions })
     }
     pub fn count(&self, room: u64, incoming: &BTreeSet<(Timestamp, EventId)>) -> usize {
@@ -84,12 +80,7 @@ impl ReadStore {
     }
     fn persist(&mut self, updated: BTreeMap<u64, ReadPosition>) -> Result<bool> {
         if updated == self.positions { return Ok(false); }
-        let dir = self.path.parent().unwrap();
-        std::fs::create_dir_all(dir)?;
-        let mut temp = tempfile::NamedTempFile::new_in(dir)?;
-        temp.write_all(&serde_json::to_vec(&updated)?)?;
-        temp.as_file().sync_all()?;
-        temp.persist(&self.path).map_err(|e| e.error)?;
+        common::persistence::global().save(&self.path, updated.clone())?;
         self.positions = updated;
         Ok(true)
     }
@@ -100,7 +91,7 @@ mod tests {
     fn id(n: u8) -> EventId { EventId::from_slice(&[n; 32]).unwrap() }
     #[test]
     fn filtering_only_visits_unread_candidates_in_large_histories() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let mut store = ReadStore::open(root.path(), Keys::generate().public_key()).unwrap();
         let incoming: BTreeSet<_> = (1..=100_000).map(|time| (Timestamp::from(time), id(1))).collect();
         let mut position = ReadPosition::default();
@@ -116,7 +107,7 @@ mod tests {
 
     #[test]
     fn manual_unread_survives_restart_and_clears_for_self_chats_too() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let owner = Keys::generate().public_key();
         let mut store = ReadStore::open(root.path(), owner).unwrap();
         assert!(store.mark_unread(1).unwrap());
@@ -133,11 +124,12 @@ mod tests {
 
     #[test]
     fn marking_a_list_read_persists_without_touching_other_rooms_or_future_messages() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let owner = Keys::generate().public_key();
         let mut store = ReadStore::open(root.path(), owner).unwrap();
         let mut position = ReadPosition::default(); position.note(Timestamp::from(10), id(1));
         assert!(store.mark_many(&[(1, position.clone()), (2, position.clone())]).unwrap());
+        common::persistence::global().flush_blocking().unwrap();
         let mut store = ReadStore::open(root.path(), owner).unwrap();
         assert!(!store.has_unread(1, &position));
         assert!(!store.has_unread(2, &position));
@@ -149,7 +141,7 @@ mod tests {
 
     #[test]
     fn unread_counts_deduplicate_and_clear_at_the_read_position() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let mut store = ReadStore::open(root.path(), Keys::generate().public_key()).unwrap();
         let mut messages = BTreeSet::from([(Timestamp::from(10), id(1)), (Timestamp::from(11), id(2))]);
         messages.insert((Timestamp::from(11), id(2)));
@@ -163,7 +155,7 @@ mod tests {
     }
     #[test]
     fn read_positions_survive_restart_and_same_second_arrivals() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_state_dir::StateDir::new();
         let owner = Keys::generate().public_key();
         let other = Keys::generate().public_key();
         let mut store = ReadStore::open(root.path(), owner).unwrap();

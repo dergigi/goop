@@ -3,7 +3,6 @@ use anyhow::Result;
 use nostr_sdk::prelude::PublicKey;
 use std::{
     collections::BTreeSet,
-    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -17,11 +16,7 @@ impl Inbox {
         let path = root
             .join("goop-inbox-v1")
             .join(format!("{}.json", owner.to_hex()));
-        let rooms = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
-            Err(e) => return Err(e.into()),
-        };
+        let rooms = common::persistence::global().load(&path)?;
         Ok(Self { path, rooms })
     }
     pub fn contains(&self, room: u64) -> bool {
@@ -33,14 +28,7 @@ impl Inbox {
         if updated == self.rooms {
             return Ok(());
         }
-        let dir = self.path.parent().unwrap();
-        std::fs::create_dir_all(dir)?;
-        let mut temp = tempfile::NamedTempFile::new_in(dir)?;
-        temp.write_all(&serde_json::to_vec(&updated)?)?;
-        temp.as_file().sync_all()?;
-        temp.persist(&self.path).map_err(|e| e.error)?;
-        #[cfg(unix)]
-        std::fs::File::open(dir)?.sync_all()?;
+        common::persistence::global().save(&self.path, updated.clone())?;
         self.rooms = updated;
         Ok(())
     }
@@ -51,12 +39,13 @@ mod tests {
     use nostr_sdk::prelude::Keys;
     #[test]
     fn acceptance_survives_restart_and_is_isolated_between_accounts() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_state_dir::StateDir::new();
         let alice = Keys::generate().public_key();
         let bob = Keys::generate().public_key();
         let mut inbox = Inbox::open(dir.path(), alice).unwrap();
         inbox.remember([7, 9]).unwrap();
         inbox.remember([7]).unwrap();
+        common::persistence::global().flush_blocking().unwrap();
         let restarted = Inbox::open(dir.path(), alice).unwrap();
         assert!(restarted.contains(7));
         assert!(restarted.contains(9));

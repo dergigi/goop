@@ -20,3 +20,4 @@ pub mod crash_report;
 
 mod ui_work_budget;
 pub use ui_work_budget::UiWorkBudget;
+pub mod persistence;

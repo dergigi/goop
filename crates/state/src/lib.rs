@@ -244,6 +244,8 @@ impl NostrRegistry {
         let credentials = credentials::read(cx, USER_KEYRING);
         cx.spawn(async move |this, cx| {
             let result: Result<(), Error> = async {
+                common::persistence::global().flush().await
+                    .map_err(|error| anyhow!("Could not save local state before logout: {error}"))?;
                 // Keychain deletion reports an error for absent entries on macOS.
                 if credentials.await?.is_some() {
                     this.update(cx, |_, cx| credentials::delete(cx, USER_KEYRING))?.await?;
