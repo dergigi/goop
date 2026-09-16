@@ -8,11 +8,35 @@ title: Usage guide
 A native NIP-17 client for you and your agents.
 
 Designed for people who love the keyboard.
-This guide covers Goop 2.1.
+This guide covers the current Goop desktop release.
 
 If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.chat/) a try.
 
 [Agent Guide](#agent-guide) · [Keyboard shortcuts](#keyboard-shortcuts)
+
+## Install Goop
+
+### Ubuntu / Debian
+
+Paste this into a Bash terminal as your desktop user, without `sudo`:
+
+```bash
+bash <(curl -fsSL https://goop.dergigi.com/install.sh)
+```
+
+The installer selects Intel/AMD or ARM64 automatically, verifies the published download checksum, and installs Flatpak, the matching runtime, and Goop. It requests your password only when system packages are missing. If `curl` is unavailable, install it with `sudo apt install curl`, then run the command again.
+
+Open Goop from the application launcher, or run:
+
+```sh
+flatpak run com.dergigi.goop
+```
+
+If the launcher has not picked up Goop yet, log out of Ubuntu and back in. Run the installer again to install the latest published release. To uninstall the app while retaining its data, run `flatpak uninstall --user com.dergigi.goop`.
+
+### macOS and Windows
+
+Download the matching installer from [goop.dergigi.com](https://goop.dergigi.com/). On macOS, you can also use `brew install --cask dergigi/goop/goop`.
 
 ## Connect your signer
 

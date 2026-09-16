@@ -21,7 +21,7 @@ The [Goop tap](https://github.com/dergigi/homebrew-goop) supports Apple Silicon 
 Run as your desktop user (without `sudo`):
 
 ```sh
-wget -O /tmp/goop-install.sh https://raw.githubusercontent.com/dergigi/goop/master/script/install-linux && bash /tmp/goop-install.sh
+bash <(curl -fsSL https://goop.dergigi.com/install.sh)
 ```
 
 The [installer](script/install-linux) installs missing system tools via `sudo`, downloads the latest stable release for Intel/AMD or ARM64, verifies its release checksum, and installs the matching Flatpak runtime and Goop for your user account. Run it again to install a newer release. Open Goop from your application launcher or run `flatpak run com.dergigi.goop`.
