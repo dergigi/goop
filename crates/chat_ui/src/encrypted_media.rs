@@ -46,7 +46,7 @@ pub(super) fn preview(attachment: Attachment, window: &mut Window, cx: &mut App)
     if let Some(image) = attachment.image.clone() {
         ui::image_preview::open(image, move |_, _| {
             let attachment = attachment.clone();
-            vec![Button::new("save-attachment").label("Save decrypted file…")
+            vec![Button::new("save-attachment").icon(IconName::Download).tooltip("Download")
                 .on_click(move |_, window, cx| save(attachment.clone(), window, cx))]
         }, window, cx);
         return;
@@ -60,7 +60,7 @@ pub(super) fn preview(attachment: Attachment, window: &mut Window, cx: &mut App)
                 .child("Encrypted attachment").child(attachment.file.mime.clone()))
             .footer(move |_, _, _, _| {
                 let attachment = save_attachment.clone();
-                vec![Button::new("save-attachment").label("Save decrypted file…")
+                vec![Button::new("save-attachment").icon(IconName::Download).tooltip("Download")
                     .on_click(move |_, window, cx| save(attachment.clone(), window, cx))]
             })
     });

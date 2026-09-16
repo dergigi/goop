@@ -1214,7 +1214,7 @@ impl ChatPanel {
         let images = items.iter().map(|item| item.1.clone()).collect();
         ui::image_preview::open_gallery(images, index, move |index, _, _| {
             items[index].2.clone().map(|attachment| Button::new("save-attachment")
-                .label("Save decrypted file…")
+                .icon(IconName::Download).tooltip("Download")
                 .on_click(move |_, window, cx| encrypted_media::save(attachment.clone(), window, cx)))
                 .into_iter().collect()
         }, window, cx);
@@ -1631,7 +1631,7 @@ impl ChatPanel {
                         let images = attachments.iter().map(|a| a.image.clone().unwrap().into()).collect();
                         ui::image_preview::open_gallery(images, index, move |index, _, _| {
                             let attachment = attachments[index].clone();
-                            vec![Button::new("save-attachment").label("Save decrypted file…")
+                            vec![Button::new("save-attachment").icon(IconName::Download).tooltip("Download")
                                 .on_click(move |_, window, cx| encrypted_media::save(attachment.clone(), window, cx))]
                         }, window, cx);
                     } else { encrypted_media::preview(preview_attachment.clone(), window, cx); }
