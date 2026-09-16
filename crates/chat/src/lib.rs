@@ -5,7 +5,6 @@ use std::sync::LazyLock;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Error, anyhow};
-use common::EventExt;
 use decryption::DecryptQueue;
 use futures::StreamExt;
 use fuzzy_matcher::FuzzyMatcher;
@@ -36,6 +35,7 @@ use outgoing::{OutgoingMessage, OutgoingQueue};
 
 mod message;
 mod room;
+mod room_loader;
 
 pub use message::*;
 pub use room::*;
@@ -122,6 +122,8 @@ pub struct ChatRegistry {
     reads: Option<unread::ReadStore>,
     contacts: HashSet<PublicKey>,
     classification_ready: bool,
+    room_reload: room_loader::ReloadState,
+    room_load_task: Option<Task<Result<(), Error>>>,
     outgoing_reports: HashMap<EventId, Vec<SendReport>>,
     outgoing_error: Option<String>,
 
@@ -235,6 +237,8 @@ impl ChatRegistry {
             reads: None,
             contacts: HashSet::new(),
             classification_ready: false,
+            room_reload: room_loader::ReloadState::default(),
+            room_load_task: None,
             outgoing_reports: HashMap::new(),
             outgoing_error: None,
             matcher: CachedMatcher(SkimMatcherV2::default()),
@@ -325,8 +329,7 @@ impl ChatRegistry {
         }));
         let rx = self.signal_rx.clone();
         self.signal_consumer = Some(cx.spawn(async move |this, cx| {
-            let mut slice = std::time::Instant::now();
-            let mut processed = 0;
+            let mut budget = common::UiWorkBudget::default();
             while let Ok(signal) = rx.recv_async().await {
                 this.update(cx, |this, cx| {
                     match signal {
@@ -365,14 +368,7 @@ impl ChatRegistry {
                     }
                     cx.notify();
                 })?;
-                processed += 1;
-                // A ready channel does not yield. History replay must leave time
-                // for input and painting even while producers keep filling it.
-                if processed >= 32 || slice.elapsed() >= Duration::from_millis(4) {
-                    cx.background_executor().timer(Duration::from_millis(1)).await;
-                    slice = std::time::Instant::now();
-                    processed = 0;
-                }
+                budget.checkpoint(cx.background_executor()).await;
             }
             Ok(())
         }));
@@ -1055,6 +1051,8 @@ impl ChatRegistry {
     /// Reset the registry.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
         self.tasks.clear();
+        self.room_load_task = None;
+        self.room_reload = room_loader::ReloadState::default();
         self.history_error = None;
         self.history_task = None;
         self.decrypt_task = None;
@@ -1126,134 +1124,87 @@ impl ChatRegistry {
         }
     }
 
-    /// Load all rooms from the database.
+    /// Serialize room scans, coalescing requests received during the current scan.
     pub fn get_rooms(&mut self, cx: &mut Context<Self>) {
-        if NostrRegistry::global(cx).read(cx).current_user().is_none() {
+        if NostrRegistry::global(cx).read(cx).current_user().is_none()
+            || !self.room_reload.request() {
             return;
         }
-        let task = self.get_rooms_task(cx);
-
-        self.tasks.push(cx.spawn(async move |this, cx| {
-            match task.await {
-                Ok((mut rooms, contacts)) => {
-                    this.update(cx, |this, cx| {
-                        this.contacts = contacts;
-                        this.classification_ready = true;
-                        if let Some(inbox) = &mut this.inbox {
-                            let established = rooms
-                                .iter()
-                                .filter(|room| room.kind == RoomKind::Ongoing)
-                                .map(|room| room.id)
-                                .chain(this.rooms.iter().filter_map(|room| {
-                                    let room = room.read(cx);
-                                    (room.kind == RoomKind::Ongoing
-                                        || room
-                                            .members
-                                            .iter()
-                                            .any(|key| this.contacts.contains(key)))
-                                    .then_some(room.id)
-                                }));
-                            if let Err(error) = inbox.remember(established) {
-                                cx.emit(ChatEvent::Error(format!(
-                                    "Could not save Inbox state: {error}"
-                                )));
-                            }
-                            rooms = rooms
-                                .into_iter()
-                                .map(|mut room| {
-                                    if inbox.contains(room.id) {
-                                        room.kind = RoomKind::Ongoing;
-                                    }
-                                    room
-                                })
-                                .collect();
-                        }
-                        // Contacts arriving after live messages also promote existing rooms.
-                        for room in &this.rooms {
-                            room.update(cx, |room, cx| {
-                                if room.members.iter().any(|key| this.contacts.contains(key)) {
-                                    room.set_ongoing(cx);
-                                }
-                            });
-                        }
-                        this.extend_rooms(rooms, cx);
-                        this.sort(cx);
-                        cx.notify();
-                    })?;
+        let mut task = self.get_rooms_task(cx);
+        self.room_load_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let result = task.await;
+                let next = this.update(cx, |this, cx| {
+                    match result {
+                        Ok(loaded) => this.apply_loaded_rooms(loaded, cx),
+                        Err(error) => cx.emit(ChatEvent::Error(error.to_string())),
+                    }
+                    this.room_reload.finish().then(|| this.get_rooms_task(cx))
+                })?;
+                match next {
+                    Some(next) => task = next,
+                    None => break,
                 }
-                Err(e) => {
-                    this.update(cx, |_, cx| {
-                        cx.emit(ChatEvent::Error(e.to_string()));
-                    })?;
-                }
-            };
-
+            }
             Ok(())
         }));
     }
 
+    fn apply_loaded_rooms(&mut self, loaded: room_loader::LoadedRooms, cx: &mut Context<Self>) {
+        let room_loader::LoadedRooms { mut rooms, contacts } = loaded;
+        self.contacts = contacts;
+        self.classification_ready = true;
+        if let Some(inbox) = &mut self.inbox {
+            let established = rooms
+                .iter()
+                .filter(|room| room.kind == RoomKind::Ongoing)
+                .map(|room| room.id)
+                .chain(self.rooms.iter().filter_map(|room| {
+                    let room = room.read(cx);
+                    (room.kind == RoomKind::Ongoing
+                        || room
+                            .members
+                            .iter()
+                            .any(|key| self.contacts.contains(key)))
+                    .then_some(room.id)
+                }));
+            if let Err(error) = inbox.remember(established) {
+                cx.emit(ChatEvent::Error(format!(
+                    "Could not save Inbox state: {error}"
+                )));
+            }
+            rooms = rooms
+                .into_iter()
+                .map(|mut room| {
+                    if inbox.contains(room.id) {
+                        room.kind = RoomKind::Ongoing;
+                    }
+                    room
+                })
+                .collect();
+        }
+        // Contacts arriving after live messages also promote existing rooms.
+        for room in &self.rooms {
+            room.update(cx, |room, cx| {
+                if room.members.iter().any(|key| self.contacts.contains(key)) {
+                    room.set_ongoing(cx);
+                }
+            });
+        }
+        self.extend_rooms(rooms, cx);
+        self.sort(cx);
+        cx.notify();
+    }
+
     /// Create a task to load rooms from the database
-    fn get_rooms_task(&self, cx: &App) -> Task<Result<(HashSet<Room>, HashSet<PublicKey>), Error>> {
+    fn get_rooms_task(&self, cx: &App) -> Task<Result<room_loader::LoadedRooms, Error>> {
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();
-        let public_key = nostr.read(cx).current_user();
+        let owner = nostr.read(cx).current_user();
         let outgoing = self.outgoing.clone();
         let cache = self.incoming.clone();
         cx.background_spawn(async move {
-            let public_key = public_key.ok_or_else(|| anyhow!("No account"))?;
-
-            // Query the latest contact list (previously `NostrDatabaseExt::contacts_public_keys`)
-            let filter = Filter::new()
-                .author(public_key)
-                .kind(Kind::ContactList)
-                .limit(1);
-
-            let contacts: HashSet<PublicKey> = client
-                .database()
-                .query(filter)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .next()
-                .map(|event| event.tags.public_keys().collect())
-                .unwrap_or_default();
-
-            let mut messages = match &cache {
-                Some(cache) => cache.all().await?,
-                None => vec![],
-            };
-            if let Some(outgoing) = outgoing {
-                messages.extend(outgoing.all_messages().await?);
-            }
-            let mut grouped: HashMap<u64, Vec<UnsignedEvent>> = HashMap::new();
-            for rumor in messages {
-                if let Some(cache) = &cache {
-                    cache.note(&rumor);
-                }
-                if cache::is_chat(rumor.kind) {
-                    grouped.entry(rumor.uniq_id()).or_default().push(rumor);
-                }
-            }
-
-            let mut rooms = HashSet::with_capacity(grouped.len());
-
-            for (_id, messages) in grouped.into_iter() {
-                let latest = messages.iter().max_by_key(|m| m.created_at).unwrap();
-                let room = Room::from(latest).organize(&public_key);
-
-                let user_sent = messages.iter().any(|m| m.pubkey == public_key);
-                let is_contact = room.members.iter().any(|k| contacts.contains(k));
-
-                let room = if user_sent || is_contact {
-                    room.kind(RoomKind::Ongoing)
-                } else {
-                    room
-                };
-
-                rooms.insert(room);
-            }
-
-            Ok((rooms, contacts))
+            room_loader::load(client, owner.ok_or_else(|| anyhow!("No account"))?, cache, outgoing).await
         })
     }
 

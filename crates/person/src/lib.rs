@@ -96,6 +96,7 @@ impl PersonRegistry {
         }
 
         tasks.push(cx.spawn(async move |this, cx| {
+            let mut budget = common::UiWorkBudget::default();
             while let Ok(event) = rx.recv_async().await {
                 this.update(cx, |this, cx| {
                     match event {
@@ -108,6 +109,7 @@ impl PersonRegistry {
                     };
                 })
                 .ok();
+                budget.checkpoint(cx.background_executor()).await;
             }
         }));
 

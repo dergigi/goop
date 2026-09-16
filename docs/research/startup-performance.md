@@ -28,4 +28,13 @@ These are operation-count and correctness checks, not measured end-to-end startu
 2. Database initialization still uses foreground `block_on`. Move it behind an asynchronous startup state with proper error/retry handling.
 3. Read-position, Inbox, archive, and moderation persistence still contain synchronous filesystem writes. Move writes off the foreground thread without losing ordering or durability on logout/quit.
 4. Add a backward-compatible reaction-target index and page large conversation histories; current startup still indexes all cached message text for search.
-5. Coalesce contact-triggered room refreshes and profile/status invalidations. Profile dispatch also needs a cooperative foreground budget under sustained traffic.
+5. Coalesce profile/status invalidations; room-refresh coalescing and the profile dispatch budget are now implemented (see below).
+
+## Follow-up refactoring
+
+- Shared `common::UiWorkBudget` now supplies the foreground event budget for both chat and profile dispatch, replacing the chat-specific implementation and preventing a ready profile queue from monopolizing the UI.
+- A dedicated room loader owns background discovery and classification. Its summaries retain room metadata and prior-send evidence instead of grouping all message bodies. Incoming rumors are indexed once instead of twice during each scan.
+- One retained room-loading task replaces an expanding collection of overlapping scans. Repeated requests while loading collapse into one follow-up scan; requests during that follow-up are preserved too. Reset drops the task and clears the scheduling state.
+- Contact-query failures now propagate, preserving current in-memory contacts rather than applying an empty list.
+
+Regression tests cover both event-budget thresholds, burst coalescing, requests during follow-up scans, and classification when an older sent message precedes a newer incoming message. The combined common/person/chat/chat UI/workspace suites passed (137 tests; one crash subprocess fixture intentionally ignored).
