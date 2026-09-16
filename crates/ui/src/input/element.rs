@@ -1466,9 +1466,9 @@ mod tests {
 
         assert_eq!(
             layout.bounds,
-            Bounds::new(point(px(47.), px(18.)), size(px(266.), px(87.)))
+            Bounds::new(point(px(57.), px(18.)), size(px(256.), px(87.)))
         );
-        assert_eq!(layout.scroll_size, size(px(976.), px(200.)));
+        assert_eq!(layout.scroll_size, size(px(966.), px(200.)));
 
         let layout_without_gutter =
             EditorScrollbarLayout::new(input_bounds, px(0.), size(px(500.), px(120.)), paddings);

@@ -51,10 +51,9 @@ jobs:
       - name: Run messaging and UI regressions
         run: cargo test --locked --verbose -p common -p settings -p chat -p state -p person -p chat_ui -p workspace --lib
 
-      - name: Run dock layout and context-menu regressions
+      - name: Run UI interaction and layout regressions
         run: |
-          cargo test --locked -p ui --features test-support --lib dock::viewport_tests
-          cargo test --locked -p ui --features test-support --lib menu::context_menu::tests
+          cargo test --locked -p ui --features test-support --lib
           cargo test --locked -p chat_ui --features test-support --lib emoji_picker::interaction_tests
           cargo test --locked -p workspace --features test-support --lib panels::connection_status::scroll_tests
 
