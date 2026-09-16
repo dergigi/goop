@@ -462,9 +462,11 @@ impl Render for ConnectionStatus {
         let details: Vec<_> = details.filter(|(heading, _)| !relay_urls.contains(heading) && !heading.starts_with("History: ")).collect();
         let signed_in = self.owner.is_some();
         let nostr = NostrRegistry::global(cx);
-        let signer_needs_retry = nostr.read(cx).identity_loading()
-            || nostr.read(cx).signer_connection_error().is_some()
-            || !signed_in;
+        let signer = nostr.read(cx);
+        let signer_needs_setup = signer.needs_signer_setup();
+        let reconnecting = signer.identity_loading() && signer.signer_connection_error().is_none();
+        let signer_needs_retry = !signer_needs_setup
+            && (signer.identity_loading() || signer.signer_connection_error().is_some() || !signed_in);
         let chat = ChatRegistry::global(cx);
         let chat = chat.read(cx);
         let delivery = Delivery::collect(chat.delivery_reports());
@@ -480,12 +482,12 @@ impl Render for ConnectionStatus {
             .child(v_flex().gap_2()
                 .child(h_flex().gap_2().child(Icon::new(IconName::UserKey).small()).child("Signer"))
                 .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(signer_detail))
-                .child(h_flex().gap_2().flex_wrap()
-                    .when(nostr.read(cx).needs_signer_setup(), |view| view.child(
+                .when(signer_needs_setup || signer_needs_retry, |view| view.child(h_flex().gap_2().flex_wrap()
+                    .when(signer_needs_setup, |view| view.child(
                         Button::new("setup-status-signer").label("Connect your signer").small().primary()
                             .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::ConnectSigner), cx))))
-                    .child(Button::new("retry-status-signer").icon(IconName::Refresh).label("Reconnect signer").small().ghost().disabled(!signer_needs_retry)
-                        .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx))))))
+                    .when(signer_needs_retry, |view| view.child(Button::new("retry-status-signer").icon(IconName::Refresh).label("Reconnect signer").small().ghost().disabled(reconnecting)
+                        .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx))))))))
             .when(signed_in && !relay_urls.is_empty(), |view| view.child(
                 v_flex().gap_2()
                     .child(h_flex().gap_2().child(Icon::new(IconName::Relay).small()).child("Messaging relays"))
