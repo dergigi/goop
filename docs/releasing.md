@@ -69,4 +69,4 @@ gh workflow run update.yml --repo dergigi/homebrew-goop
 
 An hourly scheduled run also checks for updates; GitHub may delay scheduled jobs. The updater ignores drafts and prereleases, refuses downgrades, and checks both DMG checksums against SHA256SUMS and GitHub's asset digests. It uses only the tap repository's standard GitHub Actions token. Monitor the workflow result after each release.
 
-The cask declares that Goop updates itself. An explicit Homebrew upgrade uses `brew upgrade --cask --greedy dergigi/goop/goop`. The tap preserves user data on uninstall and does not bypass Gatekeeper. Developer ID signing and notarization remain separate release-packaging work.
+Goop only notifies users about new releases. The cask uses normal Homebrew updates: `brew upgrade --cask dergigi/goop/goop`. The tap preserves user data on uninstall and does not bypass Gatekeeper. Developer ID signing and notarization remain separate release-packaging work.
