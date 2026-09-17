@@ -1,0 +1,36 @@
+# Maintainer: dergigi <dergigi@pm.me>
+pkgname=goop-bin
+pkgver=2.11.0
+pkgrel=1
+pkgdesc='Native NIP-17 client to chat with your clankers (and friends)'
+arch=('x86_64')
+url='https://goop.dergigi.com'
+license=('GPL-3.0-or-later')
+depends=('alsa-lib' 'gcc-libs' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland')
+makedepends=('patchelf')
+optdepends=('gnome-keyring: Secret Service provider for storing signer credentials'
+            'kwallet: alternative Secret Service provider')
+provides=("goop=${pkgver}")
+conflicts=('goop')
+options=('!strip' '!debug')
+source=("goop-${pkgver}-linux-x64.tar.gz::https://github.com/dergigi/goop/releases/download/v${pkgver}/goop-linux-x64.tar.gz"
+        'goop')
+sha256sums=('9e4845acb36d7020e1b211d2e9edd0eefacbbf1fa877f02376e860fad78846e7'
+            '5cd00e98af7c2238100053d3b2eb09e2e846feeb4e5170e639c98106cb702f1b')
+
+prepare() {
+    # Use Arch's libraries instead of the Ubuntu libraries bundled upstream.
+    patchelf --remove-rpath goop.app/bin/goop
+    # Upstream declares an action without providing its desktop action group.
+    sed -i '/^Actions=NewChat;$/d' goop.app/share/applications/goop.desktop
+}
+
+package() {
+    install -Dm755 goop.app/bin/goop "${pkgdir}/usr/lib/goop/goop"
+    install -Dm755 goop "${pkgdir}/usr/bin/goop"
+    install -Dm644 goop.app/share/applications/goop.desktop "${pkgdir}/usr/share/applications/goop.desktop"
+    for size in 512x512 1024x1024; do
+        install -Dm644 "goop.app/share/icons/hicolor/${size}/apps/goop.png" \
+            "${pkgdir}/usr/share/icons/hicolor/${size}/apps/goop.png"
+    done
+}
