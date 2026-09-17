@@ -499,7 +499,11 @@ impl Render for ConnectionStatus {
             .children(details.into_iter().map(|(heading, detail)| {
                 let history = heading == "Message history";
                 v_flex().gap_1().child(heading)
-                    .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(detail))
+                    .child(if history {
+                        history_progress(chat.history_status(cx), cx).into_any_element()
+                    } else {
+                        gpui::div().text_sm().text_color(cx.theme().text_muted).child(detail).into_any_element()
+                    })
                     .when(history, |view| view.children(chat.history_relays().iter()
                         .filter(|(url, _)| !relay_urls.contains(&url.to_string()))
                         .map(|(url, progress)| {
@@ -559,6 +563,22 @@ impl Render for ConnectionStatus {
                 .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))));
         status_viewport(content, &self.scroll)
     }
+}
+
+fn history_progress(progress: chat::HistoryStatus, cx: &App) -> impl IntoElement {
+    let counters = [("Received", progress.received), ("Loaded", progress.loaded),
+        ("Pending", progress.pending), ("Failed", progress.failed), ("Relay errors", progress.relay_errors)];
+    v_flex().w_full().min_w_0().flex_shrink_0().text_sm().text_color(cx.theme().text_muted)
+        .child(gpui::div().id("history-phase").h_6().flex_shrink_0().truncate().child(progress.status)
+            .tooltip(move |window, cx| ui::tooltip::Tooltip::new(progress.status, window, cx).into()))
+        .children(counters.into_iter().enumerate().map(|(index, (label, count))| {
+            let text = count.to_string();
+            h_flex().id(("history-counter", index)).w_full().min_w_0().h_6().flex_shrink_0().gap_2()
+                .tooltip(move |window, cx| ui::tooltip::Tooltip::new(format!("{label}: {count}"), window, cx).into())
+                .child(gpui::div().flex_1().min_w_0().truncate().child(label))
+                .child(gpui::div().flex_1().min_w_0().truncate().text_right().child(text))
+        }))
+        .when_some(progress.error, |view, error| view.child(gpui::div().child(error)))
 }
 
 /// Same row proportions as the sidebar's primary actions. Read shortcuts from
@@ -845,6 +865,39 @@ mod scroll_tests {
             status_viewport(v_flex().w_full().children((0..40).map(|index| {
                 gpui::div().h(px(40.)).flex_shrink_0().child(format!("Relay {index}"))
             })), &self.scroll)
+        }
+    }
+
+    struct HistoryHarness { count: usize, scroll: gpui::ScrollHandle }
+    impl Render for HistoryHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            status_viewport(v_flex().child(history_progress(chat::HistoryStatus {
+                status: if self.count == usize::MAX { "Loading history · broader relay search queued" } else { "Loading history" },
+                received: self.count, loaded: self.count, pending: self.count,
+                failed: self.count, relay_errors: self.count, error: None,
+            }, cx)).child(gpui::div().h(px(400.)).flex_shrink_0()), &self.scroll)
+        }
+    }
+
+    #[gpui::test]
+    fn growing_history_counts_do_not_move_content_below_them(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let scroll = gpui::ScrollHandle::new();
+        let view = window.update(|_, cx| {
+            theme::init(cx); ui::init(cx);
+            cx.new(|_| HistoryHarness { count: 0, scroll: scroll.clone() })
+        });
+        for width in [240., 160.] {
+            let draw = |_: &mut Window, _: &mut App| view.clone().into_any_element();
+            window.update(|_, cx| view.update(cx, |view, cx| { view.count = 0; cx.notify(); }));
+            window.draw(point(px(0.), px(0.)), size(px(width), px(240.)), draw);
+            let original = scroll.max_offset().y;
+            assert!(original > px(0.));
+            for count in [9, 1051, 95774, usize::MAX] {
+                window.update(|_, cx| view.update(cx, |view, cx| { view.count = count; cx.notify(); }));
+                window.draw(point(px(0.), px(0.)), size(px(width), px(240.)), draw);
+                assert_eq!(scroll.max_offset().y, original, "history height changed at {count} in a {width}px pane");
+            }
         }
     }
 

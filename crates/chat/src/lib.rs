@@ -84,6 +84,17 @@ enum Signal {
     OutgoingRecovered,
 }
 
+/// Structured progress for views that lay out counters independently.
+pub struct HistoryStatus {
+    pub status: &'static str,
+    pub received: usize,
+    pub loaded: usize,
+    pub pending: usize,
+    pub failed: usize,
+    pub relay_errors: usize,
+    pub error: Option<String>,
+}
+
 /// Chat Registry
 #[derive(Debug)]
 pub struct ChatRegistry {
@@ -818,7 +829,7 @@ impl ChatRegistry {
     pub fn pending_messages(&self) -> usize {
         self.queue.as_ref().map_or(0, |queue| queue.pending())
     }
-    pub fn history_summary(&self, cx: &App) -> String {
+    pub fn history_status(&self, cx: &App) -> HistoryStatus {
         let loaded = self.queue.as_ref().map_or(0, |queue| queue.loaded());
         let pending = self.pending_messages();
         let received: usize = self.history.values().map(|relay| relay.received).sum();
@@ -828,10 +839,9 @@ impl ChatRegistry {
             .filter(|relay| relay.error.is_some())
             .count();
         let failed = self.count_trash_messages(cx);
-        if let Some(error) = &self.history_error {
-            return format!("History incomplete · {error} · {pending} pending · {failed} failed");
-        }
-        let status = if self.pending_history == Some(true) {
+        let status = if self.history_error.is_some() {
+            "History incomplete"
+        } else if self.pending_history == Some(true) {
             "Loading history · broader relay search queued"
         } else if self.pending_history.is_some() {
             "Loading history · full rescan queued"
@@ -846,9 +856,15 @@ impl ChatRegistry {
         } else {
             "History checked"
         };
-        format!(
-            "{status} · {received} received · {loaded} loaded · {pending} pending · {failed} failed · {errors} relay errors"
-        )
+        HistoryStatus { status, received, loaded, pending, failed, relay_errors: errors, error: self.history_error.clone() }
+    }
+
+    pub fn history_summary(&self, cx: &App) -> String {
+        let HistoryStatus { status, received, loaded, pending, failed, relay_errors, error } = self.history_status(cx);
+        if let Some(error) = error {
+            return format!("History incomplete · {error} · {pending} pending · {failed} failed");
+        }
+        format!("{status} · {received} received · {loaded} loaded · {pending} pending · {failed} failed · {relay_errors} relay errors")
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
