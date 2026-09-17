@@ -6,7 +6,7 @@ pkgdesc='Native NIP-17 client to chat with your clankers (and friends)'
 arch=('x86_64')
 url='https://goop.dergigi.com'
 license=('GPL-3.0-or-later')
-depends=('alsa-lib' 'gcc-libs' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland')
+depends=('alsa-lib' 'bash' 'libgcc' 'glibc' 'hicolor-icon-theme' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland')
 makedepends=('patchelf')
 optdepends=('gnome-keyring: Secret Service provider for storing signer credentials'
             'kwallet: alternative Secret Service provider')
@@ -16,7 +16,7 @@ options=('!strip' '!debug')
 source=("goop-${pkgver}-linux-x64.tar.gz::https://github.com/dergigi/goop/releases/download/v${pkgver}/goop-linux-x64.tar.gz"
         'goop')
 sha256sums=('9e4845acb36d7020e1b211d2e9edd0eefacbbf1fa877f02376e860fad78846e7'
-            '5cd00e98af7c2238100053d3b2eb09e2e846feeb4e5170e639c98106cb702f1b')
+            '109196a81ab41147cc3d14a20cb5a17186fbf99658080ec213022e750e50e2d1')
 
 prepare() {
     # Use Arch's libraries instead of the Ubuntu libraries bundled upstream.

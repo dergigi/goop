@@ -13,7 +13,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install test tools
-        run: pacman -Syu --noconfirm --needed git patchelf namcap desktop-file-utils alsa-lib libxcb libxkbcommon libxkbcommon-x11 vulkan-icd-loader wayland vulkan-swrast xorg-server-xvfb xorg-xauth xdotool dbus
+        run: pacman -Syu --noconfirm --needed git patchelf namcap desktop-file-utils alsa-lib libxcb libxkbcommon libxkbcommon-x11 vulkan-icd-loader wayland vulkan-swrast xorg-server-xvfb xorg-xauth xdotool dbus hicolor-icon-theme weston
       - uses: actions/checkout@v4
       - name: Build and install package
         run: |
@@ -28,6 +28,7 @@ jobs:
           ! grep -q 'not found' dependencies.log
           desktop-file-validate /usr/share/applications/goop.desktop
           namcap PKGBUILD goop-bin-*.pkg.tar.zst | tee namcap.log
+          ! grep -q ' E: ' namcap.log
       - name: Launch with software graphics
         run: |
           runuser -u builder -- dbus-run-session -- xvfb-run -a sh -c '
@@ -39,6 +40,23 @@ jobs:
             sleep 10
             kill -0 "$app_pid"
             xdotool search --onlyvisible --name Goop
+          '
+      - name: Launch on headless Wayland
+        run: |
+          runuser -u builder -- dbus-run-session -- sh -c '
+            export XDG_RUNTIME_DIR=$(mktemp -d)
+            export LIBGL_ALWAYS_SOFTWARE=1
+            export WAYLAND_DISPLAY=goop-test
+            weston --backend=headless --renderer=pixman --socket=goop-test --idle-time=0 > /tmp/goop-aur/weston.log 2>&1 &
+            compositor_pid=$!
+            trap "kill $compositor_pid 2>/dev/null || true" EXIT
+            for n in $(seq 1 30); do test -S "$XDG_RUNTIME_DIR/goop-test" && break; sleep 1; done
+            test -S "$XDG_RUNTIME_DIR/goop-test"
+            goop > /tmp/goop-aur/wayland-startup.log 2>&1 &
+            app_pid=$!
+            trap "kill $app_pid $compositor_pid 2>/dev/null || true" EXIT
+            sleep 10
+            kill -0 "$app_pid"
           '
       - uses: actions/upload-artifact@v4
         if: always()

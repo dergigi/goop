@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Older Goop releases have an updater; pacman owns this installation.
 export GOOP_UPDATE_EXPLANATION='Update Goop through your AUR helper.'
 export GOOP_BUNDLE_TYPE=aur
