@@ -656,7 +656,14 @@ impl Render for Screening {
                             .text_sm()
                             .child(h_flex().size_6().justify_center().flex_shrink_0()
                                 .child(Icon::new(IconName::Robot).small().text_color(cx.theme().icon_accent)))
-                            .child("Self-identifies as a bot")
+                            .child(h_flex().gap_0p5().child("Self-identifies as a bot").child(
+                                Button::new("bot-info")
+                                    .icon(IconName::Info)
+                                    .xsmall()
+                                    .ghost()
+                                    .rounded()
+                                    .tooltip("This profile sets bot: true in its NIP-24 metadata, indicating full or partial automation. This is self-declared, not verified by Goop."),
+                            ))
                     )),
             )
     }
