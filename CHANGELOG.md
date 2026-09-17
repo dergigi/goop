@@ -7,10 +7,16 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.11.2] - 2026-09-17
+
 ### Fixed
 
 - Preserve signer error details when sending or decryption stops awaiting a retry. Explain why unattempted message copies are waiting.
 - Separate delivery results from the checkmark legend and replace unexplained paused labels with retry guidance.
+
+### Changed
+
+- Extend the installation script to use Homebrew on macOS, AUR helpers on Arch/Omarchy, and Flatpak setup on common Linux distributions. Add a checksum-verified Windows PowerShell installer.
 
 ## [2.11.1] - 2026-09-17
 
@@ -423,7 +429,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.11.1...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.11.2...HEAD
+[2.11.2]: https://github.com/dergigi/goop/compare/v2.11.1...v2.11.2
 [2.11.1]: https://github.com/dergigi/goop/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/dergigi/goop/compare/v2.10.1...v2.11.0
 [2.10.1]: https://github.com/dergigi/goop/compare/v2.10.0...v2.10.1
