@@ -17,7 +17,7 @@ use ui::notification::Notification;
 use ui::{Disableable, Icon, IconName, Sizable, WindowExtension, h_flex, v_flex};
 
 const REASONS: [(Report, &str, &str); 7] = [
-    (Report::Spam, "Spam", "Unsolicited or repetitive messages"),
+    (Report::Spam, "Spam or scam", "Unsolicited messages, scams, or fraud"),
     (
         Report::Impersonation,
         "Impersonation",
