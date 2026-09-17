@@ -182,7 +182,7 @@ impl ReportForm {
     ) -> Self {
         let explanation = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Add an explanation…")
+                .placeholder("Add additional context…")
                 .auto_grow(1, 3)
         });
         let mut subscriptions = vec![cx.subscribe(&explanation, |this: &mut Self, _, event, cx| {
@@ -315,7 +315,7 @@ impl Render for ReportForm {
             .max_h((window.viewport_size().height - px(112.)).max(px(80.))).overflow_y_scrollbar()
             .child(format!("Report {}", self.name))
             .child(div().text_xs().text_color(cx.theme().text_muted).child(self.target.to_bech32().unwrap()))
-            .child("This publishes a report signed by your account. The selected reason and explanation are public.")
+            .child("This publishes a report signed by your account. The selected reason and any additional context are public.")
             .child(v_flex().w_full().gap_1().flex_shrink_0().children(REASONS.iter().map(|(reason, label, description)| {
                 let selected = self.reason.as_ref() == Some(reason);
                 let reason = reason.clone();
@@ -334,7 +334,7 @@ impl Render for ReportForm {
                     }))
             })))
             .child(Button::new("toggle-report-explanation")
-                .label(if self.explanation_expanded { "Hide explanation" } else if self.explanation.read(cx).value().is_empty() { "Add an explanation (optional)" } else { "Edit explanation" })
+                .label(if self.explanation_expanded { "Hide context" } else if self.explanation.read(cx).value().is_empty() { "Add additional context (optional)" } else { "Edit context" })
                 .icon(if self.explanation_expanded { ui::IconName::ChevronDown } else { ui::IconName::Plus })
                 .align_left().small().ghost().disabled(self.sending)
                 .on_click(cx.listener(|this, _, window, cx| {
