@@ -55,9 +55,6 @@ pub fn init(window: &mut Window, cx: &mut App) {
     let checker = cx.new(|cx: &mut Context<ReleaseChecker>| {
         cx.defer_in(window, |_, _, cx| {
             cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_secs(120))
-                    .await;
                 loop {
                     let Ok(task) = this.update(cx, |this, cx| this.check(cx)) else {
                         break;
