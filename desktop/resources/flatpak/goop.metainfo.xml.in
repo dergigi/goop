@@ -5,7 +5,7 @@
     <project_license>GPL-3.0-or-later</project_license>
 
     <name>$APP_NAME</name>
-    <summary>A native NIP-17 client for you and your agents.</summary>
+    <summary>A native NIP-17 client to chat with your clankers (and friends)</summary>
 
     <developer id="su.reya">
         <name translate="no">Ren Amamiya</name>

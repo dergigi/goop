@@ -69,7 +69,7 @@ impl Render for GreeterPanel {
                                         div()
                                             .text_sm()
                                             .text_color(cx.theme().text_muted)
-                                            .child("A native NIP-17 client for you and your agents."),
+                                            .child("A native NIP-17 client to chat with your clankers (and friends)"),
                                     ),
                             ),
                     )

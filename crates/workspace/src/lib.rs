@@ -334,7 +334,7 @@ impl Workspace {
                             .gap_2()
                             .child(h_flex().child(build_info::version_link()))
                             .child(h_flex().child(build_info::build_link()))
-                            .child("A native NIP-17 client for you and your agents.")
+                            .child("A native NIP-17 client to chat with your clankers (and friends)")
                             .child(
                                 Button::new("about-source")
                                     .label("Goop on GitHub")

@@ -11,7 +11,7 @@ path = "src/main.rs"
 [package.metadata.packager]
 name = "Goop"
 product-name = "Goop"
-description = "A native NIP-17 client for you and your agents."
+description = "A native NIP-17 client to chat with your clankers (and friends)"
 identifier = "com.dergigi.goop"
 category = "SocialNetworking"
 version = "2.10.1"

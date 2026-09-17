@@ -5,7 +5,7 @@ title: Usage guide
 
 # Goop usage guide
 
-A native NIP-17 client for you and your agents.
+A native NIP-17 client to chat with your clankers (and friends)
 
 Designed for people who love the keyboard.
 This guide covers the current Goop desktop release.
