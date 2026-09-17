@@ -7,6 +7,23 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.10.1] - 2026-09-17
+
+### Fixed
+
+- Prevent the same emoji reaction appearing multiple times as relay deliveries and history updates arrive.
+- Reduce UI stalls during message loading by yielding between batches, coalescing room reloads, and avoiding repeated history and unread-count work.
+- Save local settings and chat state through an ordered background writer, with atomic file replacement, retries, and pending-save checks before logout and quit.
+- Keep history, decryption-error, and outgoing-message counts in stable rows with right-aligned numbers.
+- Hide the title-bar signer reconnect button while connected or already reconnecting.
+
+### Changed
+
+- Show history activity as a spinner beside the Message history heading, with status details on hover.
+- Use full-width Troubleshooting actions with icons and available keyboard shortcuts; rename Search other relays to Scan other relays.
+- Add a red Disconnect signer action as the final Troubleshooting button, using the existing logout confirmation. Keep Reconnect signer in the Signer section.
+- Group decryption failures under one Decryption errors heading, with full error details on hover.
+
 ## [2.10.0] - 2026-09-16
 
 ### Added
@@ -366,7 +383,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.10.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.10.1...HEAD
+[2.10.1]: https://github.com/dergigi/goop/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/dergigi/goop/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/dergigi/goop/compare/v2.8.1...v2.9.0
 [2.8.1]: https://github.com/dergigi/goop/compare/v2.8.0...v2.8.1
