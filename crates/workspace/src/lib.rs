@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ::settings::AppSettings;
-use auto_update::AutoUpdater;
+use update_check::ReleaseChecker;
 use chat::{ChatEvent, ChatRegistry};
 use common::GoopImageCache;
 use gpui::prelude::FluentBuilder;
@@ -151,6 +151,9 @@ impl Workspace {
 
         let connection_status = panels::connection_status::init(cx);
         let mut subscriptions = smallvec![];
+        if let Some(checker) = ReleaseChecker::try_global(cx) {
+            subscriptions.push(cx.observe(&checker, |_, _, cx| cx.notify()));
+        }
         subscriptions.push(cx.observe(&connection_status, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&nostr, |_, _, cx| cx.notify()));
         subscriptions.push(cx.subscribe_in(&dock, window, |_, _, event, window, cx| {
@@ -538,14 +541,17 @@ impl Workspace {
                 });
             }
             Command::Update => {
-                // No-op on managed distribution channels (Flatpak/Snap) where
-                // the in-app updater is never initialized.
-                if let Some(auto_updater) = AutoUpdater::try_global(cx) {
-                    auto_updater.update(cx, |this, cx| {
-                        this.updater.update(cx, |updater, cx| {
-                            updater.check(cx);
-                        });
-                    });
+                if let Some(checker) = ReleaseChecker::try_global(cx) {
+                    if let Some(task) = checker.update(cx, |this, cx| this.check(cx)) {
+                        cx.spawn_in(window, async move |_, cx| {
+                            let notification = match task.await {
+                                Ok(Some(release)) => Notification::info(format!("Goop {} is available. Open the link in the title bar to view the release.", release.version)),
+                                Ok(None) => Notification::info("You’re using the latest version of Goop."),
+                                Err(error) => Notification::error(format!("Could not check for updates: {error}")),
+                            };
+                            cx.update(|window, cx| window.push_notification(notification, cx)).ok();
+                        }).detach();
+                    }
                 }
             }
         }
@@ -620,15 +626,11 @@ impl Workspace {
                                     IconName::Book,
                                     Box::new(Command::ShowContactList),
                                 )
-                                // Only offer in-app updates when auto-update is
-                                // enabled (managed channels update themselves).
-                                .when(AutoUpdater::is_available(cx), |this| {
-                                    this.separator().menu_with_icon(
-                                        "Check for Updates",
-                                        IconName::Device,
-                                        Box::new(Command::Update),
-                                    )
-                                })
+                                .separator().menu_with_icon(
+                                    "Check for Updates",
+                                    IconName::Device,
+                                    Box::new(Command::Update),
+                                )
                                 .menu_with_icon(
                                     "Settings",
                                     IconName::Settings,
@@ -697,19 +699,18 @@ impl Workspace {
         let shortcut = if cx.theme().platform.is_mac() { "⌘⇧D" } else { "Ctrl+Shift+D" };
         let status = self.connection_status.read(cx).summary(cx);
 
-        // Update status is only shown when auto-update is available. On
-        // managed distribution channels (Flatpak/Snap) no updater exists, so
-        // nothing is rendered.
-        let updater_status = AutoUpdater::try_global(cx).and_then(|updater| {
-            let updater = updater.read(cx);
-            (!updater.idle(cx)).then(|| updater.status(cx))
-        });
+        let available_release = ReleaseChecker::try_global(cx)
+            .and_then(|checker| checker.read(cx).available().cloned());
 
         h_flex()
             .when(!cx.theme().platform.is_mac(), |this| this.pr_2())
             .gap_2()
-            .when_some(updater_status, |this, status| {
-                this.child(div().text_xs().italic().child(status))
+            .when_some(available_release, |this, release| {
+                this.child(Button::new("available-release")
+                    .label(format!("v{} available", release.version))
+                    .small().ghost()
+                    .tooltip("View the new release")
+                    .on_click(move |_, _, cx| cx.open_url(&release.url)))
             })
             .child(
                 Button::new("titlebar-relays")

@@ -88,8 +88,8 @@ fn main() {
                 // Initialize app registry
                 chat::init(window, cx);
 
-                // Initialize auto update
-                auto_update::init(window, cx);
+                // Initialize release notifications
+                update_check::init(window, cx);
 
                 // Root view
                 cx.new(|cx| Root::new(workspace::init(window, cx).into(), window, cx))

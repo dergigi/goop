@@ -16,6 +16,8 @@ If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.
 
 ## Install Goop
 
+Goop checks for new releases and shows a link in the title bar when an update is available. Install updates through your package manager or download the new release. Goop does not download or install updates automatically.
+
 ### Ubuntu / Debian
 
 Paste this into a Bash terminal as your desktop user, without `sudo`:

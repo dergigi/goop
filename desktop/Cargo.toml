@@ -38,7 +38,7 @@ common = { path = "../crates/common" }
 state = { path = "../crates/state" }
 chat = { path = "../crates/chat" }
 settings = { path = "../crates/settings" }
-auto_update = { path = "../crates/auto_update" }
+update_check = { path = "../crates/update_check" }
 person = { path = "../crates/person" }
 
 gpui.workspace = true

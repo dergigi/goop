@@ -20,7 +20,7 @@ chat = { path = "../chat" }
 chat_ui = { path = "../chat_ui" }
 settings = { path = "../settings" }
 person = { path = "../person" }
-auto_update = { path = "../auto_update" }
+update_check = { path = "../update_check" }
 
 gpui.workspace = true
 nostr-sdk.workspace = true

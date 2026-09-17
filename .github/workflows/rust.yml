@@ -49,7 +49,7 @@ jobs:
         run: cargo test --locked --verbose
 
       - name: Run messaging and UI regressions
-        run: cargo test --locked --verbose -p common -p settings -p chat -p state -p person -p chat_ui -p workspace --lib
+        run: cargo test --locked --verbose -p common -p settings -p chat -p state -p person -p chat_ui -p workspace -p update_check --lib
 
       - name: Run cache, UI interaction, and layout regressions
         run: |
