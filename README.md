@@ -16,7 +16,7 @@ brew install --cask dergigi/goop/goop
 
 The [Goop tap](https://github.com/dergigi/homebrew-goop) supports Apple Silicon and Intel Macs and tracks published stable releases. Current macOS builds are ad-hoc signed and not notarized; installation through Homebrew does not remove macOS's first-launch security checks.
 
-### Install on Ubuntu / Debian
+### Install on macOS / Linux
 
 Run as your desktop user (without `sudo`):
 
@@ -24,7 +24,17 @@ Run as your desktop user (without `sudo`):
 bash <(curl -fsSL https://goop.dergigi.com/install.sh)
 ```
 
-The [installer](script/install-linux) installs missing system tools via `sudo`, downloads the latest stable release for Intel/AMD or ARM64, verifies its release checksum, and installs the matching Flatpak runtime and Goop for your user account. Run it again to install a newer release. Open Goop from your application launcher or run `flatpak run com.dergigi.goop`.
+The installer uses Homebrew on macOS (setting it up if needed), yay or paru on Arch/Omarchy x86_64, and Flatpak on other Linux desktops. It can install missing dependencies with apt, dnf, zypper or pacman. Linux downloads support x86_64 and ARM64 and are checksum-verified. Run it again to update. On immutable distributions, Flatpak and its prerequisites must already be available.
+
+### Install on Windows
+
+Paste into PowerShell:
+
+```powershell
+irm https://goop.dergigi.com/install.ps1 | iex
+```
+
+Downloads the latest x64 or ARM64 installer, verifies its checksum and opens setup.
 
 ### Features
 

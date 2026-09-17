@@ -17,7 +17,7 @@ args = sys.argv[1:]
 config = json.loads(os.environ["GOOP_INSTALL_TEST"])
 log = pathlib.Path(os.environ["GOOP_INSTALL_LOG"])
 with log.open("a") as out: out.write(json.dumps([name] + args) + "\n")
-if name == "uname": print("Linux" if args == ["-s"] else config.get("arch", "x86_64"))
+if name == "uname": print(config.get("platform", "Linux") if args == ["-s"] else config.get("arch", "x86_64"))
 elif name == "id": print(config.get("uid", "1000"))
 elif name == "curl":
     url = args[-1]
@@ -33,10 +33,11 @@ elif name == "curl":
         output.write_text(json.dumps({"runtime":"org.freedesktop.Platform","runtime-version":"24.08"}))
     else: output.write_bytes(b"test bundle")
 elif name == "sudo": sys.exit(subprocess.run(args).returncode)
-elif name == "apt-get" and args[0] == "install":
+elif name in ("apt-get", "dnf", "zypper", "pacman") and ("install" in args or "-S" in args):
     command = pathlib.Path(sys.argv[0]).with_name("flatpak")
     command.write_text(pathlib.Path(sys.argv[0]).read_text())
     command.chmod(0o755)
+elif name == "brew" and args[:2] == ["list", "--cask"]: sys.exit(0 if config.get("installed") else 1)
 elif name == "flatpak":
     if config.get("runtime_failure") and "flathub" in args and args[0] == "install": sys.exit(1)
 '''
@@ -46,7 +47,7 @@ class InstallerTests(unittest.TestCase):
     def run_installer(self, **config):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            for name in ("uname", "id", "curl", "flatpak", "sudo", "apt-get"):
+            for name in ("uname", "id", "curl", "flatpak", "sudo", config.get("manager", "apt-get"), *config.get("extra", [])):
                 if name == "flatpak" and config.get("fresh"): continue
                 command = folder / name
                 command.write_text(f"#!{sys.executable}\n" + MOCK)
@@ -83,6 +84,40 @@ class InstallerTests(unittest.TestCase):
         self.assertIn(["sudo", "apt-get", "update"], calls)
         self.assertIn(["sudo", "apt-get", "install", "-y", "flatpak", "ca-certificates"], calls)
         self.assertEqual(len([c for c in calls if c[:2] == ["flatpak", "install"]]), 2)
+
+    def test_other_linux_package_managers(self):
+        for manager in ("dnf", "zypper", "pacman"):
+            with self.subTest(manager=manager):
+                result, calls = self.run_installer(fresh=True, manager=manager)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(any(c[:2] == ["sudo", manager] for c in calls))
+                self.assertTrue(any(c[:2] == ["flatpak", "install"] for c in calls))
+
+    def test_aur_helpers_skip_flatpak(self):
+        for helper in ("yay", "paru"):
+            result, calls = self.run_installer(manager="pacman", extra=[helper])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn([helper, "-S", "--needed", "goop-bin"], calls)
+            self.assertFalse(any(c[0] in ("curl", "flatpak") for c in calls))
+
+    def test_arm_arch_uses_flatpak(self):
+        result, calls = self.run_installer(arch="aarch64", manager="pacman", extra=["yay"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(c[0] == "yay" for c in calls))
+        self.assertTrue(any(c[0] == "flatpak" for c in calls))
+
+    def test_macos_install_and_upgrade(self):
+        for installed in (False, True):
+            result, calls = self.run_installer(platform="Darwin", extra=["brew"], installed=installed)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(["brew", "upgrade" if installed else "install", "--cask", "dergigi/goop/goop"], calls)
+            self.assertFalse(any(c[0] in ("curl", "flatpak", "sudo") for c in calls))
+
+    def test_unknown_os_and_immutable_missing_tools_stop(self):
+        for config in ({"platform": "FreeBSD"}, {"fresh": True, "extra": ["rpm-ostree"]}):
+            result, calls = self.run_installer(**config)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(any(c[0] == "sudo" for c in calls))
 
     def test_checksum_failure_stops_before_flatpak(self):
         result, calls = self.run_installer(corrupt=True)

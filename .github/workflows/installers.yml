@@ -1,0 +1,21 @@
+name: Install scripts
+on:
+  push:
+    paths: ['script/install*', 'script/test-install*', '.github/workflows/installers.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Windows PowerShell installer
+        shell: powershell
+        run: ./script/test-install-windows.ps1
+  unix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 script/test-install-linux.py
+      - run: bash -n script/install-linux

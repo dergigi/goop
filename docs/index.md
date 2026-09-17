@@ -28,7 +28,7 @@ yay -S goop-bin
 
 The package currently supports x86_64. It uses Arch's system libraries and includes the app launcher and URL handlers. To update, use `yay -Syu`. Signer credentials need an unlocked Secret Service provider, such as GNOME Keyring or KWallet.
 
-### Ubuntu / Debian
+### Automatic installer (macOS / Linux)
 
 Paste this into a Bash terminal as your desktop user, without `sudo`:
 
@@ -36,19 +36,25 @@ Paste this into a Bash terminal as your desktop user, without `sudo`:
 bash <(curl -fsSL https://goop.dergigi.com/install.sh)
 ```
 
-The installer selects Intel/AMD or ARM64 automatically, verifies the published download checksum, and installs Flatpak, the matching runtime, and Goop. It requests your password only when system packages are missing. If `curl` is unavailable, install it with `sudo apt install curl`, then run the command again.
+The installer uses Homebrew on macOS (setting it up if needed), yay or paru on Arch/Omarchy x86_64, and Flatpak on other Linux desktops. It can install missing dependencies with apt, dnf, zypper or pacman. Linux downloads support x86_64 and ARM64 and are checksum-verified. Run it again to update. On immutable distributions, Flatpak and its prerequisites must already be available.
 
-Open Goop from the application launcher, or run:
+Open Goop from the application launcher. For Flatpak installations, you can also run:
 
 ```sh
 flatpak run com.dergigi.goop
 ```
 
-If the launcher has not picked up Goop yet, log out of Ubuntu and back in. Run the installer again to install the latest published release. To uninstall the app while retaining its data, run `flatpak uninstall --user com.dergigi.goop`.
+If the launcher has not picked up Goop yet, log out and back in. Run the installer again to install the latest published release. To uninstall the app while retaining its data, run `flatpak uninstall --user com.dergigi.goop`.
 
-### macOS and Windows
+### Windows
 
-Download the matching installer from [goop.dergigi.com](https://goop.dergigi.com/). On macOS, you can also use `brew install --cask dergigi/goop/goop`.
+Paste into PowerShell:
+
+```powershell
+irm https://goop.dergigi.com/install.ps1 | iex
+```
+
+The script selects x64 or ARM64, verifies the release checksum and opens setup. Direct downloads for all platforms remain available at [goop.dergigi.com](https://goop.dergigi.com/).
 
 ## Connect your signer
 

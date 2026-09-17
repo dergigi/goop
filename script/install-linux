@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Install the latest published Goop Flatpak for the current desktop user.
+# Install Goop through the native package manager, or Flatpak on Linux.
+# The historical filename remains valid for existing installation links.
 set -euo pipefail
 
 fail() { printf 'Goop installer: %s\n' "$*" >&2; exit 1; }
-[[ $(uname -s) == Linux ]] || fail 'This installer is for Linux.'
+platform=$(uname -s)
+case "$platform" in
+    Darwin|Linux) ;;
+    MINGW*|MSYS*|CYGWIN*) fail 'Use PowerShell: irm https://goop.dergigi.com/install.ps1 | iex' ;;
+    *) fail "Unsupported platform: $platform. Download Goop at https://goop.dergigi.com" ;;
+esac
 [[ $(id -u) != 0 ]] || fail 'Run this as your desktop user, without sudo. It will request sudo only if system packages are missing.'
 case $(uname -m) in
     x86_64) asset_arch=x64; runtime_arch=x86_64 ;;
@@ -11,16 +17,68 @@ case $(uname -m) in
     *) fail 'Supported architectures are x86_64 and ARM64.' ;;
 esac
 
+if [[ $platform == Darwin ]]; then
+    if ! command -v brew >/dev/null; then
+        for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+            if [[ -x $candidate ]]; then export PATH="${candidate%/brew}:$PATH"; break; fi
+        done
+    fi
+    if ! command -v brew >/dev/null; then
+        printf 'Installing Homebrew first. Follow its setup prompts.\n'
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+            if [[ -x $candidate ]]; then export PATH="${candidate%/brew}:$PATH"; break; fi
+        done
+    fi
+    command -v brew >/dev/null || fail 'Homebrew setup did not finish. Visit https://brew.sh and try again.'
+    brew update
+    if brew list --cask goop >/dev/null 2>&1; then
+        brew upgrade --cask dergigi/goop/goop
+    else
+        brew install --cask dergigi/goop/goop
+    fi
+    printf '\nGoop is installed. Open it from Applications.\n'
+    exit 0
+fi
+
+# AUR binaries currently target x86_64. ARM64 uses the Flatpak below.
+if [[ $asset_arch == x64 ]] && command -v pacman >/dev/null; then
+    for helper in yay paru; do
+        if command -v "$helper" >/dev/null; then
+            "$helper" -S --needed goop-bin
+            printf '\nGoop is installed. Open it from the app launcher.\n'
+            exit 0
+        fi
+    done
+    printf 'No AUR helper found; installing the Flatpak instead.\n'
+fi
+
 missing=()
 for dependency in flatpak curl python3; do
     command -v "$dependency" >/dev/null || missing+=("$dependency")
 done
 if ((${#missing[@]})); then
-    command -v apt-get >/dev/null || fail "Install these packages first: ${missing[*]}"
     command -v sudo >/dev/null || fail "Install these packages as administrator first: ${missing[*]}"
     printf 'Installing required system packages: %s\n' "${missing[*]}"
-    sudo apt-get update
-    sudo apt-get install -y "${missing[@]}" ca-certificates
+    if command -v rpm-ostree >/dev/null; then
+        fail "Install missing tools using your immutable distribution's setup instructions: ${missing[*]}. Then rerun this installer."
+    elif command -v apt-get >/dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y "${missing[@]}" ca-certificates
+    elif command -v dnf >/dev/null; then
+        sudo dnf install -y "${missing[@]}" ca-certificates
+    elif command -v zypper >/dev/null; then
+        sudo zypper --non-interactive install "${missing[@]}" ca-certificates
+    elif command -v pacman >/dev/null; then
+        packages=()
+        for package in "${missing[@]}"; do
+            [[ $package != python3 ]] || package=python
+            packages+=("$package")
+        done
+        sudo pacman -S --needed "${packages[@]}" ca-certificates
+    else
+        fail "Install these packages with your distribution's package manager, then rerun: ${missing[*]}"
+    fi
 fi
 
 work_dir=$(mktemp -d)
