@@ -467,6 +467,7 @@ impl Render for ConnectionStatus {
         let reconnecting = signer.identity_loading() && signer.signer_connection_error().is_none();
         let signer_needs_retry = !signer_needs_setup
             && (signer.identity_loading() || signer.signer_connection_error().is_some() || !signed_in);
+        let signer_connected = signed_in && !signer_needs_setup && !signer_needs_retry;
         let chat = ChatRegistry::global(cx);
         let chat = chat.read(cx);
         let delivery = Delivery::collect(chat.delivery_reports());
@@ -482,6 +483,10 @@ impl Render for ConnectionStatus {
             .child(v_flex().gap_2()
                 .child(h_flex().gap_2().child(Icon::new(IconName::UserKey).small()).child("Signer"))
                 .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(signer_detail))
+                .when(signer_connected, |view| view.child(h_flex().child(
+                    Button::new("disconnect-status-signer").icon(IconName::Door)
+                        .label("Disconnect signer").small().danger()
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::Logout), cx)))))
                 .when(signer_needs_setup || signer_needs_retry, |view| view.child(h_flex().gap_2().flex_wrap()
                     .when(signer_needs_setup, |view| view.child(
                         Button::new("setup-status-signer").label("Connect your signer").small().primary()
