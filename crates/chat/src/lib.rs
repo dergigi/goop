@@ -430,10 +430,9 @@ impl ChatRegistry {
         if changed { cx.notify(); }
         Ok(())
     }
-    pub fn mark_list_read(&mut self, filter: &RoomKind, cx: &mut Context<Self>) -> Result<(), Error> {
-        let rooms: Vec<_> = self.rooms(filter, cx).iter().map(|room| room.read(cx).id).collect();
+    pub fn mark_rooms_read(&mut self, rooms: &[u64], cx: &mut Context<Self>) -> Result<(), Error> {
         let cache = self.incoming.as_ref().ok_or_else(|| anyhow!("Connect your account before marking chats read"))?;
-        let positions = cache.read_positions(&rooms);
+        let positions = cache.read_positions(rooms);
         let reads = self.reads.as_mut().ok_or_else(|| anyhow!("Read state is unavailable"))?;
         if reads.mark_many(&positions)? { cx.notify(); }
         Ok(())

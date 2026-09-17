@@ -17,16 +17,18 @@ use ui::scroll::Scrollbar;
 use ui::menu::{DropdownMenu, ContextMenuExt};
 use ui::{WindowExtension, IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
 pub(crate) mod entry;
+mod audience;
+use audience::Audience;
 
 #[derive(gpui::Action, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = sidebar, no_json)]
 pub(crate) enum ChatAction { MarkAllRead, SetRead(u64, bool), Pin(u64, bool), Archive(u64, bool), Leave(u64, bool) }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum DateGroup { Archive, Pinned, Today, Yesterday, LastWeek, Older }
+enum DateGroup { Inbox, Requests, Archive, Pinned, Today, Yesterday, LastWeek, Older }
 impl DateGroup {
     fn label(self) -> &'static str {
-        match self { Self::Archive => "Archive", Self::Pinned => "Pinned", Self::Today => "Today", Self::Yesterday => "Yesterday",
+        match self { Self::Inbox => "Inbox", Self::Requests => "Requests", Self::Archive => "Archive", Self::Pinned => "Pinned", Self::Today => "Today", Self::Yesterday => "Yesterday",
             Self::LastWeek => "Last 7 Days", Self::Older => "Older" }
     }
 }
@@ -38,7 +40,7 @@ fn date_group(date: NaiveDate, today: NaiveDate) -> DateGroup {
         _ => DateGroup::Older,
     }
 }
-enum SidebarRow { Heading(DateGroup), Chat(Entity<Room>) }
+enum SidebarRow { Heading(DateGroup), Chat(Entity<Room>), Empty }
 
 #[derive(Default)]
 struct RequestBadge {
@@ -59,6 +61,7 @@ pub struct Sidebar {
     scroll_handle: UniformListScrollHandle,
     filter: Entity<RoomKind>,
     show_blocked: bool,
+    audience: Audience,
     blocked_users: Entity<crate::panels::blocked_users::BlockedUsers>,
     request_badge: RequestBadge,
     _subscriptions: Vec<Subscription>,
@@ -70,12 +73,14 @@ impl Sidebar {
         let subscriptions = vec![
             cx.observe(&NostrRegistry::global(cx), |_, _, cx| cx.notify()),
             cx.observe(&chat, |_, _, cx| cx.notify()),
+            cx.observe(&person::PersonRegistry::global(cx), |_, _, cx| cx.notify()),
         ];
         Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
             filter: cx.new(|_| RoomKind::Ongoing),
             show_blocked: false,
+            audience: Audience::All,
             blocked_users: crate::panels::blocked_users::init(cx),
             request_badge: RequestBadge::default(),
             _subscriptions: subscriptions,
@@ -104,11 +109,12 @@ impl Sidebar {
 
     pub(crate) fn chat_action(&mut self, action: &ChatAction, window: &mut Window, cx: &mut Context<Self>) {
         let action = action.clone();
-        let filter = self.filter.read(cx).clone();
+        let visible_rooms: Vec<_> = self.filtered_rooms(self.filter.read(cx), cx).iter()
+            .map(|room| room.read(cx).id).collect();
         let apply = move |window: &mut Window, cx: &mut App| {
             let result = ChatRegistry::global(cx).update(cx, |chat, cx| match action {
                 ChatAction::SetRead(id, value) => chat.set_room_read(id, value, cx),
-                ChatAction::MarkAllRead => chat.mark_list_read(&filter, cx),
+                ChatAction::MarkAllRead => chat.mark_rooms_read(&visible_rooms, cx),
                 ChatAction::Pin(id, value) => chat.set_pinned(id, value, cx),
                 ChatAction::Archive(id, value) => chat.set_archived(id, value, cx),
                 ChatAction::Leave(id, value) => chat.leave_locally(id, value, cx),
@@ -179,12 +185,40 @@ impl Sidebar {
             )
     }
 
+    fn filtered_rooms(&self, kind: &RoomKind, cx: &App) -> Vec<Entity<Room>> {
+        ChatRegistry::global(cx).read(cx).rooms(kind, cx).into_iter()
+            .filter(|room| {
+                if self.audience == Audience::All { return true; }
+                let room = room.read(cx);
+                !room.is_group() && self.audience.matches(false, room.display_member(cx).self_identifies_as_bot())
+            }).collect()
+    }
+
+    fn toggle_audience(&mut self, audience: Audience, window: &mut Window, cx: &mut Context<Self>) {
+        self.audience = self.audience.toggle(audience);
+        self.scroll_handle.scroll_to_item(0, gpui::ScrollStrategy::Top);
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
     fn grouped_rows(&self, cx: &Context<Self>) -> Vec<SidebarRow> {
         let chat = ChatRegistry::global(cx);
         let today = Local::now().date_naive();
         let mut rows = Vec::new();
         let mut previous = None;
-        let mut rooms = chat.read(cx).rooms(self.filter.read(cx), cx);
+        let mut rooms = self.filtered_rooms(self.filter.read(cx), cx);
+        if rooms.is_empty() {
+            let heading = match self.filter.read(cx) {
+                RoomKind::Archived => DateGroup::Archive,
+                RoomKind::Request => DateGroup::Requests,
+                _ => DateGroup::Inbox,
+            };
+            rows.push(SidebarRow::Heading(heading));
+            if !chat.read(cx).loading() && !NostrRegistry::global(cx).read(cx).identity_loading() {
+                rows.push(SidebarRow::Empty);
+            }
+            return rows;
+        }
         if self.current_filter(&RoomKind::Archived, cx) {
             if !rooms.is_empty() { rows.push(SidebarRow::Heading(DateGroup::Archive)); }
             rows.extend(rooms.into_iter().map(SidebarRow::Chat));
@@ -222,16 +256,27 @@ impl Sidebar {
                         return h_flex().h_9().w_full().px_2().justify_between()
                             .text_sm().text_color(cx.theme().text_muted)
                             .child(group.label())
-                            .when(range.start + ix == 0, |heading| heading.child(
-                                Button::new("chat-list-menu").icon(IconName::EllipsisVertical)
+                            .when(range.start + ix == 0, |heading| heading.child(h_flex().gap_0p5()
+                                .child(Button::new("filter-bots").icon(IconName::Robot)
+                                    .xsmall().ghost().selected(self.audience == Audience::Bots)
+                                    .tooltip(if self.audience == Audience::Bots { "Show all chats" } else { "Show bots" })
+                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_audience(Audience::Bots, window, cx))))
+                                .child(Button::new("filter-people").icon(IconName::User)
+                                    .xsmall().ghost().selected(self.audience == Audience::People)
+                                    .tooltip(if self.audience == Audience::People { "Show all chats" } else { "Show non-bots" })
+                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_audience(Audience::People, window, cx))))
+                                .child(Button::new("chat-list-menu").icon(IconName::EllipsisVertical)
                                     .xsmall().ghost().tooltip("Chat list actions")
                                     .dropdown_menu(move |menu, _, _| {
                                         menu.action_context(focus_handle.clone())
                                             .menu("Mark all as read", Box::new(ChatAction::MarkAllRead))
                                     })
-                            )).into_any_element();
+                            ))).into_any_element();
                     },
                     SidebarRow::Chat(item) => item,
+                    SidebarRow::Empty => return h_flex().h_9().w_full().px_2()
+                        .text_sm().text_color(cx.theme().text_muted)
+                        .child(self.audience.empty_message()).into_any_element(),
                 };
                 let room = item.read(cx);
                 let room_clone = item.clone();
@@ -343,17 +388,18 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let nostr = NostrRegistry::global(cx);
         let chat = ChatRegistry::global(cx);
-        let logged_in = nostr.read(cx).current_user().is_some();
-        let restoring = nostr.read(cx).identity_loading();
-        let loading = restoring || (chat.read(cx).loading() && logged_in);
+        let owner = nostr.read(cx).current_user();
+        if self.request_badge.owner != owner { self.audience = Audience::All; }
 
         let requests: Vec<_> = chat.read(cx).rooms(&RoomKind::Request, cx)
             .iter().map(|room| room.read(cx).id).collect();
         let viewing_requests = self.current_filter(&RoomKind::Request, cx);
-        let new_requests = self.request_badge.update(nostr.read(cx).current_user(), &requests, viewing_requests);
+        let visible_requests: Vec<_> = self.filtered_rooms(&RoomKind::Request, cx)
+            .iter().map(|room| room.read(cx).id).collect();
+        self.request_badge.update(owner, &visible_requests, viewing_requests);
+        let new_requests = self.request_badge.update(owner, &requests, false);
         let unread_inbox = chat.read(cx).rooms(&RoomKind::Ongoing, cx).iter()
             .any(|room| chat.read(cx).has_unread(room.read(cx).id));
-        let total_rooms = chat.read(cx).count(self.filter.read(cx), cx);
         let show_hints = window.is_window_active() && window.modifiers().secondary();
 
         v_flex()
@@ -479,30 +525,6 @@ impl Render for Sidebar {
                     .child(Button::new("retry-archives").label("Retry sync").small().ghost()
                         .tooltip(error.clone())
                         .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_archives(cx)))))
-            })
-            .when(!self.show_blocked && !loading && total_rooms == 0, |this| {
-                this.child(
-                    div().w_full().px_2().child(
-                        v_flex()
-                            .p_3()
-                            .h_24()
-                            .w_full()
-                            .border_2()
-                            .border_dashed()
-                            .border_color(cx.theme().border_variant)
-                            .rounded(cx.theme().radius_lg)
-                            .items_center()
-                            .justify_center()
-                            .text_center()
-                            .child(div().text_sm().font_semibold().child("No conversations"))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().text_muted)
-                                    .child("Start a conversation with someone to get started."),
-                            ),
-                    ),
-                )
             })
             .child(v_flex().w_full().flex_1().min_h_0().gap_1().map(|this| {
                 if self.show_blocked {
