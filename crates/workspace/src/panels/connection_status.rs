@@ -572,7 +572,7 @@ impl Render for ConnectionStatus {
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.resume_history(cx))))
                 .child(troubleshooting_action("status-full-rescan", "Rescan all history", IconName::Reset, Some(crate::Command::LoadOlderHistory), window).disabled(!signed_in || history_running)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.load_older_history(cx))))
-                .child(troubleshooting_action("status-broaden", "Search other relays", IconName::Search, Some(crate::Command::SearchOtherRelays), window).disabled(!signed_in || history_running)
+                .child(troubleshooting_action("status-broaden", "Scan other relays", IconName::Search, Some(crate::Command::SearchOtherRelays), window).disabled(!signed_in || history_running)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.search_other_relays(cx))))
                 .child(troubleshooting_action("status-decrypt", "Retry decryption", IconName::UserKey, Some(crate::Command::RetryDecryption), window).disabled(!signed_in || !decrypt_failed)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_failed_messages(cx))))

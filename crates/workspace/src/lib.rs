@@ -749,7 +749,7 @@ impl Workspace {
                             .label(summary)
                             .separator()
                             .menu_with_icon("Rescan all history", IconName::History, Box::new(Command::LoadOlderHistory))
-                            .menu_with_icon("Search other relays", IconName::Search, Box::new(Command::SearchOtherRelays))
+                            .menu_with_icon("Scan other relays", IconName::Search, Box::new(Command::SearchOtherRelays))
                             .separator()
                             .menu_with_icon("Connection status", IconName::Activity, Box::new(Command::ShowConnectionStatus))
                     }),
