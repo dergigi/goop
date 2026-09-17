@@ -414,7 +414,7 @@ impl ConnectionStatus {
         }
         sections.push(("History coverage".into(), "A finished scan only covers messages retained by those relays. It does not prove your full history was recovered.".into()));
         if !chat.decryption_failures(cx).is_empty() {
-            sections.push(("Decryption".into(), String::new()));
+            sections.push(("Decryption errors".into(), String::new()));
         }
         let delivery = Delivery::collect(chat.delivery_reports());
         sections.push(("Outgoing messages".into(), String::new()));
@@ -502,7 +502,7 @@ impl Render for ConnectionStatus {
                 v_flex().gap_1().when(!history, |view| view.child(heading.clone()))
                     .child(if history {
                         history_progress(chat.history_status(cx), history_running, cx).into_any_element()
-                    } else if heading == "Decryption" {
+                    } else if heading == "Decryption errors" {
                         v_flex().w_full().min_w_0()
                             .children(chat.decryption_failures(cx).into_iter().enumerate().map(|(index, (reason, count))| {
                                 status_counter("decryption-counter", index, reason, count, cx)
