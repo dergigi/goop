@@ -7,6 +7,29 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-09-17
+
+### Added
+
+- Filter the chat list by bots or people using mutually exclusive robot and person buttons. Group chats appear when neither filter is active.
+- Identify profiles that declare `bot: true` with a robot icon and an explanation of the self-declared metadata.
+- Download original profile pictures and URL-based chat images from the shared gallery's hover controls.
+
+### Changed
+
+- Generate two Retina-aware avatar thumbnail sizes in background workers, sharing downloads and limiting concurrent work and cache memory. Keep original images in the gallery.
+- Use full-width report reasons with icons, including Spam or scam, and a compact, expandable additional-context field.
+- Label report submission Block & Report or Send Report according to the automatic-blocking setting.
+- Update the tagline to “A native NIP-17 client to chat with your clankers (and friends)”.
+
+### Removed
+
+- Remove the Hide user avatars preference; avatar rendering now uses background thumbnail generation.
+
+### Fixed
+
+- Keep large gallery images within the available window area, including after resizing to a short window.
+
 ## [2.10.1] - 2026-09-17
 
 ### Fixed
@@ -383,7 +406,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.10.1...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.11.0...HEAD
+[2.11.0]: https://github.com/dergigi/goop/compare/v2.10.1...v2.11.0
 [2.10.1]: https://github.com/dergigi/goop/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/dergigi/goop/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/dergigi/goop/compare/v2.8.1...v2.9.0
