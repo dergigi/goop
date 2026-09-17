@@ -7,6 +7,18 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-09-17
+
+### Changed
+
+- Replace automatic app updates with a small release link in the title bar. Install updates through your package manager or from the release page.
+- Check for new releases in the background as soon as the window opens, then every six hours. Release notices now work with all installation methods, including Flatpak and Snap.
+
+### Fixed
+
+- Refresh the title-bar release notice when a version check completes.
+- Show the result of a manual update check, including connection errors.
+
 ## [2.11.0] - 2026-09-17
 
 ### Added
@@ -406,7 +418,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.11.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.11.1...HEAD
+[2.11.1]: https://github.com/dergigi/goop/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/dergigi/goop/compare/v2.10.1...v2.11.0
 [2.10.1]: https://github.com/dergigi/goop/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/dergigi/goop/compare/v2.9.0...v2.10.0
