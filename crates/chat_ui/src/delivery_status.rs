@@ -12,10 +12,10 @@ pub(super) fn delivery_checks(reports: &[SendReport]) -> usize {
 
 pub(super) fn delivery_status_label(report: &SendReport) -> &'static str {
     match (report.success(), report.pending(), report.paused) {
-        (true, _, true) => "Partially sent · paused",
+        (true, _, true) => "Partially sent · waiting for retry",
         (true, true, _) => "Partially sent · queued",
         (true, false, false) => "Accepted by relay",
-        (false, _, true) => "Paused",
+        (false, _, true) => "Waiting for retry",
         (false, true, _) => "Queued for retry",
         _ if report.failed() => "Failed",
         _ => "Waiting for delivery status",
@@ -53,7 +53,7 @@ mod tests {
         assert_eq!(delivery_status_label(&report), "Partially sent · queued");
         report.queued = false;
         report.paused = true;
-        assert_eq!(delivery_status_label(&report), "Partially sent · paused");
+        assert_eq!(delivery_status_label(&report), "Partially sent · waiting for retry");
         report.paused = false;
         assert_eq!(delivery_status_label(&report), "Accepted by relay");
     }
@@ -66,6 +66,6 @@ mod tests {
         assert_eq!(delivery_status_label(&report), "Queued for retry");
         report.queued = false;
         report.paused = true;
-        assert_eq!(delivery_status_label(&report), "Paused");
+        assert_eq!(delivery_status_label(&report), "Waiting for retry");
     }
 }

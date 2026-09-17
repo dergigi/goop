@@ -1331,9 +1331,9 @@ impl ChatPanel {
         let label = if checks == 2 {
             None
         } else if paused && success {
-            Some("· paused")
+            Some("· sending stopped")
         } else if paused {
-            Some("• Paused · retry when ready")
+            Some("• Sending stopped · view details")
         } else if success && pending {
             Some("· queued")
         } else if success {
@@ -1378,22 +1378,22 @@ impl ChatPanel {
                                     .when(retryable, |this| {
                                         this.footer(|_, _, _, _| {
                                             vec![Button::new("retry-outgoing")
-                                                .label("Retry queued messages")
+                                                .label("Retry pending sends")
                                                 .on_click(|_, _, cx| {
                                                     ChatRegistry::global(cx).read(cx).retry_outgoing()
                                                 })]
                                         })
                                     })
                                     .child(v_flex().gap_4()
-                                        .child(v_flex().gap_2().text_sm()
+                                        .children(reports.iter().map(|report| Self::render_report(report, cx)))
+                                        .child(v_flex().gap_2().text_xs().text_color(cx.theme().text_muted)
+                                            .child("Checkmark meanings")
                                             .child(h_flex().gap_2().child(Icon::new(IconName::Check).small())
-                                                .child("A relay accepted a copy."))
+                                                .child("One check: a relay accepted a copy."))
                                             .child(h_flex().gap_2().child(Icon::new(IconName::CheckDouble).small())
-                                                .child("Every recipient’s copy was accepted by a relay."))
+                                                .child("Two checks: a relay accepted a copy for every recipient."))
                                             .child("These are not read receipts."))
-                                        .children(
-                                        reports.iter().map(|report| Self::render_report(report, cx)),
-                                    ))
+                                    )
                             }, window, cx);
                         });
                     })

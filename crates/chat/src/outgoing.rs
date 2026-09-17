@@ -100,6 +100,14 @@ impl OutgoingMessage {
                 report.queued = !self.paused && !destination.complete();
                 report.accepted = !destination.accepted.is_empty();
                 report.error = destination.error.clone().map(Into::into);
+                if report.paused && report.error.is_none() {
+                    // A refusal stops the whole message, including unattempted copies.
+                    report.error = self.destinations.iter().filter(|other| other.wrap.is_none()).find_map(|other| {
+                        other.error.as_ref().map(|reason| {
+                            format!("This copy is waiting because another copy could not be prepared. {reason}").into()
+                        })
+                    });
+                }
                 if self.uses_removed_encryption() && !destination.complete() {
                     report.paused = true;
                     report.queued = false;
@@ -388,11 +396,7 @@ impl OutgoingQueue {
                         Err(error) => {
                             let failure = SignerFailure::classify(error.as_ref());
                             message.paused = failure.requires_retry();
-                            message.destinations[index].error = Some(if message.paused {
-                                format!("Signer {failure:?}; paused until you retry")
-                            } else {
-                                format!("Signer {failure:?}: {error}")
-                            });
+                            message.destinations[index].error = Some(preparation_error(&error));
                         }
                     }
                     // A prepared wrap must survive a crash before it can leave this machine.
@@ -413,6 +417,14 @@ impl OutgoingQueue {
             }
         }
         Ok(())
+    }
+}
+
+fn preparation_error(error: &anyhow::Error) -> String {
+    if SignerFailure::classify(error.as_ref()).requires_retry() {
+        format!("The signer did not complete the request. Sending stopped. Check your signer, then retry. Details: {error:#}")
+    } else {
+        format!("Could not prepare the encrypted message; Goop will retry. Details: {error:#}")
     }
 }
 
@@ -550,6 +562,18 @@ mod tests {
             .chain([Destination::new(owner.public_key(), true)])
             .collect();
         OutgoingMessage::new(owner.public_key(), rumor, destinations).unwrap()
+    }
+
+    #[test]
+    fn preparation_errors_preserve_remote_reason_and_context() {
+        let error = anyhow::Error::new(SignerFailure::Rejected)
+            .context("nip44_encrypt is not permitted")
+            .context("Preparing recipient copy");
+        let reason = preparation_error(&error);
+        assert!(reason.contains("nip44_encrypt is not permitted"));
+        assert!(reason.contains("Preparing recipient copy"));
+        assert!(reason.contains("Sending stopped"));
+        assert!(!reason.contains("Goop will retry"));
     }
 
     #[tokio::test]
@@ -838,6 +862,10 @@ mod tests {
             .remove(0);
         assert!(saved.paused);
         assert!(saved.reports().iter().all(|r| r.paused && !r.pending()));
+        assert!(saved.reports().iter().all(|r| r.error.as_ref().is_some_and(|error|
+            error.contains("signer rejected the operation"))));
+        assert!(saved.reports().iter().any(|r| r.error.as_ref().is_some_and(|error|
+            error.contains("another copy"))));
         assert!(saved.destinations.iter().all(|d| d.wrap.is_none()));
         first
             .process(&signer, &signals, &mut BTreeMap::new())

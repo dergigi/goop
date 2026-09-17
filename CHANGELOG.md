@@ -7,6 +7,11 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve signer error details when sending or decryption stops awaiting a retry. Explain why unattempted message copies are waiting.
+- Separate delivery results from the checkmark legend and replace unexplained paused labels with retry guidance.
+
 ## [2.11.1] - 2026-09-17
 
 ### Changed

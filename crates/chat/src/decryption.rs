@@ -229,8 +229,7 @@ impl DecryptQueue {
                                 if SignerFailure::classify(error.as_ref()).requires_retry() =>
                             {
                                 let reason = format!(
-                                    "Signer {:?}; paused until you retry",
-                                    SignerFailure::classify(error.as_ref())
+                                    "Decryption paused because the signer did not complete the request. Check your signer, then retry decryption. Details: {error:#}"
                                 );
                                 cache.set_paused(event.id, Some(&reason)).await?;
                                 result = Err(anyhow!(reason));
