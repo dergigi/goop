@@ -14,7 +14,7 @@ use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
 use ui::scroll::ScrollableElement;
 use ui::notification::Notification;
-use ui::{Disableable, Sizable, WindowExtension, h_flex, v_flex};
+use ui::{Disableable, Icon, IconName, Sizable, WindowExtension, h_flex, v_flex};
 
 const REASONS: [(Report, &str, &str); 7] = [
     (Report::Spam, "Spam", "Unsolicited or repetitive messages"),
@@ -37,6 +37,18 @@ const REASONS: [(Report, &str, &str); 7] = [
         "Another reason, such as a scam or fraud",
     ),
 ];
+
+fn reason_icon(reason: &Report) -> IconName {
+    match reason {
+        Report::Spam => IconName::MailX,
+        Report::Impersonation => IconName::Mask,
+        Report::Malware => IconName::Bug,
+        Report::Nudity => IconName::EyeOff,
+        Report::Profanity => IconName::MessageWarning,
+        Report::Illegal => IconName::Gavel,
+        Report::Other => IconName::Flag,
+    }
+}
 
 fn report_builder(
     target: PublicKey,
@@ -170,9 +182,8 @@ impl ReportForm {
     ) -> Self {
         let explanation = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Optional explanation — this will be public")
-                .multi_line(true)
-                .rows(3)
+                .placeholder("Add an explanation…")
+                .auto_grow(1, 3)
         });
         let mut subscriptions = vec![cx.subscribe(&explanation, |this: &mut Self, _, event, cx| {
             if matches!(event, InputEvent::Change) && !this.sending {
@@ -305,17 +316,17 @@ impl Render for ReportForm {
             .child(format!("Report {}", self.name))
             .child(div().text_xs().text_color(cx.theme().text_muted).child(self.target.to_bech32().unwrap()))
             .child("This publishes a report signed by your account. The selected reason and explanation are public.")
-            .child(if auto_block {
-                "After a relay accepts your report, Goop will also block this person. You can turn this off in Settings."
-            } else {
-                "Automatic blocking is off in Settings. Reporting will not block this person."
-            })
-            .child("Reason (required)")
-            .child(h_flex().flex_wrap().gap_2().children(REASONS.iter().map(|(reason, label, description)| {
+            .child(v_flex().w_full().gap_1().flex_shrink_0().children(REASONS.iter().map(|(reason, label, description)| {
                 let selected = self.reason.as_ref() == Some(reason);
                 let reason = reason.clone();
-                Button::new(*label).label(if selected { format!("✓ {label}") } else { label.to_string() })
-                    .small().ghost().when(selected, |button| button.primary())
+                Button::new(*label)
+                    .ghost().align_left().w_full().h_8().px_3().flex_shrink_0()
+                    .when(selected, |button| button.primary())
+                    .child(h_flex().w_full().min_w_0().gap_2()
+                        .child(Icon::new(reason_icon(&reason)).small().flex_shrink_0())
+                        .child(div().flex_1().min_w_0().truncate().child(*label))
+                        .child(div().size_4().flex_shrink_0()
+                            .when(selected, |view| view.child(Icon::new(IconName::Check).small()))))
                     .tooltip(*description).disabled(self.sending)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.reason.as_ref() != Some(&reason) { this.signed = None; }
@@ -334,7 +345,6 @@ impl Render for ReportForm {
                     cx.notify();
                 })))
             .when(self.explanation_expanded, |view| view
-                .child(div().text_xs().text_color(cx.theme().text_muted).child("Your explanation will be public."))
                 .child(Input::new(&self.explanation).disabled(self.sending)))
             .when_some(self.error.clone(), |view, error| view.child(v_flex().gap_2()
                 .child(div().text_color(cx.theme().text_warning).child(error.clone()))
@@ -344,7 +354,7 @@ impl Render for ReportForm {
             .child(h_flex().gap_2().justify_end()
                 .child(Button::new("cancel-report").label("Cancel").ghost().disabled(self.sending)
                     .on_click(|_, window, cx| window.close_modal(cx)))
-                .child(Button::new("send-report").label(if self.error.is_some() && self.signed.is_some() { "Retry public report" } else { "Send public report" })
+                .child(Button::new("send-report").label(if auto_block { "Block & Report" } else { "Send Report" })
                     .primary().loading(self.sending).disabled(self.reason.is_none() || self.sending)
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))))
     }
