@@ -37,6 +37,7 @@ use crate::text::RenderedText;
 mod actions;
 mod encrypted_media;
 mod delivery_status;
+mod reactions;
 mod emoji_picker;
 mod find;
 mod text;
@@ -65,7 +66,7 @@ pub struct ChatPanel {
     message_index: HashMap<EventId, usize>,
 
     /// All reactions
-    reactions: BTreeMap<EventId, Vec<(SharedString, PublicKey)>>,
+    reactions: reactions::Reactions,
 
     render_markdown: bool,
 
@@ -240,7 +241,7 @@ impl ChatPanel {
             messages,
             last_read_position: None,
             message_index: HashMap::new(),
-            reactions: BTreeMap::new(),
+            reactions: reactions::Reactions::default(),
             room,
             list_state,
             find: find::FindBar::new(find_input, cx.entity().downgrade()),
@@ -601,18 +602,9 @@ impl ChatPanel {
     /// Insert a reaction into the chat panel
     fn insert_reaction(&mut self, event: &UnsignedEvent, cx: &mut Context<Self>) {
         if ChatRegistry::global(cx).read(cx).is_blocked(event.pubkey) { return; }
-        if event.kind != Kind::Reaction {
-            return;
+        if self.reactions.insert(event) {
+            cx.notify();
         }
-
-        for id in event.tags.event_ids() {
-            self.reactions
-                .entry(id)
-                .or_default()
-                .push((SharedString::from(&event.content), event.pubkey));
-        }
-
-        cx.notify();
     }
 
     /// Check if a message has any reports
@@ -637,12 +629,12 @@ impl ChatPanel {
 
     /// Get a reaction by its target ID (returns reference, no allocation)
     fn reaction(&self, id: &EventId) -> &[(SharedString, PublicKey)] {
-        self.reactions.get(id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.reactions.get(id)
     }
 
     /// Check if a message has any reactions
     fn has_reaction(&self, id: &EventId) -> bool {
-        self.reactions.contains_key(id)
+        !self.reactions.get(id).is_empty()
     }
 
     /// Scroll to a message by its ID
