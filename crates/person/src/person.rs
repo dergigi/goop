@@ -105,6 +105,11 @@ impl Person {
         self.metadata.clone()
     }
 
+    /// NIP-24's optional, self-declared automation flag in kind-0 metadata.
+    pub fn self_identifies_as_bot(&self) -> bool {
+        self.metadata.custom.get("bot").and_then(|value| value.as_bool()) == Some(true)
+    }
+
     /// Get profile messaging relays
     pub fn messaging_relays(&self) -> &Vec<RelayUrl> {
         &self.messaging_relays
@@ -180,6 +185,22 @@ mod tests {
         let mut person = Person::new(public_key, metadata);
         person.metadata_timestamp = Some(Timestamp::from(timestamp));
         person
+    }
+
+    #[test]
+    fn bot_identity_requires_an_explicit_metadata_boolean() {
+        let key = Keys::generate().public_key();
+        for (json, expected) in [
+            (r#"{"bot":true}"#, true),
+            (r#"{"bot":false}"#, false),
+            (r#"{}"#, false),
+            (r#"{"bot":"true"}"#, false),
+            (r#"{"bot":1}"#, false),
+            (r#"{"bot":null}"#, false),
+        ] {
+            let profile = Person::new(key, Metadata::from_json(json).unwrap());
+            assert_eq!(profile.self_identifies_as_bot(), expected, "{json}");
+        }
     }
 
     #[test]

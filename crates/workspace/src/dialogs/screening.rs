@@ -648,7 +648,16 @@ impl Render for Screening {
                                             })),
                                     ),
                             ),
-                    ),
+                    )
+                    .when(profile.self_identifies_as_bot(), |view| view.child(
+                        h_flex()
+                            .items_start()
+                            .gap_2()
+                            .text_sm()
+                            .child(h_flex().size_6().justify_center().flex_shrink_0()
+                                .child(Icon::new(IconName::Robot).small().text_color(cx.theme().icon_accent)))
+                            .child("Self-identifies as a bot")
+                    )),
             )
     }
 }
