@@ -453,7 +453,7 @@ impl Focusable for ConnectionStatus {
     }
 }
 impl Render for ConnectionStatus {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let details = self.details(cx);
         let relay_urls: BTreeSet<String> = self.relays.as_ref().into_iter().flatten()
             .map(|relay| relay.url.to_string()).collect();
@@ -518,18 +518,18 @@ impl Render for ConnectionStatus {
                     cx.notify();
                 }))))
             .when(self.show_troubleshooting, |view| view.child(v_flex().gap_3()
-            .child(h_flex().gap_2().flex_wrap()
-                .child(Button::new("manage-status-relays").label("Manage messaging relays").small().ghost()
+            .child(v_flex().w_full().gap_1()
+                .child(troubleshooting_action("manage-status-relays", "Manage messaging relays", IconName::Relay, Some(crate::Command::ShowMessaging), window)
                     .on_click(|_, window, cx| {
                         let panel = super::messaging_relays::init(window, cx);
                         crate::Workspace::add_panel(panel, ui::dock::DockPlacement::Right, window, cx);
                     }))
-                .child(Button::new("manage-status-gossip").label("Manage gossip relays").small().ghost()
+                .child(troubleshooting_action("manage-status-gossip", "Manage gossip relays", IconName::Group, Some(crate::Command::ShowRelayList), window)
                     .on_click(|_, window, cx| {
                         let panel = super::relay_list::init(window, cx);
                         crate::Workspace::add_panel(panel, ui::dock::DockPlacement::Right, window, cx);
                     }))
-                .child(Button::new("retry-status-relays").label("Reconnect messaging relays").small().ghost().disabled(!signed_in || !relays_found)
+                .child(troubleshooting_action("retry-status-relays", "Reconnect messaging relays", IconName::Refresh, None, window).disabled(!signed_in || !relays_found)
                     .on_click(cx.listener(|this, _, window, cx| {
                         let urls: Vec<_> = this.relays.as_ref().into_iter().flatten().map(|r| r.url.clone()).collect();
                         let client = NostrRegistry::global(cx).read(cx).client();
@@ -544,21 +544,38 @@ impl Render for ConnectionStatus {
                             if let Err(error) = task.await { cx.update(|window, cx| window.push_notification(error.to_string(), cx)).ok(); }
                         }).detach();
                     }))))
-            .child(h_flex().gap_2().flex_wrap()
-                .child(Button::new("status-rescan").label("Resume history").small().ghost().disabled(!signed_in || history_running)
+            .child(v_flex().w_full().gap_1()
+                .child(troubleshooting_action("status-rescan", "Resume history", IconName::History, None, window).disabled(!signed_in || history_running)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.resume_history(cx))))
-                .child(Button::new("status-full-rescan").label("Rescan all history").small().ghost().disabled(!signed_in || history_running)
+                .child(troubleshooting_action("status-full-rescan", "Rescan all history", IconName::Reset, Some(crate::Command::LoadOlderHistory), window).disabled(!signed_in || history_running)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.load_older_history(cx))))
-                .child(Button::new("status-broaden").label("Search other relays").small().ghost().disabled(!signed_in || history_running)
+                .child(troubleshooting_action("status-broaden", "Search other relays", IconName::Search, Some(crate::Command::SearchOtherRelays), window).disabled(!signed_in || history_running)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.search_other_relays(cx))))
-                .child(Button::new("status-decrypt").label("Retry decryption").small().ghost().disabled(!signed_in || !decrypt_failed)
+                .child(troubleshooting_action("status-decrypt", "Retry decryption", IconName::UserKey, Some(crate::Command::RetryDecryption), window).disabled(!signed_in || !decrypt_failed)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_failed_messages(cx))))
-                .child(Button::new("status-send").label("Retry pending sends").small().ghost().disabled(!signed_in || !send_pending)
+                .child(troubleshooting_action("status-send", "Retry pending sends", IconName::PaperPlaneFill, None, window).disabled(!signed_in || !send_pending)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).read(cx).retry_outgoing())))
             .child(gpui::div().text_xs().text_color(cx.theme().text_muted)
                 .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))));
         status_viewport(content, &self.scroll)
     }
+}
+
+/// Same row proportions as the sidebar's primary actions. Read shortcuts from
+/// the keymap so platform-specific badges only appear for bound actions.
+fn troubleshooting_action(
+    id: &'static str,
+    label: &'static str,
+    icon: IconName,
+    action: Option<crate::Command>,
+    window: &Window,
+) -> Button {
+    let shortcut = action.and_then(|action| ui::Kbd::binding_for_action(&action, None, window));
+    Button::new(id).ghost().align_left().w_full().h_8().px_3()
+        .child(h_flex().w_full().min_w_0().gap_2()
+            .child(Icon::new(icon).small().flex_shrink_0())
+            .child(gpui::div().flex_1().min_w_0().truncate().child(label))
+            .when_some(shortcut, |row, shortcut| row.child(shortcut)))
 }
 
 fn relay_errors(relay: &RelayState, history_error: Option<&str>) -> Vec<String> {
