@@ -569,8 +569,8 @@ impl Workspace {
         let displayed_user = nostr.read(cx).displayed_user();
         let signer = nostr.read(cx);
         let reconnecting = signer.identity_loading() && signer.signer_connection_error().is_none();
-        let show_reconnect = !signer.needs_signer_setup()
-            && (signer.current_user().is_none() || signer.identity_loading() || signer.signer_connection_error().is_some());
+        let show_reconnect = !signer.needs_signer_setup() && !reconnecting
+            && (signer.current_user().is_none() || signer.signer_connection_error().is_some());
 
         h_flex()
             .flex_shrink_0()
@@ -660,8 +660,7 @@ impl Workspace {
             .when(show_reconnect, |bar| bar.child(
                 Button::new("titlebar-reconnect-signer")
                     .icon(IconName::Refresh).small().ghost()
-                    .tooltip(if reconnecting { "Reconnecting to signer…" } else { "Reconnect signer" })
-                    .disabled(reconnecting)
+                    .tooltip("Reconnect signer")
                     .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |nostr, cx| nostr.retry_signer(cx))),
             ))
     }
