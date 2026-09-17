@@ -31,7 +31,7 @@ foreach ($architecture in @('AMD64', 'ARM64')) {
         $script:launched = $false
         $script:downloadFolder = $null
         $failed = $false
-        try { & $installerScript } catch { $failed = $true }
+        try { & $installerScript } catch { $failed = $true; Write-Host $_.Exception.Message }
         if ($failed -ne ($case -ne 'success')) { throw "Unexpected result: $architecture / $case" }
         if ($script:launched -ne ($case -in @('success', 'setup'))) { throw "Unexpected launch: $case" }
         if ($script:downloadFolder -and (Test-Path $script:downloadFolder)) { throw 'Temporary files remain' }
