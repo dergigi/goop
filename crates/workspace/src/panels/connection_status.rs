@@ -483,10 +483,6 @@ impl Render for ConnectionStatus {
             .child(v_flex().gap_2()
                 .child(h_flex().gap_2().child(Icon::new(IconName::UserKey).small()).child("Signer"))
                 .child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(signer_detail))
-                .when(signer_connected, |view| view.child(
-                    status_action("disconnect-status-signer", "Disconnect signer", IconName::Door, Some(crate::Command::Logout), window)
-                        .danger()
-                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::Logout), cx))))
                 .when(signer_needs_setup || signer_needs_retry, |view| view.child(v_flex().w_full().gap_2()
                     .when(signer_needs_setup, |view| view.child(
                         Button::new("setup-status-signer").label("Connect your signer").small().primary()
@@ -579,7 +575,11 @@ impl Render for ConnectionStatus {
                 .child(status_action("status-send", "Retry pending sends", IconName::PaperPlaneFill, None, window).disabled(!signed_in || !send_pending)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).read(cx).retry_outgoing())))
             .child(gpui::div().text_xs().text_color(cx.theme().text_muted)
-                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))));
+                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))
+                .when(signer_connected, |view| view.child(
+                    status_action("disconnect-status-signer", "Disconnect signer", IconName::Door, Some(crate::Command::Logout), window)
+                        .danger()
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::Logout), cx))))));
         status_viewport(content, &self.scroll)
     }
 }
