@@ -24,3 +24,6 @@ dist/
 vendor/
 wasm/
 node_modules/
+
+# Generated images and other output artifacts
+/output/
