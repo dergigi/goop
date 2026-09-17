@@ -573,13 +573,13 @@ impl Render for ConnectionStatus {
                 .child(status_action("status-decrypt", "Retry decryption", IconName::UserKey, Some(crate::Command::RetryDecryption), window).disabled(!signed_in || !decrypt_failed)
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_failed_messages(cx))))
                 .child(status_action("status-send", "Retry pending sends", IconName::PaperPlaneFill, None, window).disabled(!signed_in || !send_pending)
-                    .on_click(|_, _, cx| ChatRegistry::global(cx).read(cx).retry_outgoing())))
-            .child(gpui::div().text_xs().text_color(cx.theme().text_muted)
-                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))
+                    .on_click(|_, _, cx| ChatRegistry::global(cx).read(cx).retry_outgoing()))
                 .when(signer_connected, |view| view.child(
                     status_action("disconnect-status-signer", "Disconnect signer", IconName::Door, Some(crate::Command::Logout), window)
                         .danger()
-                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::Logout), cx))))));
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::Logout), cx)))))
+            .child(gpui::div().text_xs().text_color(cx.theme().text_muted)
+                .child("Retrying decryption or sends also resumes requests you previously declined. Your signer may ask for approval again."))));
         status_viewport(content, &self.scroll)
     }
 }
