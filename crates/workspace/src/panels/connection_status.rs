@@ -413,11 +413,11 @@ impl ConnectionStatus {
             }
         }
         sections.push(("History coverage".into(), "A finished scan only covers messages retained by those relays. It does not prove your full history was recovered.".into()));
-        for (reason, count) in chat.decryption_failures(cx) {
-            sections.push(("Decryption".into(), format!("{count} messages: {reason}")));
+        if !chat.decryption_failures(cx).is_empty() {
+            sections.push(("Decryption".into(), String::new()));
         }
         let delivery = Delivery::collect(chat.delivery_reports());
-        sections.push(("Outgoing messages".into(), format!("{} pending · {} paused · {} delayed\nDelayed sends retry automatically; paused sends wait for your explicit retry. Counts include your own encrypted copy. Relay acceptance is not a read receipt.", delivery.pending, delivery.paused, delivery.failed)));
+        sections.push(("Outgoing messages".into(), String::new()));
         if delivery.preparing > 0 {
             sections.push(("Message signing".into(), format!("{} messages still need an encrypted, signed copy. Check your signer for approval requests.", delivery.preparing)));
         }
@@ -498,9 +498,23 @@ impl Render for ConnectionStatus {
             ))
             .children(details.into_iter().map(|(heading, detail)| {
                 let history = heading == "Message history";
-                v_flex().gap_1().child(heading)
+                v_flex().gap_1().when(!history, |view| view.child(heading.clone()))
                     .child(if history {
-                        history_progress(chat.history_status(cx), cx).into_any_element()
+                        history_progress(chat.history_status(cx), history_running, cx).into_any_element()
+                    } else if heading == "Decryption" {
+                        v_flex().w_full().min_w_0()
+                            .children(chat.decryption_failures(cx).into_iter().enumerate().map(|(index, (reason, count))| {
+                                status_counter("decryption-counter", index, reason, count, cx)
+                            })).into_any_element()
+                    } else if heading == "Outgoing messages" {
+                        v_flex().w_full().min_w_0()
+                            .children([("Pending", delivery.pending), ("Paused", delivery.paused), ("Delayed", delivery.failed)]
+                                .into_iter().enumerate().map(|(index, (label, count))| {
+                                    status_counter("outgoing-counter", index, label.into(), count, cx)
+                                }))
+                            .child(gpui::div().mt_1().text_sm().text_color(cx.theme().text_muted)
+                                .child("Delayed sends retry automatically; paused sends wait for your explicit retry. Counts include your own encrypted copy. Relay acceptance is not a read receipt."))
+                            .into_any_element()
                     } else {
                         gpui::div().text_sm().text_color(cx.theme().text_muted).child(detail).into_any_element()
                     })
@@ -565,20 +579,30 @@ impl Render for ConnectionStatus {
     }
 }
 
-fn history_progress(progress: chat::HistoryStatus, cx: &App) -> impl IntoElement {
+fn history_progress(progress: chat::HistoryStatus, history_running: bool, cx: &App) -> impl IntoElement {
     let counters = [("Received", progress.received), ("Loaded", progress.loaded),
         ("Pending", progress.pending), ("Failed", progress.failed), ("Relay errors", progress.relay_errors)];
-    v_flex().w_full().min_w_0().flex_shrink_0().text_sm().text_color(cx.theme().text_muted)
-        .child(gpui::div().id("history-phase").h_6().flex_shrink_0().truncate().child(progress.status)
-            .tooltip(move |window, cx| ui::tooltip::Tooltip::new(progress.status, window, cx).into()))
+    v_flex().w_full().min_w_0().flex_shrink_0()
+        .child(h_flex().id("history-phase").w_full().h_6().flex_shrink_0().gap_2()
+            .tooltip(move |window, cx| ui::tooltip::Tooltip::new(progress.status, window, cx).into())
+            .child(gpui::div().flex_1().min_w_0().truncate().child("Message history"))
+            .child(gpui::div().size_4().flex_shrink_0()
+                .when(history_running || progress.pending > 0, |view| view.child(
+                    ui::indicator::Indicator::new().small().color(cx.theme().text_muted)))))
         .children(counters.into_iter().enumerate().map(|(index, (label, count))| {
-            let text = count.to_string();
-            h_flex().id(("history-counter", index)).w_full().min_w_0().h_6().flex_shrink_0().gap_2()
-                .tooltip(move |window, cx| ui::tooltip::Tooltip::new(format!("{label}: {count}"), window, cx).into())
-                .child(gpui::div().flex_1().min_w_0().truncate().child(label))
-                .child(gpui::div().flex_1().min_w_0().truncate().text_right().child(text))
+            status_counter("history-counter", index, label.into(), count, cx)
         }))
-        .when_some(progress.error, |view, error| view.child(gpui::div().child(error)))
+        .when_some(progress.error, |view, error| view.child(gpui::div().text_sm().text_color(cx.theme().text_muted).child(error)))
+}
+
+/// Keep diagnostics in stable rows, with full details available on hover.
+fn status_counter(id: &'static str, index: usize, label: String, count: usize, cx: &App) -> impl IntoElement {
+    let tooltip = format!("{label}: {count}");
+    h_flex().id((id, index)).w_full().min_w_0().h_6().flex_shrink_0().gap_2()
+        .text_sm().text_color(cx.theme().text_muted)
+        .tooltip(move |window, cx| ui::tooltip::Tooltip::new(tooltip.clone(), window, cx).into())
+        .child(gpui::div().flex_1().min_w_0().truncate().child(label))
+        .child(gpui::div().flex_shrink_0().max_w(gpui::relative(0.5)).truncate().text_right().child(count.to_string()))
 }
 
 /// Same row proportions as the sidebar's primary actions. Read shortcuts from
@@ -875,7 +899,7 @@ mod scroll_tests {
                 status: if self.count == usize::MAX { "Loading history · broader relay search queued" } else { "Loading history" },
                 received: self.count, loaded: self.count, pending: self.count,
                 failed: self.count, relay_errors: self.count, error: None,
-            }, cx)).child(gpui::div().h(px(400.)).flex_shrink_0()), &self.scroll)
+            }, self.count > 0, cx)).child(gpui::div().h(px(400.)).flex_shrink_0()), &self.scroll)
         }
     }
 
