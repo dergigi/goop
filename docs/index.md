@@ -18,6 +18,16 @@ If NIP-17 isn’t good enough for you, give [WhiteNoise](https://www.whitenoise.
 
 Goop checks for new releases and shows a link in the title bar when an update is available. Install updates through your package manager or download the new release. Goop does not download or install updates automatically.
 
+### Arch / Omarchy
+
+Install [goop-bin from AUR](https://aur.archlinux.org/packages/goop-bin) with your AUR helper:
+
+```sh
+yay -S goop-bin
+```
+
+The package currently supports x86_64. It uses Arch's system libraries and includes the app launcher and URL handlers. To update, use `yay -Syu`. Signer credentials need an unlocked Secret Service provider, such as GNOME Keyring or KWallet.
+
 ### Ubuntu / Debian
 
 Paste this into a Bash terminal as your desktop user, without `sudo`:

@@ -70,3 +70,9 @@ gh workflow run update.yml --repo dergigi/homebrew-goop
 An hourly scheduled run also checks for updates; GitHub may delay scheduled jobs. The updater ignores drafts and prereleases, refuses downgrades, and checks both DMG checksums against SHA256SUMS and GitHub's asset digests. It uses only the tap repository's standard GitHub Actions token. Monitor the workflow result after each release.
 
 Goop only notifies users about new releases. The cask uses normal Homebrew updates: `brew upgrade --cask dergigi/goop/goop`. The tap preserves user data on uninstall and does not bypass Gatekeeper. Developer ID signing and notarization remain separate release-packaging work.
+
+## AUR
+
+The [goop-bin AUR package](https://aur.archlinux.org/packages/goop-bin) installs the published x86_64 Linux tarball using Arch's system libraries. Its recipe is maintained in `packaging/aur`; the [package README](../packaging/aur/README.md) describes validation and publishing.
+
+After publishing a release, update the recipe's version and verified checksum, run the **AUR package** workflow, and publish its generated `.SRCINFO` together with the recipe and launcher to AUR. This is currently a manual release step; GitHub Actions does not hold the AUR publishing key.
