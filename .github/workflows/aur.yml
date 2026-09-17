@@ -41,18 +41,18 @@ jobs:
             kill -0 "$app_pid"
             xdotool search --onlyvisible --name Goop
           '
-      - name: Launch on headless Wayland
+      - name: Launch on nested Wayland
         run: |
-          runuser -u builder -- dbus-run-session -- sh -c '
+          runuser -u builder -- dbus-run-session -- xvfb-run -a sh -c '
             export XDG_RUNTIME_DIR=$(mktemp -d)
             export LIBGL_ALWAYS_SOFTWARE=1
             export WAYLAND_DISPLAY=goop-test
-            weston --backend=headless --renderer=pixman --socket=goop-test --idle-time=0 > /tmp/goop-aur/weston.log 2>&1 &
+            weston --backend=x11 --renderer=pixman --socket=goop-test --idle-time=0 > /tmp/goop-aur/weston.log 2>&1 &
             compositor_pid=$!
             trap "kill $compositor_pid 2>/dev/null || true" EXIT
             for n in $(seq 1 30); do test -S "$XDG_RUNTIME_DIR/goop-test" && break; sleep 1; done
             test -S "$XDG_RUNTIME_DIR/goop-test"
-            goop > /tmp/goop-aur/wayland-startup.log 2>&1 &
+            env -u DISPLAY goop > /tmp/goop-aur/wayland-startup.log 2>&1 &
             app_pid=$!
             trap "kill $app_pid $compositor_pid 2>/dev/null || true" EXIT
             sleep 10
