@@ -66,14 +66,12 @@ impl Preferences {
 impl Render for Preferences {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const SCREENING: &str = "Show a screening dialog to verify unknown senders.";
-        const AVATAR: &str = "Hide all avatar pictures to improve performance.";
         const MODE: &str = "Follow your system appearance, or choose light or dark.";
 
         let servers = NostrRegistry::global(cx).read(cx).media_servers().to_vec();
         let screening = AppSettings::get_screening(cx);
         let auto_block_reports = AppSettings::get_auto_block_reports(cx);
         let render_markdown = AppSettings::get_render_markdown(cx);
-        let hide_avatar = AppSettings::get_hide_avatar(cx);
         let appearance = AppSettings::get_appearance(cx);
 
         v_flex()
@@ -98,15 +96,6 @@ impl Render for Preferences {
                             .description("Block users after a relay accepts your report. You can unblock them from Blocked users.")
                             .checked(auto_block_reports)
                             .on_click(move |_, _, cx| AppSettings::update_auto_block_reports(!auto_block_reports, cx)),
-                    )
-                    .child(
-                        Switch::new("avatar")
-                            .label("Hide user avatars")
-                            .description(AVATAR)
-                            .checked(hide_avatar)
-                            .on_click(move |_, _window, cx| {
-                                AppSettings::update_hide_avatar(!hide_avatar, cx);
-                            }),
                     ),
             )
             .child(

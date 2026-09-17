@@ -3,23 +3,10 @@ use std::mem::take;
 
 use futures::FutureExt;
 use gpui::{
-    App, AppContext, Asset, AssetLogger, ElementId, Entity, Global, ImageAssetLoader, ImageCache,
+    App, AppContext, Asset, AssetLogger, ElementId, Entity, ImageAssetLoader, ImageCache,
     ImageCacheItem, ImageCacheProvider, ImageSource, Resource, hash,
 };
 use instant::{Duration, Instant};
-
-/// Avatars share one decoded image and one in-flight request across every view.
-struct AvatarCache(Entity<GoopImageCache>);
-impl Global for AvatarCache {}
-
-pub fn avatar_cache(cx: &mut App) -> Entity<GoopImageCache> {
-    if let Some(cache) = cx.try_global::<AvatarCache>() {
-        return cache.0.clone();
-    }
-    let cache = GoopImageCache::new(256, cx);
-    cx.set_global(AvatarCache(cache.clone()));
-    cache
-}
 
 const RETRY_DELAY: Duration = Duration::from_secs(30);
 const IMAGE_TTL: Duration = Duration::from_secs(24 * 60 * 60);

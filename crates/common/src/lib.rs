@@ -7,6 +7,8 @@ pub use parser::*;
 pub use paths::*;
 pub use range::*;
 
+mod avatars;
+pub use avatars::avatar_cache;
 mod caching;
 mod debounced_delay;
 mod display;

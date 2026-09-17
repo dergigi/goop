@@ -37,7 +37,6 @@ macro_rules! setting_accessors {
 
 setting_accessors! {
     pub appearance: Appearance,
-    pub hide_avatar: bool,
     pub render_markdown: bool,
     pub screening: bool,
     pub auto_block_reports: bool,
@@ -80,9 +79,6 @@ pub struct Settings {
     #[serde(default)]
     pub appearance: Appearance,
 
-    /// Hide user avatars
-    pub hide_avatar: bool,
-
     /// Render Markdown formatting in chat bubbles
     #[serde(default = "default_render_markdown")]
     pub render_markdown: bool,
@@ -112,7 +108,6 @@ impl Default for Settings {
         Self {
             emoji_history: Default::default(),
             appearance: Appearance::System,
-            hide_avatar: false,
             render_markdown: default_render_markdown(),
             screening: true,
             auto_block_reports: default_auto_block_reports(),
@@ -272,7 +267,7 @@ mod tests {
         saved["nip4e"] = true.into();
         saved["hide_avatar"] = true.into();
         let loaded: Settings = serde_json::from_value(saved).unwrap();
-        assert!(loaded.hide_avatar);
+        assert!(serde_json::to_value(&loaded).unwrap().get("hide_avatar").is_none());
         assert!(serde_json::to_value(loaded).unwrap().get("nip4e").is_none());
         for kind in ["Auto", "Encryption", "User"] {
             let config: RoomConfig = serde_json::from_value(serde_json::json!({"backup": false, "signer_kind": kind})).unwrap();
@@ -285,10 +280,10 @@ mod tests {
     fn auto_block_defaults_on_for_existing_settings_and_preserves_opt_out() {
         let mut legacy = serde_json::to_value(Settings::default()).unwrap();
         legacy.as_object_mut().unwrap().remove("auto_block_reports");
-        legacy["hide_avatar"] = true.into();
+        legacy["screening"] = false.into();
         let migrated: Settings = serde_json::from_value(legacy).unwrap();
         assert!(migrated.auto_block_reports);
-        assert!(migrated.hide_avatar);
+        assert!(!migrated.screening);
         let opted_out = Settings { auto_block_reports: false, ..migrated };
         let restored: Settings = serde_json::from_str(&serde_json::to_string(&opted_out).unwrap()).unwrap();
         assert!(!restored.auto_block_reports);
@@ -298,10 +293,10 @@ mod tests {
     fn old_settings_keep_preferences_and_enable_markdown() {
         let mut value = serde_json::to_value(Settings::default()).unwrap();
         value.as_object_mut().unwrap().remove("render_markdown");
-        value["hide_avatar"] = true.into();
+        value["screening"] = false.into();
         let settings: Settings = serde_json::from_value(value).unwrap();
         assert!(settings.render_markdown);
-        assert!(settings.hide_avatar);
+        assert!(!settings.screening);
     }
 
     #[test]
@@ -326,10 +321,10 @@ mod appearance_tests {
         object.remove("appearance");
         object.insert("theme".into(), serde_json::json!("themes/forest.json"));
         object.insert("theme_mode".into(), serde_json::json!("Dark"));
-        object.insert("hide_avatar".into(), serde_json::json!(true));
+        object.insert("screening".into(), serde_json::json!(false));
         let settings: Settings = serde_json::from_value(json).unwrap();
         assert_eq!(settings.appearance, Appearance::System);
-        assert!(settings.hide_avatar);
+        assert!(!settings.screening);
         let saved = serde_json::to_value(settings).unwrap();
         assert!(saved.get("theme").is_none());
         assert!(saved.get("theme_mode").is_none());

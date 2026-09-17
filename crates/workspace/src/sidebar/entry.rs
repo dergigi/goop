@@ -122,7 +122,6 @@ impl Selectable for RoomEntry {
 
 impl RenderOnce for RoomEntry {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let hide_avatar = AppSettings::get_hide_avatar(cx);
         let screening = AppSettings::get_screening(cx) && self.is_message_request();
 
         let public_key = self.public_key;
@@ -138,10 +137,8 @@ impl RenderOnce for RoomEntry {
             .text_sm()
             .rounded(cx.theme().radius)
             .when(self.highlighted, |row| row.bg(cx.theme().element_active))
-            .when(!hide_avatar, |this| {
-                this.when_some(self.avatar, |this, avatar| {
-                    this.child(Avatar::new(avatar).small().flex_shrink_0())
-                })
+            .when_some(self.avatar, |this, avatar| {
+                this.child(Avatar::new(avatar).small().flex_shrink_0())
             })
             .child(
                 div()

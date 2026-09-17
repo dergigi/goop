@@ -1086,9 +1086,6 @@ impl ChatPanel {
         let has_reactions = self.has_reaction(&id);
         let has_reports = self.has_reports(&id, cx);
 
-        // Hide avatar setting
-        let hide_avatar = AppSettings::get_hide_avatar(cx);
-
         div()
             .id(ix)
             .group("")
@@ -1103,7 +1100,7 @@ impl ChatPanel {
                 div()
                     .flex()
                     .gap_3()
-                    .when(!hide_avatar, |this| {
+                    .map(|this| {
                         if show_author {
                             this.child(
                                 Avatar::new(author.avatar())
