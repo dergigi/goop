@@ -7,32 +7,29 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-09-18
+
 ### Added
 
-- Replace inline queued labels with a periodically flipping hourglass, and show a spinner during relay delivery. Add a secondary Connection status button to the delivery dialog.
-- Show right-aligned progress spinners on connection-status recovery actions while their work is running.
-- Show a spinner and “Retrying…” in the delivery dialog while a requested retry is queued or running, and prevent duplicate clicks.
-- Add a pencil filter beside the bot filter when the current account has drafts outside the active chat. Select it to show chats with drafts, including groups.
-- Show a subtle pencil in place of the chat timestamp while a draft is present, including drafts restored after restarting.
-- Save composer text and reply targets locally per account and chat, and restore them when reopening Goop. Draft writes run in the background and are flushed on normal quit.
-- Show a subtle failure indicator and icon-only retry control directly on outgoing messages. Retry only the selected message while preserving accepted copies.
+- Save message drafts and reply targets locally for each account and chat. Restore them when reopening Goop.
+- Mark drafts with a pencil in the chat list and add a draft filter. Hide the filter when the only draft is in the current chat.
+- Show subtle failure indicators and a retry button on individual messages.
+- Show an animated hourglass while messages wait, a spinner during delivery, and progress indicators on recovery actions.
+- Add a Connection status button to the delivery dialog.
 
 ### Changed
 
-- Remove QR invitation expiry. Pairing waits until approval, explicit cancellation, or app closure; normal signer requests still have a timeout.
-
-- Show signer pairing QR codes immediately, keep them visible when expanding bunker URL entry, and add a manual refresh icon beside Copy. Show an animated checkmark while finishing an approved connection.
-- Move the chat-list “Retry sync” control into Connection status → Troubleshooting as “Retry chat list sync”, with the sync error in diagnostics.
+- Show the identity pairing QR immediately, with bunker URL entry in a collapsible section and Copy and Refresh controls beside the QR.
+- Keep QR invitations active when refreshing, opening the scanner, or pressing Escape. Invitations no longer expire; the first approval connects and cancels the others.
+- Show an animated checkmark after signer approval while Goop starts loading.
+- Move chat-list sync recovery into Connection status → Troubleshooting.
 
 ### Fixed
 
-- Keep the identity QR visible and pending approvals alive when pressing Escape.
-
-- Keep pending identity pairing alive when opening the scanner or refreshing the QR. The first approved invitation logs in and cancels the others.
-
-- Explain that outgoing message preparation timed out waiting for the signer, with approval guidance and the automatic retry behavior.
-- Match the Goop composer placeholder against both chat participants, so direct messages to Goop show the custom bug-report and feedback prompt.
-- Keep emoji replies in the composer until the outgoing queue saves them successfully. Preserve newer edits during a send, and stop Escape from clearing the composer.
+- Keep composer text, including emoji replies, until the outgoing queue saves it. Preserve newer edits during a send and stop Escape from clearing drafts.
+- Explain signer timeouts and how to approve or retry pending messages.
+- Restore the custom bug-report and feedback placeholder in direct messages to Goop.
+- Use the correct desktop identity and standard icon sizes in the Arch package.
 
 ## [2.11.2] - 2026-09-17
 
@@ -456,7 +453,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.11.2...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.12.0...HEAD
+[2.12.0]: https://github.com/dergigi/goop/compare/v2.11.2...v2.12.0
 [2.11.2]: https://github.com/dergigi/goop/compare/v2.11.1...v2.11.2
 [2.11.1]: https://github.com/dergigi/goop/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/dergigi/goop/compare/v2.10.1...v2.11.0
