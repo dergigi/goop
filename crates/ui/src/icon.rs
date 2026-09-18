@@ -25,6 +25,7 @@ pub enum IconName {
     Block,
     Mute,
     Pin,
+    Pencil,
     ArrowLeft,
     ArrowRight,
     Boom,
@@ -115,6 +116,7 @@ impl IconName {
 impl IconNamed for IconName {
     fn path(self) -> SharedString {
         match self {
+            Self::Pencil => "icons/pencil.svg",
             Self::ArrowLeft => "icons/arrow-left.svg",
             Self::ArrowRight => "icons/arrow-right.svg",
             Self::Boom => "icons/boom.svg",

@@ -60,6 +60,7 @@ pub struct Sidebar {
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     filter: Entity<RoomKind>,
+    draft_indicators: Entity<chat_ui::DraftIndicators>,
     show_blocked: bool,
     audience: Audience,
     blocked_users: Entity<crate::panels::blocked_users::BlockedUsers>,
@@ -69,15 +70,22 @@ pub struct Sidebar {
 }
 impl Sidebar {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let draft_indicators = chat_ui::DraftIndicators::global(cx);
+        Self::load_draft_indicators(cx);
         let chat = ChatRegistry::global(cx);
         let subscriptions = vec![
-            cx.observe(&NostrRegistry::global(cx), |_, _, cx| cx.notify()),
+            cx.observe(&NostrRegistry::global(cx), |_, _, cx| {
+                Self::load_draft_indicators(cx);
+                cx.notify();
+            }),
+            cx.observe(&draft_indicators, |_, _, cx| cx.notify()),
             cx.observe(&chat, |_, _, cx| cx.notify()),
             cx.observe(&person::PersonRegistry::global(cx), |_, _, cx| cx.notify()),
         ];
         Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
+            draft_indicators,
             filter: cx.new(|_| RoomKind::Ongoing),
             show_blocked: false,
             audience: Audience::All,
@@ -90,6 +98,11 @@ impl Sidebar {
                     if this.update(cx, |_, cx| cx.notify()).is_err() { break; }
                 }
             }),
+        }
+    }
+    fn load_draft_indicators(cx: &mut App) {
+        if let Some(owner) = NostrRegistry::global(cx).read(cx).current_user() {
+            chat_ui::DraftIndicators::global(cx).update(cx, |drafts, cx| drafts.load_account(owner, cx));
         }
     }
     pub fn set_filter(&mut self, kind: RoomKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -300,6 +313,8 @@ impl Sidebar {
                     .public_key(public_key)
                     .kind(room.kind)
                     .created_at(room.created_at.to_ago())
+                    .has_draft(NostrRegistry::global(cx).read(cx).current_user()
+                        .is_some_and(|owner| self.draft_indicators.read(cx).has_draft(owner, room.id)))
                     .on_click(handler);
                 let actions = h_flex().gap_1()
                     .child(Button::new(("pin-chat", id)).icon(IconName::Pin).xsmall().ghost()

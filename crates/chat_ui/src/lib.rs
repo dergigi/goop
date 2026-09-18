@@ -35,7 +35,9 @@ use ui::{
 use crate::text::RenderedText;
 
 mod actions;
+mod composer;
 mod drafts;
+pub use drafts::DraftIndicators;
 mod encrypted_media;
 mod delivery_status;
 mod reactions;
@@ -138,17 +140,11 @@ impl ChatPanel {
         let (id, placeholder) = room
             .read_with(cx, |this, _cx| {
                 let id = this.id.to_string().into();
-                let is_self = NostrRegistry::global(cx).read(cx).current_user()
-                    .is_some_and(|owner| this.members() == [owner]);
-                let placeholder = if is_self {
-                    "Write a note to your future self".to_owned()
-                } else if PublicKey::parse(state::GOOP_NPUB)
-                    .is_ok_and(|goop| this.members() == [goop])
-                {
-                    "Message Goop to suggest a feature, report a bug, or just to say hi".to_owned()
-                } else {
-                    format!("Message {}", this.display_name(cx))
-                };
+                let placeholder = composer::placeholder(
+                    this.members(),
+                    NostrRegistry::global(cx).read(cx).current_user(),
+                    &this.display_name(cx),
+                );
 
                 (id, placeholder)
             })
@@ -381,6 +377,9 @@ impl ChatPanel {
     fn persist_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.draft_snapshot(cx);
         if let Some(draft) = &mut self.draft {
+            DraftIndicators::global(cx).update(cx, |indicators, cx| {
+                indicators.update_draft(draft.owner, draft.room, &snapshot.text, cx);
+            });
             if let Err(error) = draft.save(snapshot, common::persistence::global()) {
                 window.push_notification(format!("Could not save draft: {error}"), cx);
             }

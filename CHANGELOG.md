@@ -9,11 +9,13 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Show a subtle pencil in place of the chat timestamp while a draft is present, including drafts restored after restarting.
 - Save composer text and reply targets locally per account and chat, and restore them when reopening Goop. Draft writes run in the background and are flushed on normal quit.
 - Show a subtle failure indicator and icon-only retry control directly on outgoing messages. Retry only the selected message while preserving accepted copies.
 
 ### Fixed
 
+- Match the Goop composer placeholder against both chat participants, so direct messages to Goop show the custom bug-report and feedback prompt.
 - Keep emoji replies in the composer until the outgoing queue saves them successfully. Preserve newer edits during a send, and stop Escape from clearing the composer.
 
 ## [2.11.2] - 2026-09-17

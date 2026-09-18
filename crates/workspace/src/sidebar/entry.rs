@@ -26,6 +26,7 @@ pub struct RoomEntry {
     name: Option<SharedString>,
     avatar: Option<SharedString>,
     created_at: Option<SharedString>,
+    has_draft: bool,
     kind: Option<RoomKind>,
     selected: bool,
     highlighted: bool,
@@ -44,6 +45,7 @@ impl RoomEntry {
             name: None,
             avatar: None,
             created_at: None,
+            has_draft: false,
             kind: None,
             handler: None,
             selected: false,
@@ -83,6 +85,11 @@ impl RoomEntry {
 
     pub fn created_at(mut self, created_at: impl Into<SharedString>) -> Self {
         self.created_at = Some(created_at.into());
+        self
+    }
+
+    pub fn has_draft(mut self, has_draft: bool) -> Self {
+        self.has_draft = has_draft;
         self
     }
 
@@ -189,7 +196,13 @@ impl RenderOnce for RoomEntry {
                                                 .child(if self.unread_count > 99 { "99+".to_owned() }
                                                     else { self.unread_count.to_string() })
                                         )))
-                                    .child(div().w_10().flex_shrink_0().text_right().child(created_at)))),
+                                    .child(h_flex().w_10().flex_shrink_0().justify_end()
+                                        .when(self.has_draft, |slot| slot.child(
+                                            div().id("draft-indicator").flex().items_center()
+                                                .child(Icon::new(IconName::Pencil).xsmall())
+                                                .tooltip(|window, cx| ui::tooltip::Tooltip::new("Draft message", window, cx).into())
+                                        ))
+                                        .when(!self.has_draft, |slot| slot.child(created_at))))),
                     ),
             )
             .hover(|this| this.bg(cx.theme().elevated_surface_background))
