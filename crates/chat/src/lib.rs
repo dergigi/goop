@@ -26,6 +26,7 @@ mod inbox;
 mod unread;
 pub use unread::ReadPosition;
 mod archive;
+pub mod drafts;
 mod moderation;
 mod outgoing;
 #[cfg(test)]
@@ -139,6 +140,10 @@ pub struct ChatRegistry {
     pub moderation_error: Option<String>,
     archives: Option<archive::ArchiveStore>,
     archive_task: Option<Task<()>>,
+    drafts: Option<drafts::DraftStore>,
+    draft_task: Option<Task<()>>,
+    pub draft_error: Option<String>,
+    pub draft_syncing: bool,
     pub archive_error: Option<String>,
     pub archive_syncing: bool,
     incoming: Option<RumorCache>,
@@ -218,6 +223,7 @@ impl ChatRegistry {
                     this.reset(cx);
                     this.handle_notifications(cx);
                     this.start_archives(cx);
+                    this.start_drafts(cx);
                     this.start_moderation(cx);
                     this.get_metadata(cx);
                     this.get_rooms(cx);
@@ -231,6 +237,7 @@ impl ChatRegistry {
         cx.defer_in(window, |this, _window, cx| {
             this.get_rooms(cx);
             if this.archives.is_none() { this.start_archives(cx); }
+            if this.drafts.is_none() { this.start_drafts(cx); }
             if this.moderation.is_none() { this.start_moderation(cx); }
         });
 
@@ -258,6 +265,10 @@ impl ChatRegistry {
             moderation_error: None,
             archives: None,
             archive_task: None,
+            drafts: None,
+            draft_task: None,
+            draft_error: None,
+            draft_syncing: false,
             archive_error: None,
             archive_syncing: false,
             incoming: None,
@@ -543,6 +554,106 @@ impl ChatRegistry {
     pub fn retry_moderation(&mut self, cx: &mut Context<Self>) {
         if let Some(store) = &self.moderation { store.retry(); } else { self.start_moderation(cx); }
     }
+    pub fn draft_snapshot(&self, owner: PublicKey, room: u64, cx: &App) -> Option<drafts::Snapshot> {
+        if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return None; }
+        self.drafts.as_ref()?.snapshot(room)
+    }
+
+    pub fn save_draft(&self, owner: PublicKey, members: &[PublicKey], snapshot: drafts::Snapshot, cx: &App) -> Result<(), Error> {
+        if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return Ok(()); }
+        if let Some(store) = &self.drafts { store.stage(members, snapshot)?; }
+        Ok(())
+    }
+
+    pub fn draft_indicators(&self) -> Vec<(u64, bool)> {
+        self.drafts.as_ref().map(|store| store.indicators()).unwrap_or_default()
+    }
+
+    pub fn retry_drafts(&mut self, cx: &mut Context<Self>) {
+        if let Some(store) = &self.drafts { store.retry(); } else {
+            self.draft_task = None;
+            self.start_drafts(cx);
+        }
+        cx.notify();
+    }
+
+    fn import_local_drafts(&self, cx: &mut Context<Self>) {
+        let Some(store) = self.drafts.clone() else { return; };
+        let owner = NostrRegistry::global(cx).read(cx).current_user();
+        let members: Vec<_> = self.rooms.iter().map(|room| room.read(cx).members().to_vec()).collect();
+        let import = cx.background_spawn(async move {
+            for members in members { store.import_local(&members)?; }
+            Ok::<_, Error>(())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = import.await;
+            let _ = this.update(cx, |this, cx| {
+                if NostrRegistry::global(cx).read(cx).current_user() != owner { return; }
+                if let Err(error) = result { this.draft_error = Some(error.to_string()); }
+                cx.notify();
+            });
+        }).detach();
+    }
+
+    fn start_drafts(&mut self, cx: &mut Context<Self>) {
+        if self.draft_task.is_some() { return; }
+        let nostr = NostrRegistry::global(cx).read(cx);
+        let Some(owner) = nostr.current_user() else { return; };
+        let (client, signer) = (nostr.client(), nostr.signer().snapshot());
+        let open = cx.background_spawn(async move { drafts::DraftStore::open(common::support_dir(), owner) });
+        self.draft_task = Some(cx.spawn(async move |this, cx| {
+            let (store, wake) = match open.await {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = this.update(cx, |this, cx| { this.draft_error = Some(error.to_string()); cx.notify(); });
+                    return;
+                }
+            };
+            if this.update(cx, |this, cx| {
+                this.drafts = Some(store.clone());
+                this.import_local_drafts(cx);
+                cx.notify();
+            }).is_err() { return; }
+            loop {
+                if !store.paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    if this.update(cx, |this, cx| { this.draft_syncing = true; cx.notify(); }).is_err() { break; }
+                    let (store_copy, client, signer) = (store.clone(), client.clone(), signer.clone());
+                    let result = cx.background_spawn(async move { store_copy.sync(&client, &signer).await }).await;
+                    if let Err(error) = &result {
+                        if state::SignerFailure::classify(error.as_ref()).requires_retry() {
+                            store.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    if this.update(cx, |this, cx| {
+                        this.draft_syncing = false;
+                        this.draft_error = result.err().map(|error| error.to_string());
+                        for (members, draft) in store.rooms() {
+                            if draft.text.trim().is_empty() { continue; }
+                            let mut room = Room::new(owner, members);
+                            room.kind = RoomKind::Ongoing;
+                            if !this.room_index.contains_key(&room.id) { this.add_room(room, cx); }
+                        }
+                        cx.notify();
+                    }).is_err() { break; }
+                }
+                use futures::{FutureExt, select_biased};
+                let request = wake.recv_async().fuse();
+                let timer = cx.background_executor().timer(Duration::from_secs(30)).fuse();
+                futures::pin_mut!(request, timer);
+                let edited = select_biased! { _ = request => true, _ = timer => false };
+                // Wait for a pause in typing before involving the signer.
+                if edited {
+                    loop {
+                        let request = wake.recv_async().fuse();
+                        let quiet = cx.background_executor().timer(Duration::from_secs(3)).fuse();
+                        futures::pin_mut!(request, quiet);
+                        if select_biased! { _ = request => false, _ = quiet => true } { break; }
+                    }
+                }
+            }
+        }));
+    }
+
     fn start_archives(&mut self, cx: &mut Context<Self>) {
         let nostr = NostrRegistry::global(cx).read(cx);
         let Some(owner) = nostr.current_user() else { return; };
@@ -1160,6 +1271,10 @@ impl ChatRegistry {
         self.moderation_error = None;
         if let Some(store) = self.archives.take() { store.stop(); }
         self.archive_task = None;
+        if let Some(store) = self.drafts.take() { store.stop(); }
+        self.draft_task = None;
+        self.draft_error = None;
+        self.draft_syncing = false;
         self.archive_syncing = false;
         self.archive_error = None;
         self.incoming = None;
@@ -1288,6 +1403,7 @@ impl ChatRegistry {
             });
         }
         self.extend_rooms(rooms, cx);
+        self.import_local_drafts(cx);
         self.sort(cx);
         cx.notify();
     }

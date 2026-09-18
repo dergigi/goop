@@ -171,6 +171,7 @@ impl ChatPanel {
         // Define subscriptions
         let mut subscriptions = smallvec![];
         subscriptions.push(cx.observe_in(&ChatRegistry::global(cx), window, |this, chat, window, cx| {
+            this.refresh_synced_draft(window, cx);
             let blocked = chat.read(cx).blocked_users();
             if blocked != this.blocked_users {
                 this.blocked_users = blocked;
@@ -380,10 +381,26 @@ impl ChatPanel {
             DraftIndicators::global(cx).update(cx, |indicators, cx| {
                 indicators.update_draft(draft.owner, draft.room, &snapshot.text, cx);
             });
-            if let Err(error) = draft.save(snapshot, common::persistence::global()) {
+            if snapshot == draft.snapshot { return; }
+            if let Err(error) = draft.save(snapshot.clone(), common::persistence::global()) {
                 window.push_notification(format!("Could not save draft: {error}"), cx);
             }
+            if let Ok(members) = self.room.read_with(cx, |room, _| room.members().to_vec()) {
+                if let Err(error) = ChatRegistry::global(cx).read(cx).save_draft(draft.owner, &members, snapshot, cx) {
+                    window.push_notification(format!("Could not queue draft sync: {error}"), cx);
+                }
+            }
         }
+    }
+
+    fn refresh_synced_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(draft) = &self.draft else { return; };
+        let registry = ChatRegistry::global(cx);
+        let Some(snapshot) = registry.read(cx).draft_snapshot(draft.owner, draft.room, cx) else { return; };
+        let current = self.draft_snapshot(cx);
+        if !self.draft.as_mut().unwrap().apply_remote(&snapshot, &current) { return; }
+        self.input.update(cx, |input, cx| input.set_value(snapshot.text, window, cx));
+        self.replies_to.update(cx, |replies, cx| { *replies = snapshot.replies.into_iter().collect(); cx.notify(); });
     }
 
     fn restore_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -397,9 +414,15 @@ impl ChatPanel {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(snapshot) => {
+                        let snapshot = this.draft.as_ref().and_then(|draft| ChatRegistry::global(cx).read(cx).draft_snapshot(draft.owner, draft.room, cx)).unwrap_or(snapshot);
                         // Loading must never overwrite typing that started while disk I/O ran.
                         let current = this.draft_snapshot(cx);
                         if this.draft.as_mut().is_some_and(|draft| draft.restore(&snapshot, &current)) {
+                            if let (Some(draft), Ok(members)) = (&this.draft, this.room.read_with(cx, |room, _| room.members().to_vec())) {
+                                if let Err(error) = ChatRegistry::global(cx).read(cx).save_draft(draft.owner, &members, snapshot.clone(), cx) {
+                                    window.push_notification(format!("Could not queue draft sync: {error}"), cx);
+                                }
+                            }
                             this.input.update(cx, |input, cx| input.set_value(snapshot.text, window, cx));
                             this.replies_to.update(cx, |replies, cx| {
                                 *replies = snapshot.replies.into_iter().collect();

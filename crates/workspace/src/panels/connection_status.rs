@@ -418,6 +418,9 @@ impl ConnectionStatus {
         if !chat.decryption_failures(cx).is_empty() {
             sections.push(("Decryption errors".into(), String::new()));
         }
+        if let Some(error) = &chat.draft_error {
+            sections.push(("Draft sync".into(), error.clone()));
+        }
         if let Some(error) = &chat.archive_error {
             sections.push(("Chat list sync".into(), error.clone()));
         }
@@ -556,6 +559,8 @@ impl Render for ConnectionStatus {
                         let panel = super::relay_list::init(window, cx);
                         crate::Workspace::add_panel(panel, ui::dock::DockPlacement::Right, window, cx);
                     }))
+                .child(status_action("manage-status-private-storage", "Manage private storage relays", IconName::Shield, Some(crate::Command::ShowPrivateStorage), false, window)
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::Command::ShowPrivateStorage), cx)))
                 .child(status_action("retry-status-relays", "Reconnect messaging relays", IconName::Refresh, None, self.reconnecting_relays, window).disabled(!signed_in || !relays_found || self.reconnecting_relays)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.reconnecting_relays = true;
@@ -598,6 +603,11 @@ impl Render for ConnectionStatus {
                     .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_failed_messages(cx))))
                 .child(status_action("status-send", "Retry pending sends", IconName::PaperPlaneFill, None, sending, window).disabled(!signed_in || !send_pending || sending)
                     .on_click(|_, window, cx| { ChatRegistry::global(cx).read(cx).retry_outgoing(); window.refresh(); }))
+                .when(chat.draft_error.is_some(), |view| view.child(
+                    status_action("status-draft-sync", "Retry draft sync", IconName::Reset, None, chat.draft_syncing, window)
+                        .disabled(!signed_in || chat.draft_syncing)
+                        .tooltip(chat.draft_error.clone().unwrap_or_default())
+                        .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_drafts(cx)))))
                 .when(chat.archive_error.is_some(), |view| view.child(
                     status_action("status-archive-sync", "Retry chat list sync", IconName::Archive, None, chat.archive_syncing, window)
                         .disabled(!signed_in || chat.archive_syncing)

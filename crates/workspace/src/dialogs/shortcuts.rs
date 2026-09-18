@@ -38,6 +38,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
                 ("Connection status", Box::new(Command::ShowConnectionStatus)),
                 ("Messaging relays", Box::new(Command::ShowMessaging)),
                 ("Gossip relays", Box::new(Command::ShowRelayList)),
+                ("Private storage relays", Box::new(Command::ShowPrivateStorage)),
             ]),
             ("Application", vec![
                 ("Settings", Box::new(Command::ShowSettings)),

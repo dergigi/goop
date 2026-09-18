@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use anyhow::Error;
+use anyhow::{Error, ensure};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -17,16 +17,35 @@ use ui::dock::{Panel, PanelEvent};
 use ui::input::{Input, InputEvent, InputState};
 use ui::{Disableable, IconName, Sizable, StyledExt, WindowExtension, divider, h_flex, v_flex};
 
-const MSG: &str = "Messaging Relays are relays that hosted all your messages. \
-                   Other users will find your relays and send messages to it.";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RelayPurpose { Messaging, PrivateStorage }
 
-pub fn init(window: &mut Window, cx: &mut App) -> Entity<MessagingRelayPanel> {
-    cx.new(|cx| MessagingRelayPanel::new(window, cx))
+impl RelayPurpose {
+    fn title(self) -> &'static str {
+        match self { Self::Messaging => "Update Messaging Relays", Self::PrivateStorage => "Private Storage Relays" }
+    }
+    fn description(self) -> &'static str {
+        match self {
+            Self::Messaging => "Relays where other people send your messages.",
+            Self::PrivateStorage => "Sync encrypted drafts across your devices. Leave this list empty to keep drafts local.",
+        }
+    }
+}
+
+pub fn init(window: &mut Window, cx: &mut App) -> Entity<RelayUrlListPanel> {
+    cx.new(|cx| RelayUrlListPanel::new(RelayPurpose::Messaging, window, cx))
+}
+
+pub fn init_private_storage(window: &mut Window, cx: &mut App) -> Entity<RelayUrlListPanel> {
+    cx.new(|cx| RelayUrlListPanel::new(RelayPurpose::PrivateStorage, window, cx))
 }
 
 #[derive(Debug)]
-pub struct MessagingRelayPanel {
+pub struct RelayUrlListPanel {
     name: SharedString,
+    purpose: RelayPurpose,
+    ready: bool,
+    newest: Option<Timestamp>,
     focus_handle: FocusHandle,
 
     /// Relay URL input
@@ -51,8 +70,8 @@ pub struct MessagingRelayPanel {
     tasks: Vec<Task<Result<(), Error>>>,
 }
 
-impl MessagingRelayPanel {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+impl RelayUrlListPanel {
+    fn new(purpose: RelayPurpose, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("wss://example.com"));
         let mut subscriptions = smallvec![];
 
@@ -73,6 +92,8 @@ impl MessagingRelayPanel {
                         this.tasks.clear();
                         this.relays.clear();
                         this.dirty = false;
+                        this.ready = false;
+                        this.newest = None;
                         this.updating = false;
                         this.loading = false;
                         this.error = None;
@@ -89,7 +110,10 @@ impl MessagingRelayPanel {
         });
 
         Self {
-            name: "Update Messaging Relays".into(),
+            name: purpose.title().into(),
+            purpose,
+            ready: false,
+            newest: None,
             focus_handle: cx.focus_handle(),
             input,
             updating: false,
@@ -115,7 +139,16 @@ impl MessagingRelayPanel {
         if self.dirty || self.loading { return; }
         self.loading = true;
         cx.notify();
-        let task: Task<Result<Vec<RelayUrl>, Error>> = cx.background_spawn(async move {
+        let purpose = self.purpose;
+        let signer = nostr.read(cx).signer().snapshot();
+        let task: Task<Result<(Vec<RelayUrl>, Option<Timestamp>), Error>> = cx.background_spawn(async move {
+            if purpose == RelayPurpose::PrivateStorage {
+                let event = state::private_storage::latest(&client, public_key).await?;
+                return match event {
+                    Some(event) => Ok((state::private_storage::decode(&event, public_key, &signer).await?, Some(event.created_at))),
+                    None => Ok((vec![], None)),
+                };
+            }
             let filter = Filter::new().kind(Kind::InboxRelays).author(public_key).limit(1);
             let mut newest = client.database().query(filter.clone()).await?
                 .into_iter().next();
@@ -127,7 +160,7 @@ impl MessagingRelayPanel {
                     }
                 }
             }
-            Ok(newest.map(|event| nip17::extract_relay_list(&event).collect()).unwrap_or_default())
+            Ok((newest.as_ref().map(|event| nip17::extract_relay_list(event).collect()).unwrap_or_default(), newest.map(|event| event.created_at)))
         });
         self.tasks.push(cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -136,7 +169,12 @@ impl MessagingRelayPanel {
                     || NostrRegistry::global(cx).read(cx).current_user() != Some(public_key) { return; }
                 this.loading = false;
                 match result {
-                    Ok(relays) if !this.dirty => this.relays = relays.into_iter().collect(),
+                    Ok((relays, newest)) if !this.dirty => {
+                        this.relays = relays.into_iter().collect();
+                        this.newest = newest;
+                        this.ready = true;
+                        this.error = None;
+                    },
                     Err(error) => this.error = Some(error.to_string().into()),
                     _ => {}
                 }
@@ -147,7 +185,8 @@ impl MessagingRelayPanel {
     }
 
     fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.input.read(cx).value().to_string();
+        if !self.ready || self.updating { return; }
+        let value = self.input.read(cx).value().trim().to_string();
 
         if !value.starts_with("ws") {
             self.set_error("The relay URL is invalid.", window, cx);
@@ -168,6 +207,7 @@ impl MessagingRelayPanel {
     }
 
     fn remove(&mut self, url: &RelayUrl, cx: &mut Context<Self>) {
+        if !self.ready || self.updating { return; }
         self.dirty = true;
         self.relays.remove(url);
         cx.notify();
@@ -199,57 +239,56 @@ impl MessagingRelayPanel {
     }
 
     pub fn set_relays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.relays.is_empty() {
+        if !self.ready || self.updating || self.loading { return; }
+        if self.purpose == RelayPurpose::Messaging && self.relays.is_empty() {
             self.set_error("Add at least one relay.", window, cx);
             return;
-        };
-
+        }
         let nostr = NostrRegistry::global(cx);
+        let Some(owner) = nostr.read(cx).current_user().filter(|owner| Some(*owner) == self.owner) else { return; };
         let client = nostr.read(cx).client();
-        let signer = nostr.read(cx).signer();
-
-        // Construct event tags
-        let tags: Vec<Tag> = self
-            .relays
-            .iter()
-            .map(|relay| Tag::from(Nip17Tag::Relay(relay.to_owned())))
-            .collect();
-
-        // Set updating state
+        let signer = nostr.read(cx).signer().snapshot();
+        let purpose = self.purpose;
+        let previous = self.newest;
+        let mut relays: Vec<_> = self.relays.iter().cloned().collect();
+        relays.sort();
+        self.error = None;
         self.set_updating(true, cx);
 
-        let task: Task<Result<(), Error>> = cx.background_spawn(async move {
-            // Construct nip17 event builder
-            let event = EventBuilder::new(Kind::InboxRelays, "")
-                .tags(tags)
-                .finalize_async(&signer)
-                .await?;
-
-            // Set messaging relays
-            client.send_event(&event).to_nip65().await?;
-
-            Ok(())
-        });
-
-        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
-            match task.await {
-                Ok(_) => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_updating(false, cx);
-                        this.dirty = false;
-                        this.load(window, cx);
-
-                        window.push_notification("Update successful", cx);
-                    })?;
-                }
-                Err(e) => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_updating(false, cx);
-                        this.set_error(e.to_string(), window, cx);
-                    })?;
-                }
+        let task: Task<Result<Timestamp, Error>> = cx.background_spawn(async move {
+            ensure!(signer.get_public_key_async().await? == owner, "Signer changed");
+            let now = Timestamp::now();
+            ensure!(previous.is_none_or(|timestamp| timestamp <= now), "Relay list has a future timestamp; try again shortly");
+            let created_at = previous.map(|timestamp| Timestamp::from(now.as_secs().max(timestamp.as_secs() + 1))).unwrap_or(now);
+            let event = match purpose {
+                RelayPurpose::PrivateStorage => state::private_storage::build(owner, &relays, created_at, &signer).await?,
+                RelayPurpose::Messaging => EventBuilder::new(Kind::InboxRelays, "")
+                    .tags(relays.into_iter().map(|relay| Tag::from(Nip17Tag::Relay(relay))))
+                    .custom_created_at(created_at).finalize_async(&signer).await?,
             };
-
+            // Do not activate a list that no relay accepted.
+            let output = client.send_event(&event).to_nip65().save_into_database(false).await?;
+            ensure!(output.success.values().any(|status| status.is_ack()), "No relay accepted the relay list");
+            client.database().save_event(&event).await?;
+            Ok(created_at)
+        });
+        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.owner != Some(owner) || NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return; }
+                this.set_updating(false, cx);
+                match result {
+                    Ok(created_at) => {
+                        this.dirty = false;
+                        this.newest = Some(created_at);
+                        if purpose == RelayPurpose::PrivateStorage {
+                            chat::ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_drafts(cx));
+                        }
+                        window.push_notification("Relays updated", cx);
+                    }
+                    Err(error) => { this.error = Some(error.to_string().into()); cx.notify(); }
+                }
+            })?;
             Ok(())
         }));
     }
@@ -257,7 +296,9 @@ impl MessagingRelayPanel {
     fn render_list_items(&mut self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
         let mut items = Vec::new();
 
-        for url in self.relays.iter() {
+        let mut relays: Vec<_> = self.relays.iter().collect();
+        relays.sort();
+        for url in relays {
             items.push(
                 h_flex()
                     .id(SharedString::from(url.to_string()))
@@ -274,6 +315,7 @@ impl MessagingRelayPanel {
                     .child(
                         Button::new("remove_{ix}")
                             .icon(IconName::Close)
+                            .disabled(self.updating || !self.ready)
                             .xsmall()
                             .ghost()
                             .invisible()
@@ -305,11 +347,12 @@ impl MessagingRelayPanel {
                 "Connecting to signer…"
             } else if self.loading {
                 "Loading relays…"
-            } else { "Please add some relays." })
+            } else if self.purpose == RelayPurpose::PrivateStorage { "Drafts stay on this device." }
+            else { "Please add some relays." })
     }
 }
 
-impl Panel for MessagingRelayPanel {
+impl Panel for RelayUrlListPanel {
     fn panel_id(&self) -> SharedString {
         self.name.clone()
     }
@@ -319,15 +362,15 @@ impl Panel for MessagingRelayPanel {
     }
 }
 
-impl EventEmitter<PanelEvent> for MessagingRelayPanel {}
+impl EventEmitter<PanelEvent> for RelayUrlListPanel {}
 
-impl Focusable for MessagingRelayPanel {
+impl Focusable for RelayUrlListPanel {
     fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for MessagingRelayPanel {
+impl Render for RelayUrlListPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .p_3()
@@ -337,7 +380,7 @@ impl Render for MessagingRelayPanel {
                 div()
                     .text_xs()
                     .text_color(cx.theme().text_muted)
-                    .child(SharedString::from(MSG)),
+                    .child(SharedString::from(self.purpose.description())),
             )
             .child(divider(cx))
             .child(
@@ -360,11 +403,12 @@ impl Render for MessagingRelayPanel {
                                 h_flex()
                                     .gap_1()
                                     .w_full()
-                                    .child(Input::new(&self.input).small().cleanable(true))
+                                    .child(Input::new(&self.input).small().cleanable(true).disabled(!self.ready || self.updating))
                                     .child(
                                         Button::new("add")
                                             .icon(IconName::Plus)
                                             .tooltip("Add relay")
+                                            .disabled(!self.ready || self.updating)
                                             .ghost()
                                             .size(rems(2.))
                                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -395,6 +439,9 @@ impl Render for MessagingRelayPanel {
                             )
                         }
                     })
+                    .when(!self.ready && !self.loading && self.error.is_some(), |view| view.child(
+                        Button::new("retry-load").icon(IconName::Reset).label("Load relays").ghost()
+                            .on_click(cx.listener(|this, _, window, cx| this.load(window, cx)))))
                     .child(
                         Button::new("submit")
                             .icon(IconName::CheckCircle)
@@ -402,7 +449,7 @@ impl Render for MessagingRelayPanel {
                             .primary()
                             .font_semibold()
                             .loading(self.updating)
-                            .disabled(self.updating || self.loading || NostrRegistry::global(cx).read(cx).current_user().is_none())
+                            .disabled(self.updating || self.loading || !self.ready || !self.dirty || NostrRegistry::global(cx).read(cx).current_user().is_none())
                             .on_click(cx.listener(move |this, _ev, window, cx| {
                                 this.set_relays(window, cx);
                             })),

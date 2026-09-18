@@ -85,6 +85,7 @@ fn application_menus() -> Vec<Menu> {
             MenuItem::action("Connection Status", Command::ShowConnectionStatus),
             MenuItem::action("Messaging Relays", Command::ShowMessaging),
             MenuItem::action("Gossip Relays", Command::ShowRelayList),
+            MenuItem::action("Private Storage Relays", Command::ShowPrivateStorage),
             MenuItem::separator(),
             MenuItem::action("Log Out…", Command::Logout),
         ]),

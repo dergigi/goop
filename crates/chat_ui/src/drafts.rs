@@ -7,20 +7,14 @@ use std::{
 
 use common::persistence::Persistence;
 use gpui::{App, AppContext, Context, Entity, Global};
-use nostr_sdk::prelude::{EventId, PublicKey};
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Snapshot {
-    pub text: String,
-    pub replies: BTreeSet<EventId>,
-}
+use nostr_sdk::prelude::PublicKey;
+pub(super) use chat::drafts::Snapshot;
 
 pub(super) struct Draft {
     pub path: PathBuf,
     pub owner: PublicKey,
     pub room: u64,
-    snapshot: Snapshot,
+    pub snapshot: Snapshot,
     edited: bool,
 }
 
@@ -49,6 +43,13 @@ impl Draft {
         Ok(())
     }
 
+    pub fn apply_remote(&mut self, snapshot: &Snapshot, current: &Snapshot) -> bool {
+        if snapshot == &self.snapshot || current != &self.snapshot { return false; }
+        self.edited = true;
+        self.snapshot = snapshot.clone();
+        true
+    }
+
     pub fn restore(&mut self, snapshot: &Snapshot, current: &Snapshot) -> bool {
         if self.edited || current != &Snapshot::default() {
             return false;
@@ -61,7 +62,19 @@ impl Draft {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::prelude::Keys;
+    use nostr_sdk::prelude::{Keys, EventId};
+
+    #[test]
+    fn remote_refresh_preserves_typing_and_blocks_stale_startup_restore() {
+        let mut draft = Draft::new(Path::new("unused"), Keys::generate().public_key(), 1);
+        let remote = Snapshot { text: "from phone".into(), ..Snapshot::default() };
+        let typing = Snapshot { text: "typing here".into(), ..Snapshot::default() };
+        assert!(!draft.apply_remote(&remote, &typing));
+        assert!(draft.apply_remote(&remote, &Snapshot::default()));
+        assert!(!draft.restore(&typing, &Snapshot::default()));
+        assert!(!draft.apply_remote(&Snapshot::default(), &typing));
+        assert!(draft.apply_remote(&Snapshot::default(), &remote));
+    }
 
     #[test]
     fn disk_scan_preserves_live_edits_and_keeps_accounts_separate() {
@@ -184,6 +197,18 @@ impl DraftIndicators {
     pub fn global(cx: &mut App) -> Entity<Self> {
         if !cx.has_global::<GlobalDraftIndicators>() {
             let indicators = cx.new(|_| Self::default());
+            let observed = indicators.clone();
+            cx.observe(&chat::ChatRegistry::global(cx), move |chat, cx| {
+                let Some(owner) = state::NostrRegistry::global(cx).read(cx).current_user() else { return; };
+                let drafts = chat.read(cx).draft_indicators();
+                observed.update(cx, |this, cx| {
+                    let mut changed = false;
+                    for (room, present) in drafts {
+                        changed |= this.values.insert((owner, room), present) != Some(present);
+                    }
+                    if changed { cx.notify(); }
+                });
+            }).detach();
             cx.set_global(GlobalDraftIndicators(indicators));
         }
         cx.global::<GlobalDraftIndicators>().0.clone()

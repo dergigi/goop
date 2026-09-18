@@ -78,7 +78,13 @@ A pencil replaces the timestamp for chats with drafts. When you have drafts outs
 
 Sending clears the submitted draft only after the outgoing queue has saved it. If saving fails, the text stays in the composer. Edits made while a send is being saved are preserved. Draft attachment uploads are not restored after restarting.
 
-Drafts are stored in the app's local data directory under `drafts/`. They are not synced to relays. Writes run in the background and finish before a normal quit; a sudden crash or power loss can still interrupt the latest unsaved edit.
+Drafts are stored in the app's local data directory under `drafts/`. Writes run in the background and finish before a normal quit; a sudden crash or power loss can still interrupt the latest unsaved edit.
+
+Goop also syncs text drafts and reply targets using [NIP-37](https://github.com/nostr-protocol/nips/blob/master/37.md), using your encrypted private-storage relay list (kind 10013). Open **Relays → Private Storage Relays** to add or remove relays, then choose **Update**. The same list is shared with Amethyst and other compatible clients. Leave the list empty to keep drafts local. You can also manage it from Connection status → Troubleshooting. Goop does not publish drafts to your messaging or public relays as a fallback.
+
+Sync runs in the background after a pause in typing and checks for remote changes about every 30 seconds. The unsent NIP-17 message is encrypted to your own identity. Clearing or sending a synced draft publishes a deletion marker. Unsynced local edits take priority over incoming changes. Your signer may ask for approval; declined requests can be resumed from Connection status → Troubleshooting → Retry draft sync. Draft-sync bookkeeping is stored locally under `draft-sync/`.
+
+Goop keeps one visible draft per conversation. When several remote drafts exist for a conversation, it shows the newest one. Attachments and optional NIP-37 revision history are not synced.
 
 ## Emoji and reactions
 
@@ -194,6 +200,7 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 - **Cmd/Ctrl+Shift+D** — open Connection Status.
 - **Cmd/Ctrl+Shift+M** — open Messaging Relays.
 - **Cmd/Ctrl+Shift+G** — open Gossip Relays.
+- **Cmd/Ctrl+Shift+R**: open Private Storage Relays.
 - **Cmd/Ctrl+,** — open settings.
 - **Enter / Shift+Enter** — send a message / insert a newline.
 

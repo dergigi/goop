@@ -63,6 +63,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         KeyBinding::new(&format!("{modifier}-shift-c"), Command::ShowContactList, None),
         KeyBinding::new(&format!("{modifier}-shift-m"), Command::ShowMessaging, None),
         KeyBinding::new(&format!("{modifier}-shift-g"), Command::ShowRelayList, None),
+        KeyBinding::new(&format!("{modifier}-shift-r"), Command::ShowPrivateStorage, None),
         KeyBinding::new(&format!("{modifier}-shift-d"), Command::ShowConnectionStatus, None),
         KeyBinding::new(
             &format!("{modifier}-r"),
@@ -114,6 +115,7 @@ pub enum Command {
     RetryDecryption,
     ShowRelayList,
     ShowMessaging,
+    ShowPrivateStorage,
     ShowConnectionStatus,
     ConnectSigner,
     ShowProfile,
@@ -512,6 +514,11 @@ impl Workspace {
                     );
                 });
             }
+            Command::ShowPrivateStorage => {
+                self.dock.update(cx, |dock, cx| {
+                    dock.add_panel(Arc::new(messaging_relays::init_private_storage(window, cx)), DockPlacement::Right, window, cx);
+                });
+            }
             Command::LoadOlderHistory => {
                 ChatRegistry::global(cx).update(cx, |chat, cx| chat.load_older_history(cx))
             }
@@ -630,13 +637,10 @@ impl Workspace {
                                         .child(name.clone())
                                 }))
                                 .separator()
-                                .menu(
-                                    "Search conversations",
-                                    Box::new(Command::SearchConversations),
-                                )
-                                .menu("Search profiles", Box::new(Command::SearchProfiles))
-                                .menu("Toggle sidebar", Box::new(Command::ToggleSidebar))
-                                .menu("Connection status", Box::new(Command::ShowConnectionStatus))
+                                .menu_with_icon("Search conversations", IconName::Search, Box::new(Command::SearchConversations))
+                                .menu_with_icon("Search profiles", IconName::User, Box::new(Command::SearchProfiles))
+                                .menu_with_icon("Toggle sidebar", IconName::PanelLeft, Box::new(Command::ToggleSidebar))
+                                .menu_with_icon("Connection status", IconName::Activity, Box::new(Command::ShowConnectionStatus))
                                 .separator()
                                 .menu_with_icon(
                                     "Profile",
@@ -740,6 +744,7 @@ impl Workspace {
                     .dropdown_menu(|menu, _, _| {
                         menu.menu("Messaging Relays", Box::new(Command::ShowMessaging))
                             .menu("Gossip Relays", Box::new(Command::ShowRelayList))
+                            .menu("Private Storage Relays", Box::new(Command::ShowPrivateStorage))
                     }),
             )
             .child(

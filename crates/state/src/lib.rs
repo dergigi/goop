@@ -16,6 +16,7 @@ mod constants;
 pub mod credentials;
 mod nip05;
 mod profiles;
+pub mod private_storage;
 mod signer;
 
 pub use blossom::*;

@@ -7,6 +7,19 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-09-18
+
+### Added
+
+- Sync encrypted message drafts and reply targets with NIP-37 using the account’s private-storage relays, compatible with Amethyst’s draft format. Keep local saving immediate and protect unsynced edits from incoming changes.
+- Retry declined or failed draft sync from Connection status → Troubleshooting.
+- Manage private-storage relays alongside messaging and gossip relays. Save the encrypted list for other compatible clients, or empty it to keep drafts local.
+- Open Private Storage Relays with Cmd/Ctrl+Shift+R.
+
+### Changed
+
+- Add icons to the account menu’s search, sidebar, and connection-status entries.
+
 ## [2.12.0] - 2026-09-18
 
 ### Added
@@ -453,7 +466,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.12.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.13.0...HEAD
+[2.13.0]: https://github.com/dergigi/goop/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/dergigi/goop/compare/v2.11.2...v2.12.0
 [2.11.2]: https://github.com/dergigi/goop/compare/v2.11.1...v2.11.2
 [2.11.1]: https://github.com/dergigi/goop/compare/v2.11.0...v2.11.1
