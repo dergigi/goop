@@ -9,10 +9,16 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Show right-aligned progress spinners on connection-status recovery actions while their work is running.
+- Show a spinner and “Retrying…” in the delivery dialog while a requested retry is queued or running, and prevent duplicate clicks.
 - Add a pencil filter beside the bot filter when the current account has drafts outside the active chat. Select it to show chats with drafts, including groups.
 - Show a subtle pencil in place of the chat timestamp while a draft is present, including drafts restored after restarting.
 - Save composer text and reply targets locally per account and chat, and restore them when reopening Goop. Draft writes run in the background and are flushed on normal quit.
 - Show a subtle failure indicator and icon-only retry control directly on outgoing messages. Retry only the selected message while preserving accepted copies.
+
+### Changed
+
+- Move the chat-list “Retry sync” control into Connection status → Troubleshooting as “Retry chat list sync”, with the sync error in diagnostics.
 
 ### Fixed
 

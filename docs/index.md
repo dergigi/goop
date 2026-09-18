@@ -96,7 +96,7 @@ Click a chat image to browse the images already loaded in that chat, or choose *
 
 Click the connection-status indicator in the top bar or press **⌘⇧D** (**Ctrl+Shift+D** on Windows/Linux). A small green dot means the signer is connected and at least one messaging relay is connected; the tab title shows the connected/total relay count. Muted dots indicate connecting or signed-out states, and amber indicates a connection problem.
 
-When the signer is unavailable, use **Reconnect signer** in the top bar or below the Signer description. Additional relay, history, decryption, and sending recovery tools are in the collapsed **Troubleshooting** section. Long status details can be scrolled.
+When the signer is unavailable, use **Reconnect signer** in the top bar or below the Signer description. Additional relay, history, decryption, and sending recovery tools are in the collapsed **Troubleshooting** section. A spinner on the right shows which recovery action is running. If archive or pin-list sync fails, use **Retry chat list sync** here. Long status details can be scrolled.
 
 ## Crash reports
 

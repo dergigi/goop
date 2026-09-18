@@ -1451,14 +1451,19 @@ impl ChatPanel {
                                     .outgoing_reports(&message_id)
                                     .unwrap_or_else(|| reports.clone());
                                 let retryable = reports.iter().any(|r| r.pending() || r.paused);
+                                let retrying = ChatRegistry::global(cx).read(cx).retrying_outgoing();
                                 this.title(SharedString::from("Delivery status"))
                                     .show_close(true)
-                                    .when(retryable, |this| {
-                                        this.footer(|_, _, _, _| {
+                                    .when(retryable || retrying, |this| {
+                                        this.footer(move |_, _, _, _| {
                                             vec![Button::new("retry-outgoing")
-                                                .label("Retry pending sends")
-                                                .on_click(|_, _, cx| {
-                                                    ChatRegistry::global(cx).read(cx).retry_outgoing()
+                                                .label(if retrying { "Retrying…" } else { "Retry pending sends" })
+                                                .loading(retrying)
+                                                .on_click(|_, window, cx| {
+                                                    if !ChatRegistry::global(cx).read(cx).retry_outgoing() {
+                                                        window.push_notification(Notification::error("Connect your signer before retrying messages."), cx);
+                                                    }
+                                                    window.refresh();
                                                 })]
                                         })
                                     })

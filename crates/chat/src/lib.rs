@@ -46,6 +46,9 @@ pub use room::*;
 #[cfg(test)]
 static LOCAL_KEYS: LazyLock<Keys> = LazyLock::new(Keys::generate);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryOperation { Resume, Rescan, ScanOtherRelays }
+
 pub fn init(window: &mut Window, cx: &mut App) {
     ChatRegistry::set_global(cx.new(|cx| ChatRegistry::new(window, cx)), cx);
 }
@@ -82,6 +85,7 @@ enum Signal {
     Outgoing(OutgoingMessage),
     OutgoingError(String),
     OutgoingRecovered,
+    OutgoingRetryFinished,
 }
 
 /// Structured progress for views that lay out counters independently.
@@ -115,6 +119,8 @@ pub struct ChatRegistry {
 
     history: BTreeMap<RelayUrl, RelayHistory>,
     history_running: bool,
+    history_operation: Option<HistoryOperation>,
+    decryption_retries: HashSet<EventId>,
     pending_history: Option<bool>,
     history_error: Option<String>,
     last_history: Option<Instant>,
@@ -130,6 +136,7 @@ pub struct ChatRegistry {
     archives: Option<archive::ArchiveStore>,
     archive_task: Option<Task<()>>,
     pub archive_error: Option<String>,
+    pub archive_syncing: bool,
     incoming: Option<RumorCache>,
     inbox: Option<inbox::Inbox>,
     reads: Option<unread::ReadStore>,
@@ -230,6 +237,8 @@ impl ChatRegistry {
             event_map: Arc::new(RwLock::new(HashMap::default())),
             history: BTreeMap::new(),
             history_running: false,
+            history_operation: None,
+            decryption_retries: HashSet::new(),
             pending_history: None,
             history_error: None,
             last_history: None,
@@ -245,6 +254,7 @@ impl ChatRegistry {
             archives: None,
             archive_task: None,
             archive_error: None,
+            archive_syncing: false,
             incoming: None,
             inbox: None,
             reads: None,
@@ -300,8 +310,17 @@ impl ChatRegistry {
         self.incoming = Some(cache.clone());
         let signer = signer.snapshot();
         let signals = self.signal_tx.clone();
-        self.decrypt_task = Some(cx.background_spawn(async move {
+        let decryption_worker = cx.background_spawn(async move {
             decrypt_queue.run(receiver, cache, signer, signals).await
+        });
+        self.decrypt_task = Some(cx.spawn(async move |this, cx| {
+            let result = decryption_worker.await;
+            this.update(cx, |this, cx| {
+                this.decryption_retries.clear();
+                if let Err(error) = &result { cx.emit(ChatEvent::Error(error.to_string())); }
+                cx.notify();
+            })?;
+            result
         }));
         let seen = self.seen.clone();
         let tx = self.signal_tx.clone();
@@ -360,10 +379,12 @@ impl ChatRegistry {
                             cx.emit(ChatEvent::Error(error));
                         }
                         Signal::OutgoingRecovered => this.outgoing_error = None,
+                        Signal::OutgoingRetryFinished => {},
                         Signal::History(relay, progress) => {
                             this.history.insert(relay, progress);
                         }
                         Signal::Decrypted(id, result) => {
+                            this.decryption_retries.remove(&id);
                             this.trash.update(cx, |trash, cx| {
                                 trash.retain(|failed| failed.event_id != id);
                                 if let Err(failed) = &result {
@@ -524,6 +545,7 @@ impl ChatRegistry {
         self.archive_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 if !store.paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    if this.update(cx, |this, cx| { this.archive_syncing = true; cx.notify(); }).is_err() { break; }
                     let (sync_store, client, signer) = (store.clone(), client.clone(), signer.clone());
                     let result = cx.background_spawn(async move { sync_store.sync(&client, &signer).await }).await;
                     if let Err(error) = &result {
@@ -532,6 +554,7 @@ impl ChatRegistry {
                         }
                     }
                     if this.update(cx, |this, cx| {
+                        this.archive_syncing = false;
                         this.archive_error = result.err().map(|error| error.to_string());
                         cx.notify();
                     }).is_err() { break; }
@@ -546,7 +569,12 @@ impl ChatRegistry {
         cx.notify();
     }
     pub fn retry_archives(&mut self, cx: &mut Context<Self>) {
-        if let Some(store) = &self.archives { store.retry(); } else { self.start_archives(cx); }
+        if self.archive_syncing { return; }
+        if let Some(store) = &self.archives {
+            self.archive_syncing = true;
+            store.retry();
+            cx.notify();
+        } else { self.start_archives(cx); }
     }
     pub fn is_pinned(&self, room: &Room) -> bool {
         self.archives.as_ref().is_some_and(|store| store.is_pinned(room.members()))
@@ -601,9 +629,16 @@ impl ChatRegistry {
         }
     }
 
-    pub fn retry_outgoing(&self) {
+    pub fn retrying_outgoing(&self) -> bool {
+        self.outgoing.as_ref().is_some_and(|queue| queue.retrying())
+    }
+
+    pub fn retry_outgoing(&self) -> bool {
         if let Some(queue) = &self.outgoing {
             queue.retry();
+            true
+        } else {
+            false
         }
     }
 
@@ -712,6 +747,8 @@ impl ChatRegistry {
         let client = nostr.read(cx).client();
         let signals = self.signal_tx.clone();
         self.history_running = true;
+        self.history_operation = Some(if include_general { HistoryOperation::ScanOtherRelays }
+            else if force { HistoryOperation::Rescan } else { HistoryOperation::Resume });
         self.history_error = None;
         self.last_history = Some(Instant::now());
         self.history.clear();
@@ -777,6 +814,7 @@ impl ChatRegistry {
             let result = task.await;
             this.update(cx, |this, cx| {
                 this.history_running = false;
+                this.history_operation = None;
                 if let Err(error) = &result {
                     this.history_error = Some(error.to_string());
                     cx.emit(ChatEvent::Error(error.to_string()));
@@ -790,7 +828,12 @@ impl ChatRegistry {
         }));
     }
 
+    pub fn retrying_decryption(&self) -> bool { !self.decryption_retries.is_empty() }
+
+    pub fn history_operation(&self) -> Option<HistoryOperation> { self.history_operation }
+
     pub fn retry_failed_messages(&mut self, cx: &mut Context<Self>) {
+        if self.retrying_decryption() { return; }
         let Some(queue) = self.queue.clone() else {
             return;
         };
@@ -800,11 +843,23 @@ impl ChatRegistry {
             .iter()
             .filter_map(|failed| Event::from_json(failed.raw_event.as_ref()).ok())
             .collect();
-        self.retry_task = Some(cx.background_spawn(async move {
+        self.decryption_retries = events.iter().map(|event| event.id).collect();
+        let task = cx.background_spawn(async move {
             for event in events {
                 queue.enqueue(event, true).await?;
             }
-            Ok(())
+            anyhow::Ok(())
+        });
+        self.retry_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            if let Err(error) = &result {
+                this.update(cx, |this, cx| {
+                    this.decryption_retries.clear();
+                    cx.emit(ChatEvent::Error(error.to_string()));
+                    cx.notify();
+                })?;
+            }
+            result
         }));
         cx.notify();
     }
@@ -1083,6 +1138,7 @@ impl ChatRegistry {
         self.history_task = None;
         self.decrypt_task = None;
         self.retry_task = None;
+        self.decryption_retries.clear();
         if let Some(queue) = &self.outgoing {
             queue.stop();
         }
@@ -1093,6 +1149,7 @@ impl ChatRegistry {
         self.moderation_error = None;
         if let Some(store) = self.archives.take() { store.stop(); }
         self.archive_task = None;
+        self.archive_syncing = false;
         self.archive_error = None;
         self.incoming = None;
         self.inbox = None;
@@ -1105,6 +1162,7 @@ impl ChatRegistry {
         self.signal_consumer = None;
         self.queue = None;
         self.history_running = false;
+        self.history_operation = None;
         self.pending_history = None;
         self.last_history = None;
         self.history.clear();

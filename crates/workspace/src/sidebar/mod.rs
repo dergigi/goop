@@ -557,12 +557,6 @@ impl Render for Sidebar {
                         })
                     })),
             )
-            .when_some(chat.read(cx).archive_error.as_ref().filter(|_| !self.show_blocked), |view, error| {
-                view.child(h_flex().px_2().gap_1()
-                    .child(Button::new("retry-archives").label("Retry sync").small().ghost()
-                        .tooltip(error.clone())
-                        .on_click(|_, _, cx| ChatRegistry::global(cx).update(cx, |chat, cx| chat.retry_archives(cx)))))
-            })
             .child(v_flex().w_full().flex_1().min_h_0().gap_1().map(|this| {
                 if self.show_blocked {
                     return this.child(self.blocked_users.clone());

@@ -191,6 +191,7 @@ pub(super) struct OutgoingQueue {
     enqueue_lock: Arc<Mutex<()>>,
     active: Arc<AtomicBool>,
     resume_requested: Arc<AtomicBool>,
+    retry_running: Arc<AtomicBool>,
     rebroadcast_requested: Arc<RwLock<BTreeSet<EventId>>>,
     retry_requested: Arc<RwLock<BTreeSet<EventId>>>,
 }
@@ -210,6 +211,7 @@ impl OutgoingQueue {
                 enqueue_lock: Arc::default(),
                 active: Arc::new(AtomicBool::new(true)),
                 resume_requested: Arc::default(),
+                retry_running: Arc::default(),
                 rebroadcast_requested: Arc::default(),
                 retry_requested: Arc::default(),
             },
@@ -251,6 +253,11 @@ impl OutgoingQueue {
     pub fn retry(&self) {
         self.resume_requested.store(true, Ordering::SeqCst);
         self.wake();
+    }
+
+    pub fn retrying(&self) -> bool {
+        self.active.load(Ordering::SeqCst)
+            && (self.resume_requested.load(Ordering::SeqCst) || self.retry_running.load(Ordering::SeqCst))
     }
 
     pub fn retry_message(&self, id: EventId) {
@@ -341,6 +348,22 @@ impl OutgoingQueue {
     ) -> Result<()> {
         self.ensure_active()?;
         let resume = self.resume_requested.swap(false, Ordering::SeqCst);
+        self.retry_running.store(resume, Ordering::SeqCst);
+        let result = self.process_messages(signer, signals, announced, resume).await;
+        self.retry_running.store(false, Ordering::SeqCst);
+        if resume {
+            signals.send_async(Signal::OutgoingRetryFinished).await?;
+        }
+        result
+    }
+
+    async fn process_messages(
+        &self,
+        signer: &UniversalSigner,
+        signals: &flume::Sender<Signal>,
+        announced: &mut BTreeMap<EventId, u64>,
+        resume: bool,
+    ) -> Result<()> {
         for mut message in load(&self.root, self.owner).await? {
             if message.uses_removed_encryption() {
                 if announced.get(&message.id()) != Some(&message.revision) {
@@ -1034,6 +1057,22 @@ mod tests {
         client.shutdown().await;
     }
     #[tokio::test]
+    async fn retry_feedback_clears_after_storage_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Keys::generate();
+        let client = Client::builder().database(nostr_memory::MemoryDatabase::unbounded()).build();
+        let queue = queue(client.clone(), owner.public_key(), dir.path());
+        std::fs::write(dir.path().join(owner.public_key().to_hex()), "not a directory").unwrap();
+        let (tx, rx) = flume::unbounded();
+        queue.retry();
+        assert!(queue.retrying());
+        assert!(queue.process(&UniversalSigner::new(owner), &tx, &mut BTreeMap::new()).await.is_err());
+        assert!(!queue.retrying());
+        assert!(matches!(rx.try_recv().unwrap(), Signal::OutgoingRetryFinished));
+        client.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn queue_error_is_reported_until_storage_recovers() {
         let dir = tempfile::tempdir().unwrap();
         let owner = Keys::generate();
@@ -1050,6 +1089,9 @@ mod tests {
         std::fs::remove_file(&account_dir).unwrap();
         std::fs::create_dir(&account_dir).unwrap();
         queue.retry();
+        let finished = tokio::time::timeout(Duration::from_secs(5), rx.recv_async()).await.unwrap().unwrap();
+        assert!(matches!(finished, Signal::OutgoingRetryFinished));
+        assert!(!queue.retrying());
         let recovered = tokio::time::timeout(Duration::from_secs(5), rx.recv_async()).await.unwrap().unwrap();
         assert!(matches!(recovered, Signal::OutgoingRecovered));
         queue.stop();
@@ -1120,6 +1162,8 @@ mod tests {
                 started: started_tx,
                 resume: resume_rx,
             });
+            queue.retry();
+            assert!(queue.retrying());
             let worker_queue = queue.clone();
             let (signals, _rx) = flume::unbounded();
             let worker = tokio::spawn(async move {
@@ -1128,7 +1172,9 @@ mod tests {
                     .await
             });
             started_rx.recv_async().await.unwrap();
+            assert!(queue.retrying(), "retry stays busy while waiting for the signer");
             queue.stop();
+            assert!(!queue.retrying(), "stopping the account clears retry feedback");
             resume_tx.send_async(()).await.unwrap();
             assert!(
                 worker
