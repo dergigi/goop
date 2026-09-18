@@ -2,6 +2,8 @@
 
 The AUR package installs the published x86_64 Linux binary with Arch's system libraries. It includes the desktop launcher, icons, and `nostr:`/`goop:` URL handlers. It does not compile Goop.
 
+The desktop entry and icon use `com.dergigi.goop`, matching the app’s Wayland ID and X11 window class. Icons include standard sizes from 16 to 1024 pixels; smaller sizes are generated at package build time with ImageMagick.
+
 A Secret Service provider must be available and unlocked to save signer credentials. The package lists GNOME Keyring and KWallet as optional providers because users may already have another provider.
 
 The launcher disables the automatic updater in Goop 2.11.0 and earlier. Newer releases only display release notices. Updates belong to the AUR helper and pacman.
