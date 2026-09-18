@@ -19,7 +19,9 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
-- Show signer pairing QR codes immediately, keep them visible when expanding bunker URL entry, and add a manual refresh icon beside Copy. Replace expired codes with a refresh control and show an animated checkmark while finishing an approved connection.
+- Remove QR invitation expiry. Pairing waits until approval, explicit cancellation, or app closure; normal signer requests still have a timeout.
+
+- Show signer pairing QR codes immediately, keep them visible when expanding bunker URL entry, and add a manual refresh icon beside Copy. Show an animated checkmark while finishing an approved connection.
 - Move the chat-list “Retry sync” control into Connection status → Troubleshooting as “Retry chat list sync”, with the sync error in diagnostics.
 
 ### Fixed

@@ -21,18 +21,6 @@ use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::{Icon, IconName, Sizable, h_flex, v_flex};
 
-const PAIRING_TIMEOUT: Duration = Duration::from_secs(120);
-
-#[derive(Debug)]
-struct PairingExpired;
-impl std::fmt::Display for PairingExpired {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Pairing expired. Generate a new code.")
-    }
-}
-impl std::error::Error for PairingExpired {}
-
-
 fn invitation(keys: &Keys, relays: Vec<RelayUrl>) -> NostrConnectUri {
     let mut uri = NostrConnectUri::client(keys.public_key(), relays, "Goop");
     if let NostrConnectUri::Client { metadata, .. } = &mut uri {
@@ -64,30 +52,21 @@ fn qr_pixels(text: &str) -> Result<image::RgbaImage> {
     Ok(image)
 }
 
-/// The SDK authenticates the invitation secret before learning the account key.
-/// Keep the signer alive after success, so its verified identity is reused.
+/// Wait without invitation expiry. The SDK requires a Duration; MAX uses its
+/// native timer's far-future deadline. Ordinary requests are bounded separately
+/// by UniversalSigner, retaining the approved connection without another handshake.
 async fn approve(
     signer: NostrConnect,
-    timeout: Duration,
     cancel: flume::Receiver<()>,
 ) -> Result<(NostrConnect, NostrConnectUri)> {
     let handshake = async {
-        signer.get_public_key_async().await?;
         let bunker = signer.bunker_uri().await?;
+        state::UniversalSigner::new(signer.clone()).get_public_key_async().await?;
         Ok::<_, anyhow::Error>(bunker)
     };
-    let interruption = async {
-        let timer = async {
-            smol::Timer::after(timeout).await;
-        };
-        match select(cancel.recv_async().boxed(), timer.boxed()).await {
-            Either::Left(_) => anyhow!("Pairing cancelled."),
-            Either::Right(_) => anyhow!(PairingExpired),
-        }
-    };
-    let result = match select(handshake.boxed(), interruption.boxed()).await {
+    let result = match select(handshake.boxed(), cancel.recv_async().boxed()).await {
         Either::Left((result, _)) => result,
-        Either::Right((reason, _)) => Err(reason),
+        Either::Right(_) => Err(anyhow!("Pairing cancelled.")),
     };
     match result {
         Ok(bunker) => Ok((signer, bunker)),
@@ -126,7 +105,6 @@ pub struct PairSigner {
     link: Option<String>,
     error: Option<String>,
     saving: bool,
-    expired: bool,
     tasks: Vec<Task<()>>,
     _release: Subscription,
 }
@@ -147,7 +125,6 @@ impl PairSigner {
             link: None,
             error: None,
             saving: false,
-            expired: false,
             tasks: Vec::new(),
             _release: release,
         }
@@ -176,7 +153,6 @@ impl PairSigner {
         self.clear_image(window);
         self.link = None;
         self.error = None;
-        self.expired = false;
         self.winner = None;
         self.generation += 1;
         let generation = self.generation;
@@ -195,7 +171,7 @@ impl PairSigner {
                 );
                 let link = uri.to_string();
                 let pixels = qr_pixels(&link)?;
-                let mut signer = NostrConnect::new(uri, keys, PAIRING_TIMEOUT, None)?;
+                let mut signer = NostrConnect::new(uri, keys, Duration::MAX, None)?;
                 signer.auth_url_handler(GoopAuthUrlHandler);
                 this.update(cx, |this, cx| {
                     let Some(pending) = this.pending.get_mut(&generation) else { return; };
@@ -209,7 +185,7 @@ impl PairSigner {
                 })?;
                 let approved = gpui_tokio::Tokio::spawn_result(
                     cx,
-                    approve(signer, PAIRING_TIMEOUT, cancelled),
+                    approve(signer, cancelled),
                 )
                 .await?;
                 let (signer, bunker) = approved;
@@ -247,7 +223,7 @@ impl PairSigner {
                 this.update_in(cx, |this, window, cx| {
                     let Some(pending) = this.pending.remove(&generation) else { return; };
                     pending.stop(cx);
-                    // Expired or cancelled older invitations must not overwrite the current UI.
+                    // Failed or cancelled older invitations must not overwrite the current UI.
                     if this.winner.is_some_and(|winner| winner != generation)
                         || (this.winner.is_none() && generation != this.generation) {
                         return;
@@ -257,8 +233,6 @@ impl PairSigner {
                     this.link = None;
                     this.saving = false;
                     cx.emit(PairEvent::Saving(false));
-                    this.expired = error.is::<PairingExpired>()
-                        || state::SignerFailure::classify(error.as_ref()) == state::SignerFailure::Timeout;
                     this.error = Some(error.to_string());
                     cx.notify();
                 })
@@ -296,8 +270,7 @@ impl Render for PairSigner {
                 .when(self.error.is_some(), |view| view
                     .child(Button::new("retry-pairing").icon(IconName::Refresh).ghost()
                         .tooltip("Generate a new pairing code")
-                        .on_click(cx.listener(|this, _, window, cx| this.start(window, cx))))
-                    .when(self.expired, |view| view.child(div().text_xs().text_color(cx.theme().text_muted).child("Code expired"))))
+                        .on_click(cx.listener(|this, _, window, cx| this.start(window, cx)))))
                 .when(self.saving, |view| view
                     .child(div().text_color(cx.theme().text_accent)
                         .child(Icon::new(IconName::CheckCircle).size(px(64.)))
@@ -306,7 +279,7 @@ impl Render for PairSigner {
                     .child(div().text_sm().child("Signer approved"))
                     .child(ui::indicator::Indicator::new()))
                 .when(self.image.is_none() && self.error.is_none() && !self.saving, |view| view.child(ui::indicator::Indicator::new())))
-            .when_some(self.error.clone().filter(|_| !self.expired), |view, error| view.child(
+            .when_some(self.error.clone(), |view, error| view.child(
                 div().text_sm().text_color(cx.theme().text_warning).child(error)))
     }
 }
@@ -385,10 +358,10 @@ mod tests {
             let account = Keys::generate();
             let uri = invitation(&keys, vec![url.clone()]);
             let signer =
-                NostrConnect::new(uri.clone(), keys.clone(), Duration::from_secs(3), None).unwrap();
+                NostrConnect::new(uri.clone(), keys.clone(), Duration::MAX, None).unwrap();
             let monitor = signer.clone();
             let (_cancel, cancelled) = flume::bounded(1);
-            let wait = tokio::spawn(approve(signer, Duration::from_secs(4), cancelled));
+            let wait = tokio::spawn(approve(signer, cancelled));
             listening(&monitor).await;
             let remote = NostrConnectRemoteSigner::from_uri(
                 uri.clone(),
@@ -442,17 +415,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn incorrect_secret_cannot_pair_and_expiry_closes_connections() {
+    async fn incorrect_secret_is_ignored_until_pairing_is_cancelled() {
         tokio::time::timeout(Duration::from_secs(5), async {
             let relay = LocalRelay::builder().build();
             relay.run().await.unwrap();
             let keys = Keys::generate();
             let uri = invitation(&keys, vec![relay.url().await]);
             let signer =
-                NostrConnect::new(uri.clone(), keys, Duration::from_secs(2), None).unwrap();
+                NostrConnect::new(uri.clone(), keys, Duration::MAX, None).unwrap();
             let monitor = signer.clone();
-            let (_cancel, cancelled) = flume::bounded(1);
-            let wait = tokio::spawn(approve(signer, Duration::from_millis(500), cancelled));
+            let (cancel, cancelled) = flume::bounded(1);
+            let wait = tokio::spawn(approve(signer, cancelled));
             listening(&monitor).await;
             let mut wrong = uri;
             if let NostrConnectUri::Client { secret, .. } = &mut wrong {
@@ -465,8 +438,11 @@ mod tests {
             )
             .unwrap();
             let server = tokio::spawn(async move { remote.serve(Allow).await });
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            assert!(!wait.is_finished());
+            cancel.send(()).unwrap();
             let error = wait.await.unwrap().unwrap_err();
-            assert!(error.to_string().contains("expired"));
+            assert!(error.to_string().contains("cancelled"));
             assert!(
                 monitor
                     .status()
@@ -491,10 +467,10 @@ mod tests {
                 // Both invitations use the persistent app key, as the real dialog does.
                 for _ in 0..2 {
                     let uri = invitation(&keys, vec![relay.url().await]);
-                    let signer = NostrConnect::new(uri.clone(), keys.clone(), Duration::from_secs(3), None).unwrap();
+                    let signer = NostrConnect::new(uri.clone(), keys.clone(), Duration::MAX, None).unwrap();
                     let monitor = signer.clone();
                     let (cancel, cancelled) = flume::bounded(1);
-                    let wait = tokio::spawn(approve(signer, Duration::from_secs(4), cancelled));
+                    let wait = tokio::spawn(approve(signer, cancelled));
                     listening(&monitor).await;
                     attempts.push((uri, cancel, wait, monitor));
                 }
@@ -525,10 +501,10 @@ mod tests {
         relay.run().await.unwrap();
         let keys = Keys::generate();
         let uri = invitation(&keys, vec![relay.url().await]);
-        let signer = NostrConnect::new(uri, keys, Duration::from_secs(5), None).unwrap();
+        let signer = NostrConnect::new(uri, keys, Duration::MAX, None).unwrap();
         let monitor = signer.clone();
         let (cancel, cancelled) = flume::bounded(1);
-        let wait = tokio::spawn(approve(signer, Duration::from_secs(5), cancelled));
+        let wait = tokio::spawn(approve(signer, cancelled));
         listening(&monitor).await;
         cancel.send(()).unwrap();
         let result = tokio::time::timeout(Duration::from_secs(1), wait)

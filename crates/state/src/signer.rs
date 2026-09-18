@@ -207,6 +207,21 @@ trait InnerSigner: fmt::Debug + Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Result<String, UniversalSignerError>> + Send + 'a>>;
 }
 
+// Pairing may wait indefinitely, but individual signer operations must finish
+// or return a typed timeout so queued messages can recover.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+async fn signer_request<T, E: Error + Send + Sync + 'static>(
+    request: impl Future<Output = Result<T, E>> + Send,
+    timeout: std::time::Duration,
+) -> Result<T, UniversalSignerError> {
+    use futures::{FutureExt, future::{select, Either}};
+    match select(request.boxed(), async move { smol::Timer::after(timeout).await }.boxed()).await {
+        Either::Left((result, _)) => result.map_err(UniversalSignerError::new),
+        Either::Right(_) => Err(UniversalSignerError::new(SignerFailure::Timeout)),
+    }
+}
+
 #[derive(Debug)]
 struct InnerSignerImpl<T>(T);
 
@@ -221,9 +236,7 @@ where
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<PublicKey, UniversalSignerError>> + Send + '_>> {
         Box::pin(async move {
-            AsyncGetPublicKey::get_public_key_async(&self.0)
-                .await
-                .map_err(UniversalSignerError::new)
+            signer_request(AsyncGetPublicKey::get_public_key_async(&self.0), REQUEST_TIMEOUT).await
         })
     }
 
@@ -232,9 +245,7 @@ where
         unsigned: UnsignedEvent,
     ) -> Pin<Box<dyn Future<Output = Result<Event, UniversalSignerError>> + Send + '_>> {
         Box::pin(async move {
-            AsyncSignEvent::sign_event_async(&self.0, unsigned)
-                .await
-                .map_err(UniversalSignerError::new)
+            signer_request(AsyncSignEvent::sign_event_async(&self.0, unsigned), REQUEST_TIMEOUT).await
         })
     }
 
@@ -244,9 +255,7 @@ where
         content: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<String, UniversalSignerError>> + Send + 'a>> {
         Box::pin(async move {
-            AsyncNip44::nip44_encrypt_async(&self.0, public_key, content)
-                .await
-                .map_err(UniversalSignerError::new)
+            signer_request(AsyncNip44::nip44_encrypt_async(&self.0, public_key, content), REQUEST_TIMEOUT).await
         })
     }
 
@@ -256,9 +265,7 @@ where
         payload: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<String, UniversalSignerError>> + Send + 'a>> {
         Box::pin(async move {
-            AsyncNip44::nip44_decrypt_async(&self.0, public_key, payload)
-                .await
-                .map_err(UniversalSignerError::new)
+            signer_request(AsyncNip44::nip44_decrypt_async(&self.0, public_key, payload), REQUEST_TIMEOUT).await
         })
     }
 }
@@ -351,6 +358,20 @@ impl AuthUrlHandler for GoopAuthUrlHandler {
 
 #[cfg(test)]
 mod failure_tests {
+    #[test]
+    fn request_deadline_is_typed_and_success_preserves_result() {
+        use super::*;
+        smol::block_on(async {
+            let error = signer_request(
+                std::future::pending::<Result<(), std::io::Error>>(),
+                std::time::Duration::from_millis(5),
+            ).await.unwrap_err();
+            assert_eq!(SignerFailure::classify(&error), SignerFailure::Timeout);
+            let value = signer_request(async { Ok::<_, std::io::Error>(42) }, REQUEST_TIMEOUT).await.unwrap();
+            assert_eq!(value, 42);
+        });
+    }
+
     #[test]
     fn logout_revokes_snapshots_without_breaking_a_new_login() {
         use super::*;
