@@ -29,7 +29,7 @@ jobs:
           ! grep -q 'not found' dependencies.log
           desktop-file-validate /usr/share/applications/com.dergigi.goop.desktop
           test ! -e /usr/share/applications/goop.desktop
-          xvfb-run -a python script/test-arch-desktop.py
+          xvfb-run -a python "$GITHUB_WORKSPACE/script/test-arch-desktop.py"
           namcap PKGBUILD goop-bin-*.pkg.tar.zst | tee namcap.log
           ! grep -q ' E: ' namcap.log
       - name: Launch with software graphics
