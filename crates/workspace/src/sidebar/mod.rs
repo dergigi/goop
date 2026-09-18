@@ -63,6 +63,7 @@ pub struct Sidebar {
     draft_indicators: Entity<chat_ui::DraftIndicators>,
     show_blocked: bool,
     list_filter: ChatFilter,
+    active_room: Option<u64>,
     blocked_users: Entity<crate::panels::blocked_users::BlockedUsers>,
     request_badge: RequestBadge,
     _subscriptions: Vec<Subscription>,
@@ -89,6 +90,7 @@ impl Sidebar {
             filter: cx.new(|_| RoomKind::Ongoing),
             show_blocked: false,
             list_filter: ChatFilter::All,
+            active_room: None,
             blocked_users: crate::panels::blocked_users::init(cx),
             request_badge: RequestBadge::default(),
             _subscriptions: subscriptions,
@@ -105,6 +107,13 @@ impl Sidebar {
             chat_ui::DraftIndicators::global(cx).update(cx, |drafts, cx| drafts.load_account(owner, cx));
         }
     }
+    pub fn set_active_room(&mut self, room: Option<u64>, cx: &mut Context<Self>) {
+        if self.active_room != room {
+            self.active_room = room;
+            cx.notify();
+        }
+    }
+
     pub fn set_filter(&mut self, kind: RoomKind, window: &mut Window, cx: &mut Context<Self>) {
         self.show_blocked = false;
         self.filter.update(cx, |filter, _| *filter = kind);
@@ -273,7 +282,7 @@ impl Sidebar {
                             .child(group.label())
                             .when(range.start + ix == 0, |heading| heading.child(h_flex().gap_0p5()
                                 .when(NostrRegistry::global(cx).read(cx).current_user()
-                                    .is_some_and(|owner| self.draft_indicators.read(cx).has_any_drafts(owner)), |filters| filters.child(
+                                    .is_some_and(|owner| self.draft_indicators.read(cx).has_drafts_outside(owner, self.active_room)), |filters| filters.child(
                                     Button::new("filter-drafts").icon(IconName::Pencil)
                                         .xsmall().ghost().selected(self.list_filter == ChatFilter::Drafts)
                                         .tooltip(if self.list_filter == ChatFilter::Drafts { "Show all chats" } else { "Show drafts" })
@@ -414,7 +423,7 @@ impl Render for Sidebar {
         let chat = ChatRegistry::global(cx);
         let owner = nostr.read(cx).current_user();
         if self.request_badge.owner != owner
-            || (self.list_filter == ChatFilter::Drafts && !owner.is_some_and(|owner| self.draft_indicators.read(cx).has_any_drafts(owner)))
+            || (self.list_filter == ChatFilter::Drafts && !owner.is_some_and(|owner| self.draft_indicators.read(cx).has_drafts_outside(owner, self.active_room)))
         {
             self.list_filter = ChatFilter::All;
         }

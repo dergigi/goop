@@ -78,8 +78,22 @@ mod tests {
         assert!(indicators.has_draft(owner, 2));
         assert!(indicators.has_draft(owner, 3));
         assert!(!indicators.has_draft(other, 3));
-        assert!(indicators.has_any_drafts(owner));
-        assert!(!indicators.has_any_drafts(other));
+        assert!(indicators.has_drafts_outside(owner, None));
+        assert!(!indicators.has_drafts_outside(other, None));
+    }
+
+    #[test]
+    fn sole_active_draft_does_not_offer_filter() {
+        let owner = Keys::generate().public_key();
+        let mut indicators = DraftIndicators::default();
+        indicators.values.insert((owner, 1), true);
+        assert!(!indicators.has_drafts_outside(owner, Some(1)));
+        assert!(indicators.has_drafts_outside(owner, Some(2)));
+        assert!(indicators.has_drafts_outside(owner, None));
+        indicators.values.insert((owner, 2), true);
+        assert!(indicators.has_drafts_outside(owner, Some(1)));
+        indicators.values.insert((owner, 2), false);
+        assert!(!indicators.has_drafts_outside(owner, Some(1)));
     }
 
     #[test]
@@ -175,8 +189,8 @@ impl DraftIndicators {
         cx.global::<GlobalDraftIndicators>().0.clone()
     }
 
-    pub fn has_any_drafts(&self, owner: PublicKey) -> bool {
-        self.values.iter().any(|((account, _), present)| *account == owner && *present)
+    pub fn has_drafts_outside(&self, owner: PublicKey, active_room: Option<u64>) -> bool {
+        self.values.iter().any(|((account, room), present)| *account == owner && Some(*room) != active_room && *present)
     }
 
     pub fn has_draft(&self, owner: PublicKey, room: u64) -> bool {

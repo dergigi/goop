@@ -158,6 +158,7 @@ impl Workspace {
         subscriptions.push(cx.observe(&nostr, |_, _, cx| cx.notify()));
         subscriptions.push(cx.subscribe_in(&dock, window, |_, _, event, window, cx| {
             if matches!(event, DockEvent::LayoutChanged) {
+                cx.notify();
                 // Wait until close/drag/close-all has finished changing the live tree.
                 cx.defer_in(window, |this, window, cx| {
                     if this.dock.read(cx).center_is_empty(cx) {
@@ -760,6 +761,8 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_room = self.active_chat_panel(window, cx).and_then(|panel| panel.read(cx).room());
+        let active_room_id = active_room.as_ref().map(|room| room.read(cx).id);
+        self.sidebar.update(cx, |sidebar, cx| sidebar.set_active_room(active_room_id, cx));
         let chat_actions_available = active_room.is_some() && !Root::read(window, cx).has_active_modals();
         let gallery_available = chat_actions_available && self.active_chat_panel(window, cx).is_some_and(|panel| panel.read(cx).has_gallery_images(cx));
         let group_active = active_room.is_some_and(|room| room.read(cx).is_group());

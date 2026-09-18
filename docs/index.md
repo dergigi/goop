@@ -74,7 +74,7 @@ On Linux, Goop uses the desktop credential service. Sandboxed installations pref
 
 Goop saves composer text and reply targets locally for each account and chat. Close a chat or quit Goop, then reopen it to continue writing. Escape leaves your draft intact.
 
-A pencil replaces the timestamp for chats with drafts. When you have any drafts, a pencil filter appears beside the bot filter. Click it to show drafts in the current list; click again to show all chats. The draft, bot, and non-bot filters are mutually exclusive.
+A pencil replaces the timestamp for chats with drafts. When you have drafts outside the chat you are viewing, a pencil filter appears beside the bot filter. Click it to show drafts in the current list; click again to show all chats. The draft, bot, and non-bot filters are mutually exclusive.
 
 Sending clears the submitted draft only after the outgoing queue has saved it. If saving fails, the text stays in the composer. Edits made while a send is being saved are preserved. Draft attachment uploads are not restored after restarting.
 
