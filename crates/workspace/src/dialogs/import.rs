@@ -74,6 +74,10 @@ impl ImportIdentity {
         }
     }
 
+    pub(crate) fn pairing_approved(&self, cx: &gpui::App) -> bool {
+        self.pairing.as_ref().is_some_and(|pairing| pairing.read(cx).is_approved())
+    }
+
     fn stop_pairing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(pairing) = self.pairing.take() {
             pairing.update(cx, |pairing, cx| pairing.stop(window, cx));
@@ -125,14 +129,17 @@ impl ImportIdentity {
     }
 
     fn login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.loading || self.pairing.is_some() { return; }
+        if self.loading { return; }
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if self.scanner.is_some() { return; }
         let value = self.key_input.read(cx).value();
         self.error.update(cx, |error, cx| { *error = None; cx.notify(); });
         self.set_loading(true, cx);
         match NostrConnectUri::parse(value.trim()) {
-            Ok(uri @ NostrConnectUri::Bunker { .. }) => self.bunker(uri, window, cx),
+            Ok(uri @ NostrConnectUri::Bunker { .. }) => {
+                self.stop_pairing(window, cx);
+                self.bunker(uri, window, cx);
+            },
             _ => self.set_error(
                 "Enter a bunker:// connection from your signer application",
                 cx,
@@ -206,7 +213,6 @@ impl Render for ImportIdentity {
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.show_bunker = !this.show_bunker;
                     if this.show_bunker {
-                        this.stop_pairing(window, cx);
                         this.key_input.update(cx, |input, cx| input.focus(window, cx));
                     } else {
                         this.pair(window, cx);

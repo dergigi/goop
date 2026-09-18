@@ -131,6 +131,8 @@ pub struct Workspace {
     /// App's Dock Area
     dock: Entity<DockArea>,
     pending_profile_search: Option<u64>,
+    identity_dialog: Option<gpui::WeakEntity<ImportIdentity>>,
+    identity_transition: Option<gpui::Task<()>>,
 
     /// App's Image Cache
     image_cache: Entity<GoopImageCache>,
@@ -187,9 +189,24 @@ impl Workspace {
                 match event {
                     StateEvent::SignerChanged => {
                         this.dock.update(cx, |dock, _| dock.clear_closed_panels());
-                        window.close_all_modals(cx);
+                        if let Some(dialog) = this.identity_dialog.clone().filter(|dialog| {
+                            dialog.upgrade().is_some_and(|dialog| dialog.read(cx).pairing_approved(cx))
+                        }) {
+                            // Loading starts on SignerChanged; only the modal waits for the checkmark.
+                            this.identity_transition = Some(cx.spawn_in(window, async move |_, cx| {
+                                smol::Timer::after(std::time::Duration::from_millis(650)).await;
+                                let _ = cx.update(|window, cx| {
+                                    if dialog.upgrade().is_some() {
+                                        window.close_all_modals(cx);
+                                    }
+                                });
+                            }));
+                        } else {
+                            window.close_all_modals(cx);
+                        }
                     }
                     StateEvent::NoSigner => {
+                        this.identity_transition = None;
                         window.close_all_modals(cx);
                         DockArea::close_all(&this.dock, window, cx);
                         this.dock.update(cx, |dock, _| dock.clear_closed_panels());
@@ -299,6 +316,8 @@ impl Workspace {
             connection_status,
             dock,
             pending_profile_search: None,
+            identity_dialog: None,
+            identity_transition: None,
             image_cache,
             _subscriptions: subscriptions,
         }
@@ -559,14 +578,16 @@ impl Workspace {
     }
 
     fn import_identity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.identity_transition = None;
         let import = cx.new(|cx| ImportIdentity::new(window, cx));
+        self.identity_dialog = Some(import.downgrade());
 
         window.open_modal(cx, move |this, _window, _cx| {
             this.width(px(450.))
                 .show_close(false)
                 .overlay_closable(false)
                 .keyboard(false)
-                .title("Connect your signer")
+                .title("Connect your nostr identity")
                 .child(import.clone())
         });
     }

@@ -10,7 +10,7 @@ use futures::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, ClipboardItem, Context, EventEmitter, FocusHandle, InteractiveElement,
+    Animation, AnimationExt, App, ClipboardItem, Context, EventEmitter, FocusHandle, InteractiveElement,
     IntoElement, ParentElement, Render, RenderImage, Styled, Subscription, Task, Window, div, img,
     px,
 };
@@ -19,7 +19,7 @@ use qrcode::{Color, QrCode};
 use state::{GoopAuthUrlHandler, NOSTR_CONNECT_RELAY, NostrRegistry, USER_KEYRING};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
-use ui::{IconName, Sizable, h_flex, v_flex};
+use ui::{Icon, IconName, Sizable, h_flex, v_flex};
 
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -137,6 +137,8 @@ impl PairSigner {
         }
     }
 
+    pub(super) fn is_approved(&self) -> bool { self.saving }
+
     fn clear_image(&mut self, window: &mut Window) {
         if let Some(image) = self.image.take() {
             let _ = window.drop_image(image);
@@ -252,7 +254,10 @@ impl Render for PairSigner {
                 .when_some(self.link.clone(), |row, link| row.child(
                     Button::new("copy-pairing-link").icon(IconName::Copy).xsmall().ghost()
                         .tooltip("Copy pairing link")
-                        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))))))
+                        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))))
+                    .child(Button::new("refresh-pairing-link").icon(IconName::Refresh).xsmall().ghost()
+                        .tooltip("Generate a new pairing code")
+                        .on_click(cx.listener(|this, _, window, cx| this.start(window, cx))))))
             .child(v_flex().w(side).h(side).flex_shrink_0().items_center().justify_center().gap_2()
                 .when_some(self.image.clone(), |view, image| view.child(img(image).w(side).h(side)))
                 .when(self.error.is_some(), |view| view
@@ -260,7 +265,14 @@ impl Render for PairSigner {
                         .tooltip("Generate a new pairing code")
                         .on_click(cx.listener(|this, _, window, cx| this.start(window, cx))))
                     .when(self.expired, |view| view.child(div().text_xs().text_color(cx.theme().text_muted).child("Code expired"))))
-                .when(self.image.is_none() && self.error.is_none(), |view| view.child(ui::indicator::Indicator::new())))
+                .when(self.saving, |view| view
+                    .child(div().text_color(cx.theme().text_accent)
+                        .child(Icon::new(IconName::CheckCircle).size(px(64.)))
+                        .with_animation("pairing-approved", Animation::new(Duration::from_millis(350)),
+                            |view, progress| view.opacity(progress)))
+                    .child(div().text_sm().child("Signer approved"))
+                    .child(ui::indicator::Indicator::new()))
+                .when(self.image.is_none() && self.error.is_none() && !self.saving, |view| view.child(ui::indicator::Indicator::new())))
             .when_some(self.error.clone().filter(|_| !self.expired), |view, error| view.child(
                 div().text_sm().text_color(cx.theme().text_warning).child(error)))
     }
