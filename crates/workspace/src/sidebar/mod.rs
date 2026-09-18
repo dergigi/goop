@@ -17,8 +17,8 @@ use ui::scroll::Scrollbar;
 use ui::menu::{DropdownMenu, ContextMenuExt};
 use ui::{WindowExtension, IconName, Selectable, Sizable, StyledExt, h_flex, v_flex};
 pub(crate) mod entry;
-mod audience;
-use audience::Audience;
+mod list_filter;
+use list_filter::ChatFilter;
 
 #[derive(gpui::Action, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[action(namespace = sidebar, no_json)]
@@ -62,7 +62,7 @@ pub struct Sidebar {
     filter: Entity<RoomKind>,
     draft_indicators: Entity<chat_ui::DraftIndicators>,
     show_blocked: bool,
-    audience: Audience,
+    list_filter: ChatFilter,
     blocked_users: Entity<crate::panels::blocked_users::BlockedUsers>,
     request_badge: RequestBadge,
     _subscriptions: Vec<Subscription>,
@@ -88,7 +88,7 @@ impl Sidebar {
             draft_indicators,
             filter: cx.new(|_| RoomKind::Ongoing),
             show_blocked: false,
-            audience: Audience::All,
+            list_filter: ChatFilter::All,
             blocked_users: crate::panels::blocked_users::init(cx),
             request_badge: RequestBadge::default(),
             _subscriptions: subscriptions,
@@ -201,14 +201,16 @@ impl Sidebar {
     fn filtered_rooms(&self, kind: &RoomKind, cx: &App) -> Vec<Entity<Room>> {
         ChatRegistry::global(cx).read(cx).rooms(kind, cx).into_iter()
             .filter(|room| {
-                if self.audience == Audience::All { return true; }
+                if self.list_filter == ChatFilter::All { return true; }
                 let room = room.read(cx);
-                !room.is_group() && self.audience.matches(false, room.display_member(cx).self_identifies_as_bot())
+                let has_draft = NostrRegistry::global(cx).read(cx).current_user()
+                    .is_some_and(|owner| self.draft_indicators.read(cx).has_draft(owner, room.id));
+                self.list_filter.matches(room.is_group(), room.display_member(cx).self_identifies_as_bot(), has_draft)
             }).collect()
     }
 
-    fn toggle_audience(&mut self, audience: Audience, window: &mut Window, cx: &mut Context<Self>) {
-        self.audience = self.audience.toggle(audience);
+    fn toggle_list_filter(&mut self, list_filter: ChatFilter, window: &mut Window, cx: &mut Context<Self>) {
+        self.list_filter = self.list_filter.toggle(list_filter);
         self.scroll_handle.scroll_to_item(0, gpui::ScrollStrategy::Top);
         window.focus(&self.focus_handle, cx);
         cx.notify();
@@ -270,14 +272,21 @@ impl Sidebar {
                             .text_sm().text_color(cx.theme().text_muted)
                             .child(group.label())
                             .when(range.start + ix == 0, |heading| heading.child(h_flex().gap_0p5()
+                                .when(NostrRegistry::global(cx).read(cx).current_user()
+                                    .is_some_and(|owner| self.draft_indicators.read(cx).has_any_drafts(owner)), |filters| filters.child(
+                                    Button::new("filter-drafts").icon(IconName::Pencil)
+                                        .xsmall().ghost().selected(self.list_filter == ChatFilter::Drafts)
+                                        .tooltip(if self.list_filter == ChatFilter::Drafts { "Show all chats" } else { "Show drafts" })
+                                        .on_click(cx.listener(|this, _, window, cx| this.toggle_list_filter(ChatFilter::Drafts, window, cx)))
+                                ))
                                 .child(Button::new("filter-bots").icon(IconName::Robot)
-                                    .xsmall().ghost().selected(self.audience == Audience::Bots)
-                                    .tooltip(if self.audience == Audience::Bots { "Show all chats" } else { "Show bots" })
-                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_audience(Audience::Bots, window, cx))))
+                                    .xsmall().ghost().selected(self.list_filter == ChatFilter::Bots)
+                                    .tooltip(if self.list_filter == ChatFilter::Bots { "Show all chats" } else { "Show bots" })
+                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_list_filter(ChatFilter::Bots, window, cx))))
                                 .child(Button::new("filter-people").icon(IconName::User)
-                                    .xsmall().ghost().selected(self.audience == Audience::People)
-                                    .tooltip(if self.audience == Audience::People { "Show all chats" } else { "Show non-bots" })
-                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_audience(Audience::People, window, cx))))
+                                    .xsmall().ghost().selected(self.list_filter == ChatFilter::People)
+                                    .tooltip(if self.list_filter == ChatFilter::People { "Show all chats" } else { "Show non-bots" })
+                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_list_filter(ChatFilter::People, window, cx))))
                                 .child(Button::new("chat-list-menu").icon(IconName::EllipsisVertical)
                                     .xsmall().ghost().tooltip("Chat list actions")
                                     .dropdown_menu(move |menu, _, _| {
@@ -289,7 +298,7 @@ impl Sidebar {
                     SidebarRow::Chat(item) => item,
                     SidebarRow::Empty => return h_flex().h_9().w_full().px_2()
                         .text_sm().text_color(cx.theme().text_muted)
-                        .child(self.audience.empty_message()).into_any_element(),
+                        .child(self.list_filter.empty_message()).into_any_element(),
                 };
                 let room = item.read(cx);
                 let room_clone = item.clone();
@@ -404,7 +413,11 @@ impl Render for Sidebar {
         let nostr = NostrRegistry::global(cx);
         let chat = ChatRegistry::global(cx);
         let owner = nostr.read(cx).current_user();
-        if self.request_badge.owner != owner { self.audience = Audience::All; }
+        if self.request_badge.owner != owner
+            || (self.list_filter == ChatFilter::Drafts && !owner.is_some_and(|owner| self.draft_indicators.read(cx).has_any_drafts(owner)))
+        {
+            self.list_filter = ChatFilter::All;
+        }
 
         let requests: Vec<_> = chat.read(cx).rooms(&RoomKind::Request, cx)
             .iter().map(|room| room.read(cx).id).collect();

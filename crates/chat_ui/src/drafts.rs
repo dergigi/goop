@@ -78,6 +78,8 @@ mod tests {
         assert!(indicators.has_draft(owner, 2));
         assert!(indicators.has_draft(owner, 3));
         assert!(!indicators.has_draft(other, 3));
+        assert!(indicators.has_any_drafts(owner));
+        assert!(!indicators.has_any_drafts(other));
     }
 
     #[test]
@@ -171,6 +173,10 @@ impl DraftIndicators {
             cx.set_global(GlobalDraftIndicators(indicators));
         }
         cx.global::<GlobalDraftIndicators>().0.clone()
+    }
+
+    pub fn has_any_drafts(&self, owner: PublicKey) -> bool {
+        self.values.iter().any(|((account, _), present)| *account == owner && *present)
     }
 
     pub fn has_draft(&self, owner: PublicKey, room: u64) -> bool {
