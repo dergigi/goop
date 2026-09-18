@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'packaging/aur/**'
+      - 'script/test-arch-desktop.py'
       - '.github/workflows/aur.yml'
 permissions:
   contents: read
@@ -13,7 +14,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install test tools
-        run: pacman -Syu --noconfirm --needed git patchelf namcap desktop-file-utils alsa-lib libxcb libxkbcommon libxkbcommon-x11 vulkan-icd-loader wayland vulkan-swrast xorg-server-xvfb xorg-xauth xdotool dbus hicolor-icon-theme weston
+        run: pacman -Syu --noconfirm --needed git patchelf imagemagick python-gobject gtk3 xorg-xprop namcap desktop-file-utils alsa-lib libxcb libxkbcommon libxkbcommon-x11 vulkan-icd-loader wayland vulkan-swrast xorg-server-xvfb xorg-xauth xdotool dbus hicolor-icon-theme weston
       - uses: actions/checkout@v4
       - name: Build and install package
         run: |
@@ -26,7 +27,9 @@ jobs:
           pacman -U --noconfirm goop-bin-*.pkg.tar.zst
           ldd /usr/lib/goop/goop | tee dependencies.log
           ! grep -q 'not found' dependencies.log
-          desktop-file-validate /usr/share/applications/goop.desktop
+          desktop-file-validate /usr/share/applications/com.dergigi.goop.desktop
+          test ! -e /usr/share/applications/goop.desktop
+          xvfb-run -a python script/test-arch-desktop.py
           namcap PKGBUILD goop-bin-*.pkg.tar.zst | tee namcap.log
           ! grep -q ' E: ' namcap.log
       - name: Launch with software graphics
@@ -39,7 +42,9 @@ jobs:
             trap "kill $app_pid 2>/dev/null || true" EXIT
             sleep 10
             kill -0 "$app_pid"
-            xdotool search --onlyvisible --name Goop
+            window_id=$(xdotool search --onlyvisible --name Goop | head -n 1)
+            xprop -id "$window_id" WM_CLASS | tee /tmp/goop-aur/window-class.log
+            grep -q com.dergigi.goop /tmp/goop-aur/window-class.log
           '
       - name: Launch on nested Wayland
         run: |
@@ -52,11 +57,12 @@ jobs:
             trap "kill $compositor_pid 2>/dev/null || true" EXIT
             for n in $(seq 1 30); do test -S "$XDG_RUNTIME_DIR/goop-test" && break; sleep 1; done
             test -S "$XDG_RUNTIME_DIR/goop-test"
-            env -u DISPLAY goop > /tmp/goop-aur/wayland-startup.log 2>&1 &
+            env -u DISPLAY WAYLAND_DEBUG=1 goop > /tmp/goop-aur/wayland-startup.log 2>&1 &
             app_pid=$!
             trap "kill $app_pid $compositor_pid 2>/dev/null || true" EXIT
             sleep 10
             kill -0 "$app_pid"
+            grep -q '"'"'set_app_id("com.dergigi.goop")'"'"' /tmp/goop-aur/wayland-startup.log
           '
       - uses: actions/upload-artifact@v4
         if: always()
