@@ -429,7 +429,10 @@ impl OutgoingQueue {
 }
 
 fn preparation_error(error: &anyhow::Error) -> String {
-    if SignerFailure::classify(error.as_ref()).requires_retry() {
+    let failure = SignerFailure::classify(error.as_ref());
+    if failure == SignerFailure::Timeout {
+        "Your signer did not respond in time. Goop will retry automatically. Open your signer and approve the request when prompted.".into()
+    } else if failure.requires_retry() {
         format!("The signer did not complete the request. Sending stopped. Check your signer, then retry. Details: {error:#}")
     } else {
         format!("Could not prepare the encrypted message; Goop will retry. Details: {error:#}")
@@ -570,6 +573,23 @@ mod tests {
             .chain([Destination::new(owner.public_key(), true)])
             .collect();
         OutgoingMessage::new(owner.public_key(), rumor, destinations).unwrap()
+    }
+
+    #[test]
+    fn preparation_timeouts_identify_signer_and_automatic_retry() {
+        for error in [
+            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::TimedOut)),
+            anyhow::Error::new(SignerFailure::Timeout).context("Preparing recipient copy"),
+        ] {
+            let reason = preparation_error(&error);
+            assert!(reason.contains("Your signer did not respond in time"));
+            assert!(reason.contains("Goop will retry automatically"));
+            assert!(reason.contains("approve the request when prompted"));
+            assert!(!SignerFailure::classify(error.as_ref()).requires_retry());
+        }
+        let unrelated = preparation_error(&anyhow::anyhow!("Invalid recipient"));
+        assert!(!unrelated.contains("Your signer did not respond"));
+        assert!(unrelated.contains("Invalid recipient"));
     }
 
     #[test]
