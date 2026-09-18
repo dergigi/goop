@@ -1,4 +1,21 @@
+use gpui::{Animation, AnimationExt, IntoElement, Transformation, percentage};
+use ui::{Icon, IconName, Sizable};
+
 use chat::SendReport;
+
+/// Hold still, then turn halfway around. The symmetric outline avoids a jump
+/// when the three-second animation repeats.
+pub(super) fn queued_hourglass() -> impl IntoElement {
+    Icon::new(IconName::Hourglass).xsmall().with_animation(
+        "queued-hourglass",
+        Animation::new(std::time::Duration::from_secs(3)).repeat(),
+        |icon, progress| {
+            let turn = ((progress - 0.85) / 0.15).clamp(0.0, 1.0);
+            let eased = turn * turn * (3.0 - 2.0 * turn);
+            icon.transform(Transformation::rotate(percentage(eased * 0.5)))
+        },
+    )
+}
 
 /// Relay acknowledgement only; this is not a read or device receipt.
 pub(super) fn delivery_checks(reports: &[SendReport]) -> usize {

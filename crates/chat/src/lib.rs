@@ -49,6 +49,9 @@ static LOCAL_KEYS: LazyLock<Keys> = LazyLock::new(Keys::generate);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryOperation { Resume, Rescan, ScanOtherRelays }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutgoingPhase { Preparing, Sending }
+
 pub fn init(window: &mut Window, cx: &mut App) {
     ChatRegistry::set_global(cx.new(|cx| ChatRegistry::new(window, cx)), cx);
 }
@@ -86,6 +89,7 @@ enum Signal {
     OutgoingError(String),
     OutgoingRecovered,
     OutgoingRetryFinished,
+    OutgoingActivity(Option<(EventId, OutgoingPhase)>),
 }
 
 /// Structured progress for views that lay out counters independently.
@@ -145,6 +149,7 @@ pub struct ChatRegistry {
     room_reload: room_loader::ReloadState,
     room_load_task: Option<Task<Result<(), Error>>>,
     outgoing_reports: HashMap<EventId, Vec<SendReport>>,
+    outgoing_activity: Option<(EventId, OutgoingPhase)>,
     outgoing_error: Option<String>,
 
     /// Channel for sending signals to the UI.
@@ -263,6 +268,7 @@ impl ChatRegistry {
             room_reload: room_loader::ReloadState::default(),
             room_load_task: None,
             outgoing_reports: HashMap::new(),
+            outgoing_activity: None,
             outgoing_error: None,
             matcher: CachedMatcher(SkimMatcherV2::default()),
             signal_rx: rx,
@@ -380,6 +386,7 @@ impl ChatRegistry {
                         }
                         Signal::OutgoingRecovered => this.outgoing_error = None,
                         Signal::OutgoingRetryFinished => {},
+                        Signal::OutgoingActivity(activity) => this.outgoing_activity = activity,
                         Signal::History(relay, progress) => {
                             this.history.insert(relay, progress);
                         }
@@ -470,6 +477,10 @@ impl ChatRegistry {
     }
     pub fn search_messages(&self, room: u64) -> Vec<Arc<SearchMessage>> {
         self.incoming.as_ref().map(|cache| cache.search_messages(room).into_iter().filter(|message| !self.is_blocked(message.author)).collect()).unwrap_or_default()
+    }
+
+    pub fn outgoing_phase(&self, id: EventId) -> Option<OutgoingPhase> {
+        self.outgoing_activity.filter(|(active, _)| *active == id).map(|(_, phase)| phase)
     }
 
     pub fn outgoing_reports(&self, id: &EventId) -> Option<Vec<SendReport>> {
@@ -1157,6 +1168,7 @@ impl ChatRegistry {
         self.contacts.clear();
         self.classification_ready = false;
         self.outgoing_reports.clear();
+        self.outgoing_activity = None;
         self.outgoing_error = None;
         self.notification_listener = None;
         self.signal_consumer = None;

@@ -215,7 +215,7 @@ Click the live status beside your avatar or the connection-status icon immediate
 - **Relay disconnected or authentication failed:** check the named relay and signer. **Reconnect messaging relays** retries connections; **Manage messaging relays** opens your relay configuration.
 - **History incomplete:** **Resume history** continues from saved checkpoints. The compact Message History menu offers a full rescan and a broader relay search; both are also available in Connection Status.
 - **Decryption failures:** **Retry decryption** retries failed messages. Previously declined requests resume only when you explicitly retry.
-- **Outgoing messages:** delayed sends retry automatically; paused sends require **Retry pending sends**. Counts include your own encrypted copy. A relay accepting a message is not a read receipt.
+- **Outgoing messages:** an hourglass marks queued messages or signer preparation; a spinner marks relay delivery. Click the status to inspect delivery details or open Connection status. Delayed sends retry automatically; paused sends require **Retry pending sends**. Counts include your own encrypted copy. A relay accepting a message is not a read receipt.
 
 **Copy status** copies the displayed diagnostic text, without message bodies or secret keys. It can include relay URLs and error details. Authentication results are shown when observed during this session; a connected socket alone does not establish successful authentication or delivery. A completed history scan only covers what its relays retain.
 

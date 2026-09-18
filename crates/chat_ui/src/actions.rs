@@ -17,3 +17,7 @@ pub enum Command {
     Trace(EventId),
     Rebroadcast(EventId),
 }
+
+#[derive(Action, Clone, Default, PartialEq, Eq, Deserialize)]
+#[action(namespace = chat, no_json)]
+pub struct ShowConnectionStatus;

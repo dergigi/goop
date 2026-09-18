@@ -774,6 +774,9 @@ impl Render for Workspace {
             .key_context("Workspace")
             .on_modifiers_changed(|_, window, _| window.refresh())
             .on_action(cx.listener(Self::on_command))
+            .on_action(cx.listener(|this, _: &chat_ui::ShowConnectionStatus, window, cx| {
+                this.on_command(&Command::ShowConnectionStatus, window, cx);
+            }))
             .when(gallery_available, |view| view.on_action(cx.listener(|this, _: &ShowGallery, window, cx| {
                 if let Some(panel) = this.active_chat_panel(window, cx) {
                     panel.update(cx, |chat, cx| chat.open_gallery(None, window, cx));

@@ -9,6 +9,7 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Added
 
+- Replace inline queued labels with a periodically flipping hourglass, and show a spinner during relay delivery. Add a secondary Connection status button to the delivery dialog.
 - Show right-aligned progress spinners on connection-status recovery actions while their work is running.
 - Show a spinner and “Retrying…” in the delivery dialog while a requested retry is queued or running, and prevent duplicate clicks.
 - Add a pencil filter beside the bot filter when the current account has drafts outside the active chat. Select it to show chats with drafts, including groups.

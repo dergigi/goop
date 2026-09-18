@@ -1379,15 +1379,12 @@ impl ChatPanel {
             .as_ref()
             .is_some_and(|reports| !reports.is_empty() && reports.iter().any(|r| r.success()));
 
-        let failed = reports
-            .as_ref()
-            .is_some_and(|reports| !reports.is_empty() && reports.iter().all(|r| r.failed()));
-
         let paused = reports
             .as_ref()
             .is_some_and(|reports| reports.iter().any(|r| r.paused));
         let checks = reports.as_ref().map(|reports| delivery_status::delivery_checks(reports)).unwrap_or(0);
-        let attention = reports.as_deref().is_some_and(delivery_status::needs_attention);
+        let phase = ChatRegistry::global(cx).read(cx).outgoing_phase(message_id);
+        let attention = phase.is_none() && reports.as_deref().is_some_and(delivery_status::needs_attention);
         let detail = reports.as_ref().and_then(|reports| reports.iter()
             .find(|r| r.paused || r.failed()).and_then(|r| r.error.clone()))
             .unwrap_or_else(|| if paused {
@@ -1395,20 +1392,11 @@ impl ChatPanel {
             } else {
                 "Delivery failed. Click for details, or retry this message.".into()
             });
-        let label = if attention || checks == 2 {
-            None
-        } else if success && pending {
-            Some("· queued")
-        } else if success {
-            None
-        } else if failed && pending {
-            Some("• Queued for retry")
-        } else if failed {
-            Some("• Error")
-        } else if pending {
-            Some("• Queued")
-        } else {
-            Some("• Unknown")
+        let show_progress = !attention && checks < 2 && (pending || phase.is_some());
+        let progress_label = match phase {
+            Some(chat::OutgoingPhase::Preparing) => "Preparing message. Your signer may need approval.",
+            Some(chat::OutgoingPhase::Sending) => "Sending to relays",
+            None => "Queued to send",
         };
 
         h_flex()
@@ -1433,7 +1421,15 @@ impl ChatPanel {
                             }
                         }))
             })
-            .when_some(label, |this, label| this.child(label))
+            .when(show_progress, |this| this.child(
+                div().id("delivery-progress").flex().items_center().text_color(cx.theme().text_muted)
+                    .tooltip(move |window, cx| ui::tooltip::Tooltip::new(progress_label, window, cx).into())
+                    .child(if phase == Some(chat::OutgoingPhase::Sending) {
+                        ui::indicator::Indicator::new().xsmall().into_any_element()
+                    } else {
+                        delivery_status::queued_hourglass().into_any_element()
+                    })
+            ))
             .when_some(reports, |this, reports| {
                 this.when(true, |this| {
                     this.on_click(move |_e, window, cx| {
@@ -1454,9 +1450,17 @@ impl ChatPanel {
                                 let retrying = ChatRegistry::global(cx).read(cx).retrying_outgoing();
                                 this.title(SharedString::from("Delivery status"))
                                     .show_close(true)
-                                    .when(retryable || retrying, |this| {
-                                        this.footer(move |_, _, _, _| {
-                                            vec![Button::new("retry-outgoing")
+                                    .footer(move |_, _, _, _| {
+                                        let mut buttons = vec![Button::new("delivery-connection-status")
+                                            .label("Connection status").icon(IconName::Activity).secondary()
+                                            .on_click(|_, window, cx| {
+                                                window.close_modal(cx);
+                                                window.defer(cx, |window, cx| {
+                                                    window.dispatch_action(Box::new(ShowConnectionStatus), cx);
+                                                });
+                                            })];
+                                        if retryable || retrying {
+                                            buttons.push(Button::new("retry-outgoing")
                                                 .label(if retrying { "Retrying…" } else { "Retry pending sends" })
                                                 .loading(retrying)
                                                 .on_click(|_, window, cx| {
@@ -1464,8 +1468,9 @@ impl ChatPanel {
                                                         window.push_notification(Notification::error("Connect your signer before retrying messages."), cx);
                                                     }
                                                     window.refresh();
-                                                })]
-                                        })
+                                                }));
+                                        }
+                                        buttons
                                     })
                                     .child(v_flex().gap_4()
                                         .children(reports.iter().map(|report| Self::render_report(report, cx)))

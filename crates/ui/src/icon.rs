@@ -58,6 +58,7 @@ pub enum IconName {
     Input,
     Keyboard,
     History,
+    Hourglass,
     Help,
     Info,
     Invite,
@@ -116,6 +117,7 @@ impl IconName {
 impl IconNamed for IconName {
     fn path(self) -> SharedString {
         match self {
+            Self::Hourglass => "icons/hourglass.svg",
             Self::Pencil => "icons/pencil.svg",
             Self::ArrowLeft => "icons/arrow-left.svg",
             Self::ArrowRight => "icons/arrow-right.svg",

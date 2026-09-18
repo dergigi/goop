@@ -12,7 +12,7 @@ use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use state::{SignerFailure, UniversalSigner};
 
-use super::{SendReport, Signal};
+use super::{OutgoingPhase, SendReport, Signal};
 use common::EventExt;
 
 const STORE_TAG: &str = "goop-outgoing-v1";
@@ -349,7 +349,9 @@ impl OutgoingQueue {
         self.ensure_active()?;
         let resume = self.resume_requested.swap(false, Ordering::SeqCst);
         self.retry_running.store(resume, Ordering::SeqCst);
-        let result = self.process_messages(signer, signals, announced, resume).await;
+        let mut active = false;
+        let result = self.process_messages(signer, signals, announced, resume, &mut active).await;
+        if active { signals.send_async(Signal::OutgoingActivity(None)).await?; }
         self.retry_running.store(false, Ordering::SeqCst);
         if resume {
             signals.send_async(Signal::OutgoingRetryFinished).await?;
@@ -363,6 +365,7 @@ impl OutgoingQueue {
         signals: &flume::Sender<Signal>,
         announced: &mut BTreeMap<EventId, u64>,
         resume: bool,
+        active: &mut bool,
     ) -> Result<()> {
         for mut message in load(&self.root, self.owner).await? {
             if message.uses_removed_encryption() {
@@ -405,6 +408,8 @@ impl OutgoingQueue {
                 }
                 self.ensure_active()?;
                 if message.destinations[index].wrap.is_none() {
+                    *active = true;
+                    signals.send_async(Signal::OutgoingActivity(Some((message.id(), OutgoingPhase::Preparing)))).await?;
                     let result =
                         async_utility::time::timeout(Some(Duration::from_secs(30)), async {
                             let signing_owner = signer.get_public_key_async().await?;
@@ -435,6 +440,8 @@ impl OutgoingQueue {
                 }
                 if message.destinations[index].wrap.is_some() {
                     self.ensure_active()?;
+                    *active = true;
+                    signals.send_async(Signal::OutgoingActivity(Some((message.id(), OutgoingPhase::Sending)))).await?;
                     publish(&self.client, &mut message.destinations[index]).await;
                     save(&self.root, &mut message).await?;
                 }
@@ -442,6 +449,8 @@ impl OutgoingQueue {
                     .send_async(Signal::Outgoing(message.clone()))
                     .await?;
                 announced.insert(message.id(), message.revision);
+                signals.send_async(Signal::OutgoingActivity(None)).await?;
+                *active = false;
                 if message.paused {
                     break;
                 }
@@ -744,7 +753,7 @@ mod tests {
             let message = message(&owner, &[bob.public_key(), carol.public_key()]);
             let rumor_id = message.id();
             first.enqueue(message).await.unwrap();
-            let (signals, _rx) = flume::unbounded();
+            let (signals, activity_rx) = flume::unbounded();
             first
                 .process(
                     &UniversalSigner::new(owner.clone()),
@@ -753,6 +762,13 @@ mod tests {
                 )
                 .await
                 .unwrap();
+            let activity: Vec<_> = activity_rx.try_iter().filter_map(|signal| match signal {
+                Signal::OutgoingActivity(phase) => Some(phase),
+                _ => None,
+            }).collect();
+            assert!(activity.contains(&Some((rumor_id, OutgoingPhase::Preparing))));
+            assert!(activity.contains(&Some((rumor_id, OutgoingPhase::Sending))));
+            assert_eq!(activity.last(), Some(&None));
             let saved = load(dir.path(), owner.public_key())
                 .await
                 .unwrap()
@@ -1165,7 +1181,7 @@ mod tests {
             queue.retry();
             assert!(queue.retrying());
             let worker_queue = queue.clone();
-            let (signals, _rx) = flume::unbounded();
+            let (signals, activity_rx) = flume::unbounded();
             let worker = tokio::spawn(async move {
                 worker_queue
                     .process(&signer, &signals, &mut BTreeMap::new())
@@ -1184,6 +1200,11 @@ mod tests {
                     .to_string()
                     .contains("inactive")
             );
+            let activity: Vec<_> = activity_rx.try_iter().filter_map(|signal| match signal {
+                Signal::OutgoingActivity(phase) => Some(phase),
+                _ => None,
+            }).collect();
+            assert_eq!(activity, vec![Some((original.id(), OutgoingPhase::Preparing)), None]);
             assert!(queue.enqueue(original).await.is_err());
             let retained = load(dir.path(), owner.public_key()).await.unwrap();
             assert_eq!(retained.len(), 1);
