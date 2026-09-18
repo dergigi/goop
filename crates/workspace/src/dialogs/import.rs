@@ -10,9 +10,11 @@ use state::{GoopAuthUrlHandler, NostrRegistry, USER_KEYRING};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
 use ui::input::{Input, InputEvent, InputState};
-use ui::{Disableable, StyledExt, v_flex};
+use ui::{Disableable, v_flex};
+use ui::scroll::ScrollableElement;
 
 pub struct ImportIdentity {
+    show_bunker: bool,
     pairing: Option<Entity<super::pair_signer::PairSigner>>,
     pairing_subscription: Option<Subscription>,
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -43,12 +45,15 @@ impl ImportIdentity {
 
         let input_subscription =
             cx.subscribe_in(&key_input, window, |this, _input, event, window, cx| {
+                if matches!(event, InputEvent::Change) { cx.notify(); }
                 if let InputEvent::PressEnter { .. } = event {
                     this.login(window, cx);
                 };
             });
 
+        cx.defer_in(window, |this, window, cx| this.pair(window, cx));
         Self {
+            show_bunker: false,
             pairing: None,
             pairing_subscription: None,
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -69,18 +74,31 @@ impl ImportIdentity {
         }
     }
 
+    fn stop_pairing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pairing) = self.pairing.take() {
+            pairing.update(cx, |pairing, cx| pairing.stop(window, cx));
+        }
+        self.pairing_subscription = None;
+    }
+
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     fn scan(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.loading || self.scanner.is_some() { return; }
+        self.stop_pairing(window, cx);
         let scanner = cx.new(|cx| super::qr_scanner::QrScanner::new(window,cx));
         self.scan_subscription = Some(cx.subscribe_in(&scanner,window,|this,_,event,window,cx| {
             if let super::qr_scanner::ScanEvent::Scanned(url) = event {
+                this.show_bunker = true;
                 this.key_input.update(cx,|input,cx| input.set_value(url.clone(),window,cx));
                 this.error.update(cx,|error,cx| { *error=None; cx.notify(); });
             }
             this.scanner = None;
             this.scan_subscription = None;
-            this.key_input.update(cx,|input,cx| input.focus(window,cx));
+            if this.show_bunker {
+                this.key_input.update(cx,|input,cx| input.focus(window,cx));
+            } else {
+                this.pair(window, cx);
+            }
             cx.notify();
         }));
         self.scanner = Some(scanner);
@@ -90,10 +108,16 @@ impl ImportIdentity {
     fn pair(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.loading || self.pairing.is_some() { return; }
         let pairing = cx.new(|cx| super::pair_signer::PairSigner::new(window, cx));
-        self.pairing_subscription = Some(cx.subscribe_in(&pairing, window, |this, _, _, window, cx| {
-            this.pairing = None;
-            this.pairing_subscription = None;
-            this.key_input.update(cx, |input, cx| input.focus(window, cx));
+        self.pairing_subscription = Some(cx.subscribe_in(&pairing, window, |this, _, event, window, cx| {
+            match event {
+                super::pair_signer::PairEvent::Saving(saving) => this.loading = *saving,
+                super::pair_signer::PairEvent::Cancelled => {
+                    this.pairing = None;
+                    this.pairing_subscription = None;
+                    this.show_bunker = true;
+                    this.key_input.update(cx, |input, cx| input.focus(window, cx));
+                }
+            }
             cx.notify();
         }));
         self.pairing = Some(pairing);
@@ -168,67 +192,51 @@ impl ImportIdentity {
 }
 
 impl Render for ImportIdentity {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(pairing) = &self.pairing { return pairing.clone().into_any_element(); }
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if let Some(scanner) = &self.scanner { return scanner.clone().into_any_element(); }
-        const BUNKER_WARN: &str = "Keep Goop and your signer connected while message history loads.";
-        let bunker_warning = self.key_input.read(cx).value().starts_with("bunker://");
-
-        v_flex()
-            .size_full()
-            .gap_4()
-            .text_sm()
-            .when_some(NostrRegistry::global(cx).read(cx).signer_connection_error().map(str::to_owned), |view, error| view
-                .child(div().text_color(cx.theme().text_warning).child(error))
-                .child(Button::new("retry-saved-signer").label("Retry saved connection").ghost()
-                    .on_click(|_, _, cx| NostrRegistry::global(cx).update(cx, |state, cx| state.retry_signer(cx)))))
-            .child(Button::new("connect-with-qr").label("Connect with QR code").icon(ui::IconName::Scan)
-                .primary().disabled(self.loading).on_click(cx.listener(|this, _, window, cx| this.pair(window, cx))))
-            .child(div().text_xs().text_color(cx.theme().text_muted).text_center().child("or use a bunker URL"))
-            .child(
-                v_flex()
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .text_color(cx.theme().text_muted)
-                            .child(Input::new(&self.key_input)),
-                    )
-                    .when(bunker_warning, |this| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().text_warning)
-                                .child(div().child(BUNKER_WARN)),
-                        )
-                    }),
-            )
-            .child(
-                Button::new("login")
-                    .label("Continue")
-                    .primary()
-                    .font_semibold()
+        v_flex().w_full().gap_3().text_sm()
+            .max_h((window.viewport_size().height - gpui::px(130.)).max(gpui::px(120.)))
+            .overflow_y_scrollbar()
+            .when_some(self.pairing.clone(), |view, pairing| view.child(pairing))
+            .child(Button::new("use-bunker-url")
+                .label("Use a bunker URL")
+                .icon(if self.show_bunker { ui::IconName::CaretDown } else { ui::IconName::CaretRight })
+                .ghost().align_left().w_full().disabled(self.loading)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_bunker = !this.show_bunker;
+                    if this.show_bunker {
+                        this.stop_pairing(window, cx);
+                        this.key_input.update(cx, |input, cx| input.focus(window, cx));
+                    } else {
+                        this.pair(window, cx);
+                    }
+                    cx.notify();
+                })))
+            .when(self.show_bunker, |view| view.child(v_flex().w_full().gap_3()
+                .child(Input::new(&self.key_input))
+                .child(Button::new("login").label("Connect").primary().w_full()
                     .loading(self.loading)
-                    .disabled(self.loading)
-                    .on_click(cx.listener(move |this, _ev, window, cx| {
-                        this.login(window, cx);
-                    })),
-            )
+                    .disabled(self.loading || !matches!(NostrConnectUri::parse(self.key_input.read(cx).value().trim()), Ok(NostrConnectUri::Bunker { .. })))
+                    .on_click(cx.listener(|this, _, window, cx| this.login(window, cx))))
+                .when_some(self.error.read(cx).as_ref(), |view, error| view.child(
+                    div().text_xs().text_color(cx.theme().text_danger).child(error.clone())))))
             .map(|view| {
                 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-                let view = view.child(Button::new("scan-bunker-qr").icon(ui::IconName::Scan).label("Scan bunker QR")
-                    .ghost_alt().disabled(self.loading).on_click(cx.listener(|this,_,window,cx| this.scan(window,cx))));
+                let view = view.child(Button::new("scan-bunker-qr").icon(ui::IconName::Scan).label("Scan signer QR")
+                    .ghost().align_left().w_full().disabled(self.loading)
+                    .on_click(cx.listener(|this, _, window, cx| this.scan(window, cx))));
                 view
             })
-            .when_some(self.error.read(cx).as_ref(), |this, error| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_center()
-                        .text_color(cx.theme().text_danger)
-                        .child(error.clone()),
-                )
-            }).into_any_element()
+            .when_some(NostrRegistry::global(cx).read(cx).signer_connection_error().map(str::to_owned), |view, error| view
+                .child(div().text_color(cx.theme().text_warning).child(error))
+                .child(Button::new("retry-saved-signer").label("Retry saved connection").ghost().disabled(self.loading)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.stop_pairing(window, cx);
+                        this.show_bunker = true;
+                        NostrRegistry::global(cx).update(cx, |state, cx| state.retry_signer(cx));
+                        cx.notify();
+                    }))))
+            .into_any_element()
     }
 }

@@ -19,10 +19,19 @@ use qrcode::{Color, QrCode};
 use state::{GoopAuthUrlHandler, NOSTR_CONNECT_RELAY, NostrRegistry, USER_KEYRING};
 use theme::ActiveTheme;
 use ui::button::{Button, ButtonVariants};
-use ui::scroll::ScrollableElement;
-use ui::{Disableable, IconName, Sizable, h_flex, v_flex};
+use ui::{IconName, Sizable, h_flex, v_flex};
 
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[derive(Debug)]
+struct PairingExpired;
+impl std::fmt::Display for PairingExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Pairing expired. Generate a new code.")
+    }
+}
+impl std::error::Error for PairingExpired {}
+
 
 fn invitation(keys: &Keys, relays: Vec<RelayUrl>) -> NostrConnectUri {
     let mut uri = NostrConnectUri::client(keys.public_key(), relays, "Goop");
@@ -72,13 +81,13 @@ async fn approve(
             smol::Timer::after(timeout).await;
         };
         match select(cancel.recv_async().boxed(), timer.boxed()).await {
-            Either::Left(_) => "Pairing cancelled.",
-            Either::Right(_) => "Pairing expired. Generate a new code.",
+            Either::Left(_) => anyhow!("Pairing cancelled."),
+            Either::Right(_) => anyhow!(PairingExpired),
         }
     };
     let result = match select(handshake.boxed(), interruption.boxed()).await {
         Either::Left((result, _)) => result,
-        Either::Right((reason, _)) => Err(anyhow!(reason)),
+        Either::Right((reason, _)) => Err(reason),
     };
     match result {
         Ok(bunker) => Ok((signer, bunker)),
@@ -91,6 +100,7 @@ async fn approve(
 
 pub enum PairEvent {
     Cancelled,
+    Saving(bool),
 }
 
 pub struct PairSigner {
@@ -101,6 +111,7 @@ pub struct PairSigner {
     signer: Option<NostrConnect>,
     error: Option<String>,
     saving: bool,
+    expired: bool,
     task: Option<Task<()>>,
     _release: Subscription,
 }
@@ -120,6 +131,7 @@ impl PairSigner {
             signer: None,
             error: None,
             saving: false,
+            expired: false,
             task: None,
             _release: release,
         }
@@ -131,7 +143,7 @@ impl PairSigner {
         }
     }
 
-    fn stop(&mut self, window: &mut Window, cx: &mut App) {
+    pub(super) fn stop(&mut self, window: &mut Window, cx: &mut App) {
         if let Some(cancel) = self.cancel.take() {
             let _ = cancel.try_send(());
         }
@@ -147,6 +159,7 @@ impl PairSigner {
         self.stop(window, cx);
         self.error = None;
         self.saving = false;
+        self.expired = false;
         let (cancel, cancelled) = flume::bounded(1);
         self.cancel = Some(cancel);
         let keys = NostrRegistry::global(cx).read(cx).get_master_key(cx, true);
@@ -184,6 +197,7 @@ impl PairSigner {
                         bail!("Your account changed. Start pairing again.");
                     }
                     this.saving = true;
+                    cx.emit(PairEvent::Saving(true));
                     this.clear_image(window);
                     this.link = None;
                     cx.notify();
@@ -208,6 +222,9 @@ impl PairSigner {
                             .detach();
                     }
                     this.saving = false;
+                    cx.emit(PairEvent::Saving(false));
+                    this.expired = error.is::<PairingExpired>()
+                        || state::SignerFailure::classify(error.as_ref()) == state::SignerFailure::Timeout;
                     this.error = Some(error.to_string());
                     cx.notify();
                 })
@@ -220,11 +237,8 @@ impl PairSigner {
 
 impl Render for PairSigner {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let side = (window.viewport_size().height - px(240.))
-            .min(px(280.))
-            .max(px(180.));
-        v_flex()
-            .track_focus(&self.focus)
+        let side = (window.viewport_size().height - px(300.)).min(px(260.)).max(px(160.));
+        v_flex().track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && !this.saving {
                     cx.stop_propagation();
@@ -232,77 +246,23 @@ impl Render for PairSigner {
                     cx.emit(PairEvent::Cancelled);
                 }
             }))
-            .gap_3()
-            .items_center()
-            .w_full()
-            .max_h((window.viewport_size().height - px(120.)).max(px(120.)))
-            .overflow_y_scrollbar()
-            .child(div().text_sm().child(if self.saving {
-                "Connecting…"
-            } else if self.error.is_some() {
-                "Pairing stopped"
-            } else if self.image.is_some() {
-                "Scan in your signer app"
-            } else {
-                "Preparing code…"
-            }))
-            .when_some(self.image.clone(), |view, image| {
-                view.child(img(image).w(side).h(side))
-            })
-            .when(self.image.is_some(), |view| {
-                view.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().text_muted)
-                        .child("Waiting for approval"),
-                )
-            })
-            .when_some(self.error.clone(), |view, error| {
-                view.child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().text_warning)
-                        .child(error),
-                )
-            })
-            .child(
-                h_flex()
-                    .gap_2()
-                    .when_some(self.link.clone(), |row, link| {
-                        row.child(
-                            Button::new("copy-pairing-link")
-                                .icon(IconName::Copy)
-                                .small()
-                                .ghost()
-                                .tooltip("Copy pairing link")
-                                .on_click(move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))
-                                }),
-                        )
-                    })
-                    .when(self.error.is_some(), |row| {
-                        row.child(
-                            Button::new("retry-pairing")
-                                .label("New code")
-                                .small()
-                                .primary()
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.start(window, cx)),
-                                ),
-                        )
-                    })
-                    .child(
-                        Button::new("cancel-pairing")
-                            .label("Cancel")
-                            .small()
-                            .ghost()
-                            .disabled(self.saving)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.stop(window, cx);
-                                cx.emit(PairEvent::Cancelled);
-                            })),
-                    ),
-            )
+            .gap_2().items_center().w_full()
+            .child(h_flex().gap_2().items_center()
+                .child(div().text_sm().child(if self.saving { "Connecting…" } else { "Scan with your signer" }))
+                .when_some(self.link.clone(), |row, link| row.child(
+                    Button::new("copy-pairing-link").icon(IconName::Copy).xsmall().ghost()
+                        .tooltip("Copy pairing link")
+                        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))))))
+            .child(v_flex().w(side).h(side).flex_shrink_0().items_center().justify_center().gap_2()
+                .when_some(self.image.clone(), |view, image| view.child(img(image).w(side).h(side)))
+                .when(self.error.is_some(), |view| view
+                    .child(Button::new("retry-pairing").icon(IconName::Refresh).ghost()
+                        .tooltip("Generate a new pairing code")
+                        .on_click(cx.listener(|this, _, window, cx| this.start(window, cx))))
+                    .when(self.expired, |view| view.child(div().text_xs().text_color(cx.theme().text_muted).child("Code expired"))))
+                .when(self.image.is_none() && self.error.is_none(), |view| view.child(ui::indicator::Indicator::new())))
+            .when_some(self.error.clone().filter(|_| !self.expired), |view, error| view.child(
+                div().text_sm().text_color(cx.theme().text_warning).child(error)))
     }
 }
 

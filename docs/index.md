@@ -58,11 +58,11 @@ The script selects x64 or ARM64, verifies the release checksum and opens setup. 
 
 ## Connect your signer
 
-Choose **Connect with QR code**, scan it in a compatible NIP-46 signer (such as Amber), and approve. Goop remembers the connection for next time. **Escape** cancels; expired codes can be replaced with **New code**.
+Goop shows a pairing QR code as soon as the signer dialog opens. Scan it in a compatible NIP-46 signer (such as Amber) and approve. Goop connects automatically and remembers the connection for next time. Codes expire after two minutes; click the refresh icon to generate another. **Escape** cancels pairing and opens URL entry.
 
-Alternatively, paste a `bunker://` connection URL from your signer, or choose **Scan bunker QR** to scan it with your computer’s camera.
+Alternatively, expand **Use a bunker URL** to paste a connection URL from your signer, or choose **Scan signer QR** to scan it with your computer’s camera.
 
-Allow Goop to access your camera, then hold your signer’s bunker QR code in the preview. Use the camera selector for an external webcam. A successful scan turns the camera off and fills the URL field; press **Continue** to connect. **Escape** or **Paste URL instead** cancels scanning.
+Allow Goop to access your camera, then hold your signer’s bunker QR code in the preview. Use the camera selector for an external webcam. A successful scan turns the camera off and fills the URL field; press **Connect** to connect. **Escape** or **Paste URL instead** cancels scanning.
 
 Camera images are decoded on your device, never uploaded or saved. Scanning also stops when you leave the screen, close Goop, or reach the two-minute timeout. If access is denied, enable Goop’s camera permission in system settings and try again. If no camera is available, you can still paste the URL. Sandboxed Linux packages may need camera access enabled in their app permissions.
 

@@ -566,7 +566,7 @@ impl Workspace {
                 .show_close(false)
                 .overlay_closable(false)
                 .keyboard(false)
-                .title("Connect Your Signer")
+                .title("Connect your signer")
                 .child(import.clone())
         });
     }
