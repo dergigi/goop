@@ -70,6 +70,14 @@ Only bunker connection QR codes are accepted here; an `nsec` private key or a we
 
 On Linux, Goop uses the desktop credential service. Sandboxed installations prefer the Secret portal; when that interface is missing, Goop tries Secret Service instead. The Flatpak includes permission to access `org.freedesktop.secrets`. A working, unlocked credential service (such as GNOME Keyring, KDE Wallet, or KeePassXC with Secret Service enabled) is still required.
 
+## Message drafts
+
+Goop saves composer text and reply targets locally for each account and chat. Close a chat or quit Goop, then reopen it to continue writing. Escape leaves your draft intact.
+
+Sending clears the submitted draft only after the outgoing queue has saved it. If saving fails, the text stays in the composer. Edits made while a send is being saved are preserved. Draft attachment uploads are not restored after restarting.
+
+Drafts are stored in the app's local data directory under `drafts/`. They are not synced to relays. Writes run in the background and finish before a normal quit; a sudden crash or power loss can still interrupt the latest unsaved edit.
+
 ## Emoji and reactions
 
 Use the composer’s emoji button to browse or search by name, shortcode, or emoji. Categories and skin-tone controls include an **All** option for mixed-tone variants. Choose an emoji to insert it at the cursor.

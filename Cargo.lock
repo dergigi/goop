@@ -1168,6 +1168,7 @@ dependencies = [
  "settings",
  "smallvec",
  "state",
+ "tempfile",
  "theme",
  "ui",
 ]

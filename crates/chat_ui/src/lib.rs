@@ -35,6 +35,7 @@ use ui::{
 use crate::text::RenderedText;
 
 mod actions;
+mod drafts;
 mod encrypted_media;
 mod delivery_status;
 mod reactions;
@@ -80,6 +81,7 @@ pub struct ChatPanel {
 
     /// Chat input state
     input: Entity<InputState>,
+    draft: Option<drafts::Draft>,
 
     /// Subject input state
     subject_input: Entity<InputState>,
@@ -158,7 +160,10 @@ impl ChatPanel {
                 .placeholder(placeholder)
                 .auto_grow(1, 20)
                 .submit_on_enter(true)
-                .clean_on_escape()
+        });
+
+        let draft = NostrRegistry::global(cx).read(cx).current_user().and_then(|owner| {
+            room.read_with(cx, |room, _| drafts::Draft::new(common::support_dir(), owner, room.id)).ok()
         });
 
         let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in this chat"));
@@ -184,6 +189,13 @@ impl ChatPanel {
         subscriptions.push(cx.observe_window_activation(window, |this, _, cx| {
             this.last_read_position = None;
             cx.notify();
+        }));
+
+        subscriptions.push(cx.observe_in(&input, window, |this, _, window, cx| {
+            this.persist_draft(window, cx);
+        }));
+        subscriptions.push(cx.observe_in(&replies_to, window, |this, _, window, cx| {
+            this.persist_draft(window, cx);
         }));
 
         subscriptions.push(
@@ -229,6 +241,7 @@ impl ChatPanel {
 
         // Define all functions that will run after the current cycle
         cx.defer_in(window, |this, window, cx| {
+            this.restore_draft(window, cx);
             this.subscribe_find(window, cx);
             this.connect(cx);
             this.subscribe_room_events(window, cx);
@@ -246,6 +259,7 @@ impl ChatPanel {
             list_state,
             find: find::FindBar::new(find_input, cx.entity().downgrade()),
             input,
+            draft,
             subject_input,
             subject_bar,
             history_bar: cx.new(|_| false),
@@ -357,6 +371,50 @@ impl ChatPanel {
         self.input.read(cx).value().trim().to_string()
     }
 
+    fn draft_snapshot(&self, cx: &App) -> drafts::Snapshot {
+        drafts::Snapshot {
+            text: self.input.read(cx).value().to_string(),
+            replies: self.replies_to.read(cx).iter().copied().collect(),
+        }
+    }
+
+    fn persist_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.draft_snapshot(cx);
+        if let Some(draft) = &mut self.draft {
+            if let Err(error) = draft.save(snapshot, common::persistence::global()) {
+                window.push_notification(format!("Could not save draft: {error}"), cx);
+            }
+        }
+    }
+
+    fn restore_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(draft) = &self.draft else { return };
+        let path = draft.path.clone();
+        let load = cx.background_executor().spawn(async move {
+            common::persistence::global().load::<drafts::Snapshot>(&path)
+        });
+        self.tasks.push(cx.spawn_in(window, async move |this, cx| {
+            let result = load.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(snapshot) => {
+                        // Loading must never overwrite typing that started while disk I/O ran.
+                        let current = this.draft_snapshot(cx);
+                        if this.draft.as_mut().is_some_and(|draft| draft.restore(&snapshot, &current)) {
+                            this.input.update(cx, |input, cx| input.set_value(snapshot.text, window, cx));
+                            this.replies_to.update(cx, |replies, cx| {
+                                *replies = snapshot.replies.into_iter().collect();
+                                cx.notify();
+                            });
+                        }
+                    }
+                    Err(error) => window.push_notification(format!("Could not restore draft: {error}"), cx),
+                }
+            })?;
+            Ok(())
+        }));
+    }
+
     fn change_subject(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let subject = self.subject_input.read(cx).value();
 
@@ -392,19 +450,17 @@ impl ChatPanel {
         // send as a reaction instead of a text message
         if replies.len() == 1 && emojis::get(content.trim()).is_some() && self.attachments.read(cx).is_empty()
         {
-            for reply in &replies {
-                self.send_reaction(content.trim(), reply, window, cx);
-            }
-            self.clear(window, cx);
+            self.send_message(content.trim(), replies, true, true, window, cx);
             return;
         }
 
-        self.send_message(&content, replies, false, window, cx);
+        self.send_message(&content, replies, false, true, window, cx);
     }
 
     fn send_file_messages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving_outgoing { return; }
         let Some(room) = self.room.upgrade() else { return };
+        let submitted_draft = self.draft_snapshot(cx);
         let text = self.get_input_value(cx);
         let replies: Vec<_> = self.replies_to.read(cx).iter().copied().collect();
         let mut intents = Vec::new();
@@ -434,7 +490,7 @@ impl ChatPanel {
                             this.insert_reports(rumor.id.expect("rumor has an id"), reports, cx);
                             if let Some(url) = &file_url {
                                 this.remove_attachment(url, window, cx);
-                            } else if this.get_input_value(cx) == text {
+                            } else if this.draft_snapshot(cx) == submitted_draft {
                                 this.input.update(cx, |input, cx| input.set_value("", window, cx));
                             }
                             true
@@ -449,7 +505,8 @@ impl ChatPanel {
             }
             this.update(cx, |this, cx| {
                 this.saving_outgoing = false;
-                if complete && this.get_input_value(cx).is_empty() && this.attachments.read(cx).is_empty() {
+                if complete && this.input.read(cx).value().is_empty() && this.attachments.read(cx).is_empty()
+                    && this.draft_snapshot(cx).replies == submitted_draft.replies {
                     this.replies_to.update(cx, |replies, cx| { replies.clear(); cx.notify(); });
                 }
                 cx.notify();
@@ -471,7 +528,7 @@ impl ChatPanel {
             return;
         }
 
-        self.send_message(emoji, vec![*target], true, window, cx);
+        self.send_message(emoji, vec![*target], true, false, window, cx);
     }
 
     /// Send a message to all members of the chat
@@ -480,6 +537,7 @@ impl ChatPanel {
         value: &str,
         replies: Vec<EventId>,
         reaction: bool,
+        from_composer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -493,6 +551,7 @@ impl ChatPanel {
 
         let room = self.room.clone();
         let content = value.to_string();
+        let submitted_draft = from_composer.then(|| self.draft_snapshot(cx));
 
         // Upgrade room and create rumor + send task in a single read lock
         let Some(room_entity) = room.upgrade() else {
@@ -529,13 +588,14 @@ impl ChatPanel {
                             this.insert_reaction(&rumor, cx);
                         } else {
                             this.insert_message(&rumor, true, cx);
-                            if this.get_input_value(cx) == content {
-                                if this.attachments.read(cx).is_empty() {
-                                    this.clear(window, cx);
-                                } else {
-                                    this.input.update(cx, |input, cx| input.set_value("", window, cx));
-                                }
+                        }
+                        if submitted_draft.as_ref().is_some_and(|draft| *draft == this.draft_snapshot(cx)) {
+                            if this.attachments.read(cx).is_empty() {
+                                this.clear(window, cx);
+                            } else {
+                                this.input.update(cx, |input, cx| input.set_value("", window, cx));
                             }
+                            this.persist_draft(window, cx);
                         }
                         this.insert_reports(id, reports, cx);
                     }
