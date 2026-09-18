@@ -22,10 +22,31 @@ pub(super) fn delivery_status_label(report: &SendReport) -> &'static str {
     }
 }
 
+/// Show inline controls only for incomplete copies that need attention.
+pub(super) fn needs_attention(reports: &[SendReport]) -> bool {
+    reports.iter().any(|report| report.paused || (report.failed() && (report.pending() || !report.success())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use nostr_sdk::prelude::Keys;
+
+    #[test]
+    fn inline_retry_is_hidden_for_normal_queue_and_completed_delivery() {
+        let mut report = SendReport::new(Keys::generate().public_key());
+        report.queued = true;
+        assert!(!needs_attention(&[report.clone()]));
+        report.error = Some("Signer refused".into());
+        assert!(needs_attention(&[report.clone()]));
+        report.queued = false;
+        report.error = None;
+        report.paused = true;
+        assert!(needs_attention(&[report.clone()]));
+        report.paused = false;
+        report.accepted = true;
+        assert!(!needs_attention(&[report]));
+    }
 
     #[test]
     fn double_check_requires_every_other_recipient_and_excludes_self_copy() {

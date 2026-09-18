@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Show a subtle failure indicator and icon-only retry control directly on outgoing messages. Retry only the selected message while preserving accepted copies.
+
 ## [2.11.2] - 2026-09-17
 
 ### Fixed

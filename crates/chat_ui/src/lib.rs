@@ -1328,12 +1328,16 @@ impl ChatPanel {
             .as_ref()
             .is_some_and(|reports| reports.iter().any(|r| r.paused));
         let checks = reports.as_ref().map(|reports| delivery_status::delivery_checks(reports)).unwrap_or(0);
-        let label = if checks == 2 {
+        let attention = reports.as_deref().is_some_and(delivery_status::needs_attention);
+        let detail = reports.as_ref().and_then(|reports| reports.iter()
+            .find(|r| r.paused || r.failed()).and_then(|r| r.error.clone()))
+            .unwrap_or_else(|| if paused {
+                "Sending stopped. Check your signer, then retry. Click for details.".into()
+            } else {
+                "Delivery failed. Click for details, or retry this message.".into()
+            });
+        let label = if attention || checks == 2 {
             None
-        } else if paused && success {
-            Some("· sending stopped")
-        } else if paused {
-            Some("• Sending stopped · view details")
         } else if success && pending {
             Some("· queued")
         } else if success {
@@ -1354,8 +1358,23 @@ impl ChatPanel {
             .when(success || checks == 2, |this| {
                 this.child(Icon::new(if checks == 2 { IconName::CheckDouble } else { IconName::Check }).small())
             })
+            .when(attention, |this| {
+                this.child(div().id("delivery-warning").cursor_pointer()
+                    .text_color(cx.theme().text_warning)
+                    .tooltip(move |window, cx| ui::tooltip::Tooltip::new(detail.clone(), window, cx).into())
+                    .child(Icon::new(IconName::WarningTriangle).xsmall()))
+                    .child(Button::new("retry-this-message")
+                        .icon(IconName::Refresh).xsmall().ghost()
+                        .text_color(cx.theme().text_muted)
+                        .tooltip("Retry this message")
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            if !ChatRegistry::global(cx).read(cx).retry_outgoing_message(message_id) {
+                                window.push_notification(Notification::error("Connect your signer before retrying this message."), cx);
+                            }
+                        }))
+            })
             .when_some(label, |this, label| this.child(label))
-            .when(failed, |this| this.text_color(cx.theme().text_danger))
             .when_some(reports, |this, reports| {
                 this.when(true, |this| {
                     this.on_click(move |_e, window, cx| {

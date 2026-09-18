@@ -592,6 +592,15 @@ impl ChatRegistry {
         })
     }
 
+    pub fn retry_outgoing_message(&self, id: EventId) -> bool {
+        if let Some(queue) = &self.outgoing {
+            queue.retry_message(id);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn retry_outgoing(&self) {
         if let Some(queue) = &self.outgoing {
             queue.retry();

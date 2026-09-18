@@ -192,6 +192,7 @@ pub(super) struct OutgoingQueue {
     active: Arc<AtomicBool>,
     resume_requested: Arc<AtomicBool>,
     rebroadcast_requested: Arc<RwLock<BTreeSet<EventId>>>,
+    retry_requested: Arc<RwLock<BTreeSet<EventId>>>,
 }
 
 impl OutgoingQueue {
@@ -210,6 +211,7 @@ impl OutgoingQueue {
                 active: Arc::new(AtomicBool::new(true)),
                 resume_requested: Arc::default(),
                 rebroadcast_requested: Arc::default(),
+                retry_requested: Arc::default(),
             },
             receiver,
         )
@@ -248,6 +250,11 @@ impl OutgoingQueue {
 
     pub fn retry(&self) {
         self.resume_requested.store(true, Ordering::SeqCst);
+        self.wake();
+    }
+
+    pub fn retry_message(&self, id: EventId) {
+        self.retry_requested.write().unwrap().insert(id);
         self.wake();
     }
 
@@ -353,7 +360,8 @@ impl OutgoingQueue {
                 message.paused = false;
                 save(&self.root, &mut message).await?;
             }
-            if resume && message.paused {
+            let retry_this = self.retry_requested.write().unwrap().remove(&message.id());
+            if (resume || retry_this) && message.paused {
                 message.paused = false;
                 save(&self.root, &mut message).await?;
             }
@@ -724,6 +732,7 @@ mod tests {
             let second_client = client(&discovery.url().await).await;
             let second = queue(second_client.clone(), owner.public_key(), dir.path());
             let mut announced = BTreeMap::new();
+            second.retry_message(rumor_id);
             second
                 .process(
                     &UniversalSigner::new(UnavailableSigner(owner.clone())),
@@ -879,15 +888,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(controlled.calls.load(Ordering::SeqCst), 1);
-        restarted.retry();
+        let mut other = message(&owner, &[Keys::generate().public_key()]);
+        other.paused = true;
+        let other_id = other.id();
+        restarted.enqueue(other).await.unwrap();
+        restarted.retry_message(id);
         restarted
             .process(&signer, &signals, &mut BTreeMap::new())
             .await
             .unwrap();
-        let saved = load(dir.path(), owner.public_key())
-            .await
-            .unwrap()
-            .remove(0);
+        let jobs = load(dir.path(), owner.public_key()).await.unwrap();
+        assert!(jobs.iter().find(|job| job.id() == other_id).unwrap().paused);
+        let saved = jobs.iter().find(|job| job.id() == id).unwrap();
         assert_eq!(saved.id(), id);
         assert!(!saved.paused);
         assert!(saved.complete());
