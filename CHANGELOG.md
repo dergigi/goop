@@ -24,6 +24,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Keep pending identity pairing alive when opening the scanner or refreshing the QR. The first approved invitation logs in and cancels the others.
+
 - Explain that outgoing message preparation timed out waiting for the signer, with approval guidance and the automatic retry behavior.
 - Match the Goop composer placeholder against both chat participants, so direct messages to Goop show the custom bug-report and feedback prompt.
 - Keep emoji replies in the composer until the outgoing queue saves them successfully. Preserve newer edits during a send, and stop Escape from clearing the composer.

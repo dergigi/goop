@@ -103,16 +103,31 @@ pub enum PairEvent {
     Saving(bool),
 }
 
+struct PendingPairing {
+    cancel: flume::Sender<()>,
+    signer: Option<NostrConnect>,
+}
+
+impl PendingPairing {
+    fn stop(self, cx: &mut App) {
+        let _ = self.cancel.try_send(());
+        if let Some(signer) = self.signer {
+            gpui_tokio::Tokio::spawn(cx, async move { signer.shutdown().await }).detach();
+        }
+    }
+}
+
 pub struct PairSigner {
     focus: FocusHandle,
-    cancel: Option<flume::Sender<()>>,
+    pending: std::collections::BTreeMap<u64, PendingPairing>,
+    generation: u64,
+    winner: Option<u64>,
     image: Option<Arc<RenderImage>>,
     link: Option<String>,
-    signer: Option<NostrConnect>,
     error: Option<String>,
     saving: bool,
     expired: bool,
-    task: Option<Task<()>>,
+    tasks: Vec<Task<()>>,
     _release: Subscription,
 }
 impl EventEmitter<PairEvent> for PairSigner {}
@@ -125,14 +140,15 @@ impl PairSigner {
         cx.defer_in(window, |this, window, cx| this.start(window, cx));
         Self {
             focus,
-            cancel: None,
+            pending: Default::default(),
+            generation: 0,
+            winner: None,
             image: None,
             link: None,
-            signer: None,
             error: None,
             saving: false,
             expired: false,
-            task: None,
+            tasks: Vec::new(),
             _release: release,
         }
     }
@@ -146,26 +162,28 @@ impl PairSigner {
     }
 
     pub(super) fn stop(&mut self, window: &mut Window, cx: &mut App) {
-        if let Some(cancel) = self.cancel.take() {
-            let _ = cancel.try_send(());
+        for (_, pending) in std::mem::take(&mut self.pending) {
+            pending.stop(cx);
         }
-        self.task = None;
+        self.tasks.clear();
         self.clear_image(window);
         self.link = None;
-        if let Some(signer) = self.signer.take() {
-            gpui_tokio::Tokio::spawn(cx, async move { signer.shutdown().await }).detach();
-        }
     }
 
     fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.stop(window, cx);
+        if self.saving { return; }
+        // Refresh changes the displayed invitation, not earlier pending approvals.
+        self.clear_image(window);
+        self.link = None;
         self.error = None;
-        self.saving = false;
         self.expired = false;
+        self.winner = None;
+        self.generation += 1;
+        let generation = self.generation;
         let (cancel, cancelled) = flume::bounded(1);
-        self.cancel = Some(cancel);
+        self.pending.insert(generation, PendingPairing { cancel, signer: None });
         let keys = NostrRegistry::global(cx).read(cx).get_master_key(cx, true);
-        self.task = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result: Result<()> = async {
                 let keys = keys.await?;
                 let uri = invitation(
@@ -180,7 +198,9 @@ impl PairSigner {
                 let mut signer = NostrConnect::new(uri, keys, PAIRING_TIMEOUT, None)?;
                 signer.auth_url_handler(GoopAuthUrlHandler);
                 this.update(cx, |this, cx| {
-                    this.signer = Some(signer.clone());
+                    let Some(pending) = this.pending.get_mut(&generation) else { return; };
+                    pending.signer = Some(signer.clone());
+                    if generation != this.generation || this.winner.is_some() { return; }
                     this.link = Some(link);
                     this.image = Some(Arc::new(RenderImage::new(smallvec::smallvec![
                         image::Frame::new(pixels)
@@ -198,6 +218,15 @@ impl PairSigner {
                     if NostrRegistry::global(cx).read(cx).current_user().is_some() {
                         bail!("Your account changed. Start pairing again.");
                     }
+                    if this.winner.is_some() || !this.pending.contains_key(&generation) {
+                        bail!("Another pairing attempt already completed.");
+                    }
+                    this.winner = Some(generation);
+                    let winner = this.pending.remove(&generation).unwrap();
+                    for (_, pending) in std::mem::take(&mut this.pending) {
+                        pending.stop(cx);
+                    }
+                    this.pending.insert(generation, winner);
                     this.saving = true;
                     cx.emit(PairEvent::Saving(true));
                     this.clear_image(window);
@@ -208,7 +237,7 @@ impl PairSigner {
                 save.await?;
                 this.update(cx, |this, cx| {
                     // Transfer ownership before SignerChanged closes this view.
-                    this.signer = None;
+                    this.pending.remove(&generation);
                     NostrRegistry::global(cx).update(cx, |state, cx| state.set_bunker(signer, cx));
                 })?;
                 Ok(())
@@ -216,13 +245,16 @@ impl PairSigner {
             .await;
             if let Err(error) = result {
                 this.update_in(cx, |this, window, cx| {
-                    // The current task ends naturally; don't cancel it from itself.
+                    let Some(pending) = this.pending.remove(&generation) else { return; };
+                    pending.stop(cx);
+                    // Expired or cancelled older invitations must not overwrite the current UI.
+                    if this.winner.is_some_and(|winner| winner != generation)
+                        || (this.winner.is_none() && generation != this.generation) {
+                        return;
+                    }
+                    this.winner = None;
                     this.clear_image(window);
                     this.link = None;
-                    if let Some(signer) = this.signer.take() {
-                        gpui_tokio::Tokio::spawn(cx, async move { signer.shutdown().await })
-                            .detach();
-                    }
                     this.saving = false;
                     cx.emit(PairEvent::Saving(false));
                     this.expired = error.is::<PairingExpired>()
@@ -232,7 +264,8 @@ impl PairSigner {
                 })
                 .ok();
             }
-        }));
+        });
+        self.tasks.push(task);
         cx.notify();
     }
 }
@@ -446,6 +479,46 @@ mod tests {
         .await
         .unwrap();
     }
+    #[tokio::test]
+    async fn either_invitation_can_win_after_refresh() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            for approved_index in [0, 1] {
+                let relay = LocalRelay::builder().build();
+                relay.run().await.unwrap();
+                let keys = Keys::generate();
+                let account = Keys::generate();
+                let mut attempts = Vec::new();
+                // Both invitations use the persistent app key, as the real dialog does.
+                for _ in 0..2 {
+                    let uri = invitation(&keys, vec![relay.url().await]);
+                    let signer = NostrConnect::new(uri.clone(), keys.clone(), Duration::from_secs(3), None).unwrap();
+                    let monitor = signer.clone();
+                    let (cancel, cancelled) = flume::bounded(1);
+                    let wait = tokio::spawn(approve(signer, Duration::from_secs(4), cancelled));
+                    listening(&monitor).await;
+                    attempts.push((uri, cancel, wait, monitor));
+                }
+                let remote = NostrConnectRemoteSigner::from_uri(
+                    attempts[approved_index].0.clone(),
+                    NostrConnectKeys::new(Keys::generate(), account.clone()),
+                    None,
+                ).unwrap();
+                let server = tokio::spawn(async move { remote.serve(Allow).await });
+                let (_, _winner_cancel, winner, _) = attempts.remove(approved_index);
+                let (signer, _) = winner.await.unwrap().unwrap();
+                assert_eq!(signer.get_public_key_async().await.unwrap(), account.public_key());
+                let (_, cancel, loser, monitor) = attempts.pop().unwrap();
+                cancel.send(()).unwrap();
+                assert!(loser.await.unwrap().is_err());
+                assert!(monitor.status().await.values().all(|status| *status != RelayStatus::Connected));
+                // Cancelling the other connection must not shut down the winner.
+                assert_eq!(signer.get_public_key_async().await.unwrap(), account.public_key());
+                signer.shutdown().await;
+                server.abort();
+            }
+        }).await.expect("both refreshed pairing scenarios should complete");
+    }
+
     #[tokio::test]
     async fn cancellation_stops_pairing_before_approval() {
         let relay = LocalRelay::builder().build();

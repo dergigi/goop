@@ -88,7 +88,7 @@ impl ImportIdentity {
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     fn scan(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.loading || self.scanner.is_some() { return; }
-        self.stop_pairing(window, cx);
+        // Opening the camera must not invalidate an invitation already scanned on a phone.
         let scanner = cx.new(|cx| super::qr_scanner::QrScanner::new(window,cx));
         self.scan_subscription = Some(cx.subscribe_in(&scanner,window,|this,_,event,window,cx| {
             if let super::qr_scanner::ScanEvent::Scanned(url) = event {
@@ -114,7 +114,15 @@ impl ImportIdentity {
         let pairing = cx.new(|cx| super::pair_signer::PairSigner::new(window, cx));
         self.pairing_subscription = Some(cx.subscribe_in(&pairing, window, |this, _, event, window, cx| {
             match event {
-                super::pair_signer::PairEvent::Saving(saving) => this.loading = *saving,
+                super::pair_signer::PairEvent::Saving(saving) => {
+                    this.loading = *saving;
+                    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+                    if *saving {
+                        // Approval wins over navigation: return to the pairing transition.
+                        this.scanner = None;
+                        this.scan_subscription = None;
+                    }
+                },
                 super::pair_signer::PairEvent::Cancelled => {
                     this.pairing = None;
                     this.pairing_subscription = None;
