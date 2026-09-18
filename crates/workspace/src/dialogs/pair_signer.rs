@@ -78,7 +78,6 @@ async fn approve(
 }
 
 pub enum PairEvent {
-    Cancelled,
     Saving(bool),
 }
 
@@ -248,13 +247,12 @@ impl Render for PairSigner {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let side = (window.viewport_size().height - px(300.)).min(px(260.)).max(px(160.));
         v_flex().track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" && !this.saving {
+            .on_key_down(|event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    // A phone may already have scanned this invitation.
                     cx.stop_propagation();
-                    this.stop(window, cx);
-                    cx.emit(PairEvent::Cancelled);
                 }
-            }))
+            })
             .gap_2().items_center().w_full()
             .child(h_flex().gap_2().items_center()
                 .child(div().text_sm().child(if self.saving { "Connecting…" } else { "Scan with your signer" }))

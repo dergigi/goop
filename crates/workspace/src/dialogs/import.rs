@@ -112,7 +112,7 @@ impl ImportIdentity {
     fn pair(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.loading || self.pairing.is_some() { return; }
         let pairing = cx.new(|cx| super::pair_signer::PairSigner::new(window, cx));
-        self.pairing_subscription = Some(cx.subscribe_in(&pairing, window, |this, _, event, window, cx| {
+        self.pairing_subscription = Some(cx.subscribe_in(&pairing, window, |this, _, event, _window, cx| {
             match event {
                 super::pair_signer::PairEvent::Saving(saving) => {
                     this.loading = *saving;
@@ -123,12 +123,6 @@ impl ImportIdentity {
                         this.scan_subscription = None;
                     }
                 },
-                super::pair_signer::PairEvent::Cancelled => {
-                    this.pairing = None;
-                    this.pairing_subscription = None;
-                    this.show_bunker = true;
-                    this.key_input.update(cx, |input, cx| input.focus(window, cx));
-                }
             }
             cx.notify();
         }));

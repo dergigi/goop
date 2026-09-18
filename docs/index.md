@@ -58,7 +58,7 @@ The script selects x64 or ARM64, verifies the release checksum and opens setup. 
 
 ## Connect your signer
 
-Goop shows a pairing QR code as soon as the signer dialog opens. Scan it in a compatible NIP-46 signer (such as Amber) and approve. Goop connects automatically and remembers the connection for next time. QR invitations remain valid while pairing is open. Refreshing or opening the scanner keeps earlier invitations active. Approving any invitation connects Goop and cancels the others. **Escape** cancels pairing and opens URL entry.
+Goop shows a pairing QR code as soon as the signer dialog opens. Scan it in a compatible NIP-46 signer (such as Amber) and approve. Goop connects automatically and remembers the connection for next time. QR invitations remain valid while pairing is open. Refreshing or opening the scanner keeps earlier invitations active. Approving any invitation connects Goop and cancels the others. **Escape** leaves the QR code and pending invitations intact.
 
 Alternatively, expand **Use a bunker URL** to paste a connection URL from your signer, or choose **Scan signer QR** to scan it with your computer’s camera.
 
