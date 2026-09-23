@@ -875,63 +875,9 @@ impl ChatRegistry {
         self.last_history = Some(Instant::now());
         self.history.clear();
         cx.notify();
-        let task = cx.background_spawn(async move {
-            // Replay locally saved ciphertext, including failures from an earlier
-            // session, before advancing the persisted network checkpoint.
-            let cached = client
-                .database()
-                .query(Filter::new().kind(Kind::GiftWrap).pubkey(user))
-                .await?;
-            for event in cached {
-                queue.schedule(event.id);
-            }
-            let event = client
-                .database()
-                .query(Filter::new().kind(Kind::InboxRelays).author(user).limit(1))
-                .await?
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("No inbox relays found"))?;
-            let relays: BTreeSet<RelayUrl> = nip17::extract_relay_list(&event).collect();
-            if relays.is_empty() {
-                return Err(anyhow!("No inbox relays configured"));
-            }
-            for relay in &relays {
-                client.add_relay(relay).await?;
-                signals
-                    .send_async(Signal::History(relay.clone(), RelayHistory::default()))
-                    .await?;
-            }
-            // Keep live traffic separate; old history has its own resumable scans.
-            let live = Filter::new()
-                .kind(Kind::GiftWrap)
-                .pubkey(user)
-                .since(Timestamp::from(
-                    Timestamp::now().as_secs().saturating_sub(2 * 24 * 60 * 60),
-                ));
-            let targets: HashMap<_, _> = relays
-                .iter()
-                .cloned()
-                .map(|relay| (relay, live.clone()))
-                .collect();
-            let id = SubscriptionId::new(USER_GIFTWRAP);
-            let _ = client.unsubscribe(&id).await;
-            client.subscribe(targets).with_id(id).await?;
-            let mut history_relays: Vec<_> = relays.iter().cloned().collect();
-            if include_general {
-                history_relays.extend(history::general_relays(&client, user, &relays).await?);
-            }
-            // Inbox relays are scheduled first; at most two scans run at once.
-            let mut scans = futures::stream::iter(history_relays)
-                .map(|relay| history::scan_relay(&client, user, relay, &queue, &signals, force))
-                .buffer_unordered(2);
-            while let Some(result) = scans.next().await {
-                if let Err(error) = result {
-                    log::warn!("History relay failed: {error}");
-                }
-            }
-            Ok(())
-        });
+        let task = cx.background_spawn(run_history(
+            client, user, queue, signals, force, include_general,
+        ));
         self.history_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -1555,9 +1501,157 @@ async fn try_unwrap_with(
     })
 }
 
+/// Run the background history flow used by `ChatRegistry::start_history`.
+/// Load the account's published inbox list and install live receiving before scans.
+async fn run_history(
+    client: Client,
+    user: PublicKey,
+    queue: DecryptQueue,
+    signals: flume::Sender<Signal>,
+    force: bool,
+    include_general: bool,
+) -> Result<(), Error> {
+    // Replay locally saved ciphertext, including failures from an earlier
+    // session, before advancing the persisted network checkpoint.
+    let cached = client
+        .database()
+        .query(Filter::new().kind(Kind::GiftWrap).pubkey(user))
+        .await?;
+    for event in cached {
+        queue.schedule(event.id);
+    }
+    let event = client
+        .database()
+        .query(Filter::new().kind(Kind::InboxRelays).author(user).limit(1))
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("No inbox relays found"))?;
+    let relays: BTreeSet<RelayUrl> = nip17::extract_relay_list(&event).collect();
+    if relays.is_empty() {
+        return Err(anyhow!("No inbox relays configured"));
+    }
+    for relay in &relays {
+        signals
+            .send_async(Signal::History(relay.clone(), RelayHistory::default()))
+            .await?;
+    }
+    subscribe_inbox_relays(&client, user, &relays).await?;
+    let mut history_relays: Vec<_> = relays.iter().cloned().collect();
+    if include_general {
+        history_relays.extend(history::general_relays(&client, user, &relays).await?);
+    }
+    // Inbox relays are scheduled first; at most two scans run at once.
+    let mut scans = futures::stream::iter(history_relays)
+        .map(|relay| history::scan_relay(&client, user, relay, &queue, &signals, force))
+        .buffer_unordered(2);
+    while let Some(result) = scans.next().await {
+        if let Err(error) = result {
+            log::warn!("History relay failed: {error}");
+        }
+    }
+    Ok(())
+}
+
+/// Adding relays to the pool does not start their connections. Start every inbox
+/// connection before subscribing, including relays not used by bootstrap/history.
+async fn subscribe_inbox_relays(
+    client: &Client,
+    user: PublicKey,
+    relays: &BTreeSet<RelayUrl>,
+) -> Result<(), Error> {
+    for relay in relays {
+        client.add_relay(relay).await?;
+    }
+    client.connect().and_wait(Duration::from_secs(5)).await;
+    // Keep live traffic separate; old history has its own resumable scans.
+    let live = Filter::new()
+        .kind(Kind::GiftWrap)
+        .pubkey(user)
+        .since(Timestamp::from(
+            Timestamp::now().as_secs().saturating_sub(2 * 24 * 60 * 60),
+        ));
+    let targets: HashMap<_, _> = relays
+        .iter()
+        .cloned()
+        .map(|relay| (relay, live.clone()))
+        .collect();
+    let id = SubscriptionId::new(USER_GIFTWRAP);
+    let _ = client.unsubscribe(&id).await;
+    client.subscribe(targets).with_id(id).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod validation_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn history_flow_subscribes_to_published_inbox_and_receives_live_reply() {
+        receives_peer_reply(true).await;
+    }
+
+    #[tokio::test]
+    async fn live_inbox_receives_peer_reply_without_history_or_outbound_send() {
+        receives_peer_reply(false).await;
+    }
+
+    /// Verify delivery after subscription setup, optionally through the full history flow.
+    async fn receives_peer_reply(with_history: bool) {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let relay = nostr_sdk::local_relay::LocalRelay::builder().build();
+            relay.run().await.unwrap();
+            let url = relay.url().await;
+            let receiver = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded()).build();
+            let recipient = Keys::generate();
+            let inbox = EventBuilder::new(Kind::InboxRelays, "")
+                .tag(Tag::parse(["relay", url.as_str()]).unwrap())
+                .finalize(&recipient).unwrap();
+            receiver.database().save_event(&inbox).await.unwrap();
+            let mut notifications = receiver.notifications();
+            let (queue, _workers) = DecryptQueue::new();
+            let (signals, _signals) = flume::unbounded();
+            // Execute the actual background flow, including the kind-10050 lookup.
+            // A history download alone must not substitute for a live subscription.
+            if with_history {
+                run_history(receiver.clone(), recipient.public_key(), queue, signals, false, false)
+                    .await.unwrap();
+            } else {
+                subscribe_inbox_relays(&receiver, recipient.public_key(), &BTreeSet::from([url.clone()]))
+                    .await.unwrap();
+            }
+            // Publish only after history completes, then require USER_GIFTWRAP.
+            while let Some(ClientNotification::Message { message, .. }) = notifications.next().await {
+                if matches!(*message, RelayMessage::EndOfStoredEvents(ref id) if id.as_ref().as_str() == USER_GIFTWRAP) {
+                    break;
+                }
+            }
+            let sender = Keys::generate();
+            let rumor = EventBuilder::new(Kind::PrivateDirectMessage, "peer reply")
+                .tag(Tag::public_key(recipient.public_key()))
+                .finalize_unsigned(sender.public_key());
+            let seal = seal_rumor(&sender, &recipient, &rumor, Kind::Seal, vec![]).await;
+            let event = wrap_seal(&recipient, &seal).await;
+            let publisher = Client::default();
+            publisher.add_relay(&url).await.unwrap();
+            publisher.connect().and_wait(Duration::from_secs(2)).await;
+            publisher.send_event(&event).await.unwrap();
+            loop {
+                if let Some(ClientNotification::Message { message, .. }) = notifications.next().await {
+                    if let RelayMessage::Event { subscription_id, event: received } = *message {
+                        if subscription_id.as_ref().as_str() == USER_GIFTWRAP {
+                            assert_eq!(received.id, event.id);
+                            break;
+                        }
+                    }
+                }
+            }
+            receiver.shutdown().await;
+            publisher.shutdown().await;
+            relay.shutdown();
+        }).await.unwrap();
+    }
 
     // Build every layer explicitly so malformed inner events still have valid
     // outer encryption and signatures, as they could on a real relay.
