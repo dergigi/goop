@@ -13,6 +13,7 @@ use nostr_sdk::prelude::*;
 mod blossom;
 pub mod encrypted_file;
 mod constants;
+mod connection_key;
 pub mod credentials;
 mod nip05;
 mod profiles;
@@ -90,6 +91,7 @@ pub struct NostrRegistry {
     logging_out: bool,
     connection_task: Option<Task<Result<(), Error>>>,
     credential_task: Option<Task<Result<(), Error>>>,
+    connection_key: std::sync::Arc<connection_key::ConnectionKey>,
 
     media_servers: Vec<Url>,
     media_servers_task: Option<Task<()>>,
@@ -156,6 +158,7 @@ impl NostrRegistry {
             logging_out: false,
             connection_task: None,
             credential_task: None,
+            connection_key: Default::default(),
             media_servers: Vec::new(),
             media_servers_task: None,
             tasks: vec![],
@@ -479,22 +482,22 @@ impl NostrRegistry {
 
     /// Get the master key that used for Nostr Connect
     pub fn get_master_key(&self, cx: &App, create_if_missing: bool) -> Task<Result<Keys, Error>> {
-        let task = credentials::read(cx, MASTER_KEYRING);
+        let cache = self.connection_key.clone();
         let create_if_missing = create_if_missing && self.remembered_user.is_none();
         cx.spawn(async move |cx| {
-            let saved = task.await?.map(|(_, secret)| secret);
-            let (keys, created) = connection_keys(saved, create_if_missing)?;
-            if created {
-                let save = cx.update(|cx| {
-                    credentials::write(
+            cache.get_or_load(|| async {
+                let saved = cx.update(|cx| credentials::read(cx, MASTER_KEYRING))
+                    .await?.map(|(_, secret)| secret);
+                let (keys, created) = connection_keys(saved, create_if_missing)?;
+                if created {
+                    cx.update(|cx| credentials::write(
                         cx, MASTER_KEYRING,
                         &keys.public_key().to_hex(),
                         &keys.secret_key().to_secret_bytes(),
-                    )
-                });
-                save.await?;
-            }
-            Ok(keys)
+                    )).await?;
+                }
+                Ok(keys)
+            }).await
         })
     }
 

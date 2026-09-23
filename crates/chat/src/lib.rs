@@ -897,26 +897,11 @@ impl ChatRegistry {
                 return Err(anyhow!("No inbox relays configured"));
             }
             for relay in &relays {
-                client.add_relay(relay).await?;
                 signals
                     .send_async(Signal::History(relay.clone(), RelayHistory::default()))
                     .await?;
             }
-            // Keep live traffic separate; old history has its own resumable scans.
-            let live = Filter::new()
-                .kind(Kind::GiftWrap)
-                .pubkey(user)
-                .since(Timestamp::from(
-                    Timestamp::now().as_secs().saturating_sub(2 * 24 * 60 * 60),
-                ));
-            let targets: HashMap<_, _> = relays
-                .iter()
-                .cloned()
-                .map(|relay| (relay, live.clone()))
-                .collect();
-            let id = SubscriptionId::new(USER_GIFTWRAP);
-            let _ = client.unsubscribe(&id).await;
-            client.subscribe(targets).with_id(id).await?;
+            subscribe_inbox_relays(&client, user, &relays).await?;
             let mut history_relays: Vec<_> = relays.iter().cloned().collect();
             if include_general {
                 history_relays.extend(history::general_relays(&client, user, &relays).await?);
@@ -1555,9 +1540,82 @@ async fn try_unwrap_with(
     })
 }
 
+// Adding relays to the pool does not start their connections. Start every inbox
+// connection before subscribing, including relays not used by bootstrap/history.
+async fn subscribe_inbox_relays(
+    client: &Client,
+    user: PublicKey,
+    relays: &BTreeSet<RelayUrl>,
+) -> Result<(), Error> {
+    for relay in relays {
+        client.add_relay(relay).await?;
+    }
+    client.connect().and_wait(Duration::from_secs(5)).await;
+    // Keep live traffic separate; old history has its own resumable scans.
+    let live = Filter::new()
+        .kind(Kind::GiftWrap)
+        .pubkey(user)
+        .since(Timestamp::from(
+            Timestamp::now().as_secs().saturating_sub(2 * 24 * 60 * 60),
+        ));
+    let targets: HashMap<_, _> = relays
+        .iter()
+        .cloned()
+        .map(|relay| (relay, live.clone()))
+        .collect();
+    let id = SubscriptionId::new(USER_GIFTWRAP);
+    let _ = client.unsubscribe(&id).await;
+    client.subscribe(targets).with_id(id).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod validation_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn live_inbox_receives_peer_reply_without_history_or_outbound_send() {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let relay = nostr_sdk::local_relay::LocalRelay::builder().build();
+            relay.run().await.unwrap();
+            let url = relay.url().await;
+            let receiver = Client::default();
+            let recipient = Keys::generate();
+            let mut notifications = receiver.notifications();
+            subscribe_inbox_relays(&receiver, recipient.public_key(), &BTreeSet::from([url.clone()]))
+                .await.unwrap();
+            // Wait until the relay has installed the subscription, then send a
+            // new reply. No history scan or recipient-side send connects it.
+            while let Some(ClientNotification::Message { message, .. }) = notifications.next().await {
+                if matches!(*message, RelayMessage::EndOfStoredEvents(ref id) if id.as_ref().as_str() == USER_GIFTWRAP) {
+                    break;
+                }
+            }
+            let sender = Keys::generate();
+            let rumor = EventBuilder::new(Kind::PrivateDirectMessage, "peer reply")
+                .tag(Tag::public_key(recipient.public_key()))
+                .finalize_unsigned(sender.public_key());
+            let seal = seal_rumor(&sender, &recipient, &rumor, Kind::Seal, vec![]).await;
+            let event = wrap_seal(&recipient, &seal).await;
+            let publisher = Client::default();
+            publisher.add_relay(&url).await.unwrap();
+            publisher.connect().and_wait(Duration::from_secs(2)).await;
+            publisher.send_event(&event).await.unwrap();
+            loop {
+                if let Some(ClientNotification::Message { message, .. }) = notifications.next().await {
+                    if let RelayMessage::Event { subscription_id, event: received } = *message {
+                        if subscription_id.as_ref().as_str() == USER_GIFTWRAP {
+                            assert_eq!(received.id, event.id);
+                            break;
+                        }
+                    }
+                }
+            }
+            receiver.shutdown().await;
+            publisher.shutdown().await;
+            relay.shutdown();
+        }).await.unwrap();
+    }
 
     // Build every layer explicitly so malformed inner events still have valid
     // outer encryption and signatures, as they could on a real relay.
