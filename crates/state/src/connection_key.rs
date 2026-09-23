@@ -6,6 +6,7 @@ use anyhow::Result;
 use futures::lock::Mutex;
 use nostr::prelude::Keys;
 
+/// One successfully persisted signer connection key for the app session.
 #[derive(Default)]
 pub(crate) struct ConnectionKey(Mutex<Option<Keys>>);
 
@@ -16,6 +17,7 @@ impl std::fmt::Debug for ConnectionKey {
 }
 
 impl ConnectionKey {
+    /// Serialize initialization and reuse success; leave errors retryable.
     pub(crate) async fn get_or_load<F, Fut>(&self, load: F) -> Result<Keys>
     where
         F: FnOnce() -> Fut,

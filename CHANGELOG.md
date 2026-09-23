@@ -7,6 +7,11 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Connect inbox relays before subscribing to incoming messages, so peer replies arrive even before sending a message or scanning history.
+- Reuse the signer connection key during pairing and QR refreshes, avoiding repeated Keychain reads and conflicting key creation from overlapping requests.
+
 ## [2.13.0] - 2026-09-18
 
 ### Added
