@@ -32,7 +32,7 @@ Paseo's composer hint is conditional. It appears only for the active composer, w
 
 This explains why the user's “⌘L to focus” example is effective: it offers the next relevant action, then disappears when no longer useful. Goop should adopt that behavior, rather than permanently printing shortcuts throughout every toolbar.
 
-**Next:** add a quiet composer focus hint and Cmd/Ctrl+L as an alias for the existing Cmd/Ctrl+3. Derive the displayed binding from the registered action. Keep typed text, attachments, and reply previews clear of the hint. Verify contrast in both themes instead of copying Paseo's opacity literally.
+**Implemented:** Cmd/Ctrl+L focuses the composer, with Cmd/Ctrl+3 retained as an alias. A small, theme-colored hint inside the unfocused message box uses the registered action binding. The input suffix keeps it separate from text, attachments, and reply previews; focus and blur refresh its visibility.
 
 ### 3. Treat focus as application state
 

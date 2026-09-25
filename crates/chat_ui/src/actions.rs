@@ -21,3 +21,8 @@ pub enum Command {
 #[derive(Action, Clone, Default, PartialEq, Eq, Deserialize)]
 #[action(namespace = chat, no_json)]
 pub struct ShowConnectionStatus;
+
+/// Focus the active chat's message composer from anywhere in the workspace.
+#[derive(Action, Clone, Default, PartialEq, Eq, Deserialize)]
+#[action(namespace = chat, no_json)]
+pub struct FocusComposer;

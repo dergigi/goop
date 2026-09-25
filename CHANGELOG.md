@@ -7,6 +7,13 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-09-25
+
+### Added
+
+- Browse sent messages in the composer with Cmd+Option+↑/↓ (Ctrl+Alt+↑/↓ on Windows/Linux), preserving the draft you started with.
+- Focus the message box with Cmd/Ctrl+L, with a subtle shortcut hint inside the box while it is unfocused. Cmd/Ctrl+3 remains available.
+
 ## [2.13.1] - 2026-09-23
 
 ### Fixed

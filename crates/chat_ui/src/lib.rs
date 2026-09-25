@@ -84,6 +84,7 @@ pub struct ChatPanel {
     /// Chat input state
     input: Entity<InputState>,
     draft: Option<drafts::Draft>,
+    sent_history: Option<composer::SentHistory>,
 
     /// Subject input state
     subject_input: Entity<InputState>,
@@ -189,6 +190,11 @@ impl ChatPanel {
         }));
 
         subscriptions.push(cx.observe_in(&input, window, |this, _, window, cx| {
+            if this.sent_history.as_ref().is_some_and(|history| {
+                this.input.read(cx).value().as_ref() != history.current()
+            }) {
+                this.sent_history = None;
+            }
             this.persist_draft(window, cx);
         }));
         subscriptions.push(cx.observe_in(&replies_to, window, |this, _, window, cx| {
@@ -200,6 +206,8 @@ impl ChatPanel {
             cx.subscribe_in(&input, window, move |this, _input, event, window, cx| {
                 if matches!(event, InputEvent::Focus) {
                     this.last_read_position = None;
+                }
+                if matches!(event, InputEvent::Focus | InputEvent::Blur) {
                     cx.notify();
                 }
                 if let InputEvent::PressEnter { shift: false, .. } = event {
@@ -257,6 +265,7 @@ impl ChatPanel {
             find: find::FindBar::new(find_input, cx.entity().downgrade()),
             input,
             draft,
+            sent_history: None,
             subject_input,
             subject_bar,
             history_bar: cx.new(|_| false),
@@ -370,7 +379,9 @@ impl ChatPanel {
 
     fn draft_snapshot(&self, cx: &App) -> drafts::Snapshot {
         drafts::Snapshot {
-            text: self.input.read(cx).value().to_string(),
+            // Merely browsing history must not replace the saved/synced draft.
+            text: self.sent_history.as_ref().map(|history| history.draft.clone())
+                .unwrap_or_else(|| self.input.read(cx).value().to_string()),
             replies: self.replies_to.read(cx).iter().copied().collect(),
         }
     }
@@ -394,6 +405,7 @@ impl ChatPanel {
     }
 
     fn refresh_synced_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sent_history.is_some() { return; }
         let Some(draft) = &self.draft else { return; };
         let registry = ChatRegistry::global(cx);
         let Some(snapshot) = registry.read(cx).draft_snapshot(draft.owner, draft.room, cx) else { return; };
@@ -445,6 +457,37 @@ impl ChatPanel {
                 this.set_subject(subject, cx);
             })
             .ok();
+    }
+
+    fn browse_sent_history(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(older) = composer::history_direction(&event.keystroke) else { return; };
+        if !self.input.read(cx).focus_handle(cx).is_focused(window) || self.saving_outgoing {
+            return;
+        }
+        // Only our exact shortcut is consumed. Ordinary navigation and selection
+        // continue through the input's existing handlers.
+        cx.stop_propagation();
+        window.prevent_default();
+        if self.sent_history.is_none() {
+            if !older { return; }
+            let Some(owner) = NostrRegistry::global(cx).read(cx).current_user() else { return; };
+            let entries = self.messages.iter().rev()
+                .filter(|message| message.author == owner && message.encrypted_file.is_none()
+                    && !message.content.trim().is_empty())
+                .map(|message| message.content.clone()).collect();
+            self.sent_history = composer::SentHistory::new(entries, self.input.read(cx).value().to_string());
+        } else if let Some(history) = &mut self.sent_history {
+            if !history.step(older) {
+                let draft = history.draft.clone();
+                self.sent_history = None;
+                self.input.update(cx, |input, cx| input.set_value(draft, window, cx));
+                return;
+            }
+        }
+        if let Some(history) = &self.sent_history {
+            let text = history.current().to_owned();
+            self.input.update(cx, |input, cx| input.set_value(text, window, cx));
+        }
     }
 
     fn send_text_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -573,6 +616,10 @@ impl ChatPanel {
 
         let room = self.room.clone();
         let content = value.to_string();
+        if from_composer {
+            self.sent_history = None;
+            self.persist_draft(window, cx);
+        }
         let submitted_draft = from_composer.then(|| self.draft_snapshot(cx));
 
         // Upgrade room and create rumor + send task in a single read lock
@@ -634,6 +681,7 @@ impl ChatPanel {
     ///
     /// Only run after sending a message
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sent_history = None;
         self.input.update(cx, |this, cx| {
             this.set_value("", window, cx);
         });
@@ -1959,7 +2007,6 @@ impl Render for ChatPanel {
                 });
             }
         }
-        let show_hints = window.is_window_active() && window.modifiers().secondary();
         let left_room = self.room.upgrade().and_then(|room| {
             let room = room.read(cx);
             ChatRegistry::global(cx).read(cx).has_left(room).then_some(room.id)
@@ -1977,6 +2024,7 @@ impl Render for ChatPanel {
             .relative()
             .group("chat-file-drop")
             .on_drop(cx.listener(Self::drop_files))
+            .capture_key_down(cx.listener(Self::browse_sent_history))
             .on_action(cx.listener(Self::on_command))
             .on_action(cx.listener(Self::escape_find))
             .size_full()
@@ -2041,10 +2089,6 @@ impl Render for ChatPanel {
             .child(
                 v_flex()
                     .relative()
-                    .when(show_hints, |view| {
-                        view.child(ui::Kbd::new(gpui::Keystroke::parse("secondary-3").unwrap())
-                            .absolute().top_neg_2().right_2())
-                    })
                     .flex_shrink_0()
                     .p_2()
                     .w_full()
@@ -2097,6 +2141,20 @@ impl Render for ChatPanel {
                             .child(
                                 Input::new(&self.input)
                                     .appearance(false)
+                                    .when(
+                                        !self.input.read(cx).focus_handle(cx).is_focused(window)
+                                            && left_room.is_none() && !blocked_room,
+                                        |input| input.when_some(
+                                            ui::Kbd::binding_for_action(&FocusComposer, None, window),
+                                            |input, key| input.suffix(
+                                                h_flex().gap_1().flex_shrink_0().text_xs()
+                                                    .text_color(cx.theme().text_placeholder)
+                                                    .whitespace_nowrap()
+                                                    .child(key.appearance(false))
+                                                    .child("to focus"),
+                                            ),
+                                        ),
+                                    )
                                     .disabled(left_room.is_some() || blocked_room)
                                     .flex_1()
                                     .min_w_0()

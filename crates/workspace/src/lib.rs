@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ::settings::AppSettings;
 use update_check::ReleaseChecker;
 use chat::{ChatEvent, ChatRegistry};
+pub use chat_ui::FocusComposer;
 use common::GoopImageCache;
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -72,7 +73,8 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         ),
         KeyBinding::new(&format!("{modifier}-1"), Command::ShowInbox, None),
         KeyBinding::new(&format!("{modifier}-2"), Command::ShowRequests, None),
-        KeyBinding::new(&format!("{modifier}-3"), Command::FocusComposer, None),
+        KeyBinding::new(&format!("{modifier}-3"), FocusComposer, None),
+        KeyBinding::new(&format!("{modifier}-l"), FocusComposer, None),
         KeyBinding::new(&format!("{modifier}-t"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-n"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-shift-n"), Command::NewGroup, None),
@@ -800,6 +802,11 @@ impl Render for Workspace {
             .key_context("Workspace")
             .on_modifiers_changed(|_, window, _| window.refresh())
             .on_action(cx.listener(Self::on_command))
+            .on_action(cx.listener(|this, _: &FocusComposer, window, cx| {
+                if !ui::Root::read(window, cx).has_active_modals() {
+                    this.on_command(&Command::FocusComposer, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &chat_ui::ShowConnectionStatus, window, cx| {
                 this.on_command(&Command::ShowConnectionStatus, window, cx);
             }))

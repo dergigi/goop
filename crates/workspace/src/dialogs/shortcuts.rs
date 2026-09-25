@@ -23,7 +23,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
                 ("Toggle sidebar", Box::new(Command::ToggleSidebar)),
                 ("Inbox", Box::new(Command::ShowInbox)),
                 ("Requests", Box::new(Command::ShowRequests)),
-                ("Focus message box", Box::new(Command::FocusComposer)),
+                ("Focus message box", Box::new(crate::FocusComposer)),
             ]),
             ("Tabs", vec![
                 ("Close tab", Box::new(ClosePanel)),
@@ -60,6 +60,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
                 .child(v_flex().gap_2().text_sm()
                     .child(div().font_semibold().child("While typing"))
                     .child("Enter sends a message; Shift+Enter adds a new line.")
+                    .child(if cfg!(target_os = "macos") { "⌘⌥↑ / ⌘⌥↓ browse your sent messages." } else { "Ctrl+Alt+↑ / Ctrl+Alt+↓ browse your sent messages." })
                     .child("In search, use ↑ / ↓ to choose and Enter to open. Esc returns to your previous view.")
                     .child("In chat find, Enter / Shift+Enter move to the next / previous match.")
                     .child(div().text_color(cx.theme().text_muted).child("? opens this window when you aren't typing."))))

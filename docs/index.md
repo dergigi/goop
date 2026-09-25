@@ -189,7 +189,8 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 - **Cmd/Ctrl+P** — instantly search loaded profiles by name, Nostr address, or public key.
 - **↑ / ↓**, **Enter**, **Esc** — choose a quick-search result, open it, or return to your previous focus.
 - **Cmd/Ctrl+F** — find text in the current chat; **Enter / Shift+Enter** move between matching messages, and **Esc** closes the find bar and restores focus.
-- **Cmd/Ctrl+1 / 2 / 3** — open Inbox, open Requests, or focus the current chat’s message box. Hold Cmd/Ctrl to reveal the numbered hints.
+- **Cmd/Ctrl+1 / 2** — open Inbox or Requests. Hold Cmd/Ctrl to reveal the numbered hints.
+- **Cmd/Ctrl+L** — focus the current chat’s message box. Cmd/Ctrl+3 also works. The message box shows the shortcut while unfocused.
 - **Cmd/Ctrl+N** (or **Cmd/Ctrl+T**) — open New Chat to start a direct or group conversation.
 - **Cmd/Ctrl+Shift+N** — open New Group.
 - **Cmd/Ctrl+W**, **Cmd/Ctrl+Shift+W**, **Cmd/Ctrl+Shift+T** — close the current tab, close all tabs, or restore a closed tab.
@@ -247,3 +248,5 @@ The **Blocked users** button beside Archive in the sidebar footer shows blocked 
 Blocks use private NIP-44-encrypted `p` entries in the standard NIP-51 kind-10000 list, as Amethyst does. Existing public/private entries and unrelated list tags are preserved. Local changes take effect immediately; the Blocked users view shows pending sync, errors, **Copy error**, and **Retry sync**. Declined or timed-out signer requests wait for an explicit retry. Muting is device-local and expires automatically.
 
 Legacy NIP-04-encrypted lists are preserved but cannot currently be edited by Goop. If encountered, the view explains that the list needs to be updated in a NIP-44-compatible client first; the local block still applies. Blocking cannot prevent another client from sending encrypted messages to your relays.
+
+In the message box, Cmd+Option+↑/↓ (Ctrl+Alt+↑/↓ on Windows/Linux) browses your sent text in the current chat. Moving past the newest message restores your draft, or clears the box if it was empty. Ordinary arrow keys still move the cursor.

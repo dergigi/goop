@@ -57,7 +57,7 @@ fn application_menus() -> Vec<Menu> {
             MenuItem::action("Toggle Sidebar", Command::ToggleSidebar),
             MenuItem::action("Inbox", Command::ShowInbox),
             MenuItem::action("Requests", Command::ShowRequests),
-            MenuItem::action("Focus Message Box", Command::FocusComposer),
+            MenuItem::action("Focus Message Box", workspace::FocusComposer),
             MenuItem::action("Gallery", workspace::ShowGallery),
             MenuItem::separator(),
             MenuItem::action("Reload", Command::RefreshMessagingRelays),
