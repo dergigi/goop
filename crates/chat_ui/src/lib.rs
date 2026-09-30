@@ -110,6 +110,7 @@ pub struct ChatPanel {
     /// Async operations
     tasks: Vec<Task<Result<(), Error>>>,
     history_load: Option<Task<Result<(), Error>>>,
+    messages_loading: bool,
 
     /// Event subscriptions
     subscriptions: SmallVec<[Subscription; 3]>,
@@ -283,6 +284,7 @@ impl ChatPanel {
             subscriptions,
             tasks: vec![],
             history_load: None,
+            messages_loading: false,
         }
     }
 
@@ -346,6 +348,8 @@ impl ChatPanel {
 
         // Parsing mentions and media is CPU work; do it off the UI thread.
         // Replacing the task also cancels stale reloads of the same panel.
+        self.messages_loading = true;
+        cx.notify();
         let prepared = cx.background_spawn(async move {
             let events = get_messages.await?;
             Ok::<_, Error>(events.into_iter().map(|event| {
@@ -354,21 +358,28 @@ impl ChatPanel {
             }).collect::<Vec<_>>())
         });
         self.history_load = Some(cx.spawn(async move |this, cx| {
-            let mut messages = prepared.await?.into_iter();
-            loop {
-                let batch: Vec<_> = messages.by_ref().take(64).collect();
-                if batch.is_empty() { break; }
-                this.update(cx, |this, cx| {
-                    for message in batch {
-                        match message {
-                            Ok(message) => this.insert_message(message, false, cx),
-                            Err(reaction) => this.insert_reaction(&reaction, cx),
+            let result: Result<(), Error> = async {
+                let mut messages = prepared.await?.into_iter();
+                loop {
+                    let batch: Vec<_> = messages.by_ref().take(64).collect();
+                    if batch.is_empty() { break; }
+                    this.update(cx, |this, cx| {
+                        for message in batch {
+                            match message {
+                                Ok(message) => this.insert_message(message, false, cx),
+                                Err(reaction) => this.insert_reaction(&reaction, cx),
+                            }
                         }
-                    }
-                })?;
-                cx.background_executor().timer(std::time::Duration::from_millis(1)).await;
-            }
-            Ok(())
+                    })?;
+                    cx.background_executor().timer(std::time::Duration::from_millis(1)).await;
+                }
+                Ok(())
+            }.await;
+            this.update(cx, |this, cx| {
+                this.messages_loading = false;
+                cx.notify();
+            })?;
+            result
         }));
     }
 
@@ -1069,6 +1080,49 @@ impl ChatPanel {
                             .update(cx, |chat, cx| chat.retry_failed_messages(cx))
                     }),
             )
+    }
+
+    fn loading_message(&self, cx: &App) -> Option<&'static str> {
+        if self.messages_loading {
+            return Some("Loading messages…");
+        }
+        let chat = ChatRegistry::global(cx).read(cx);
+        if chat.history_running() {
+            Some("Loading message history…")
+        } else if chat.pending_messages() > 0 {
+            Some("Decrypting message history…")
+        } else {
+            None
+        }
+    }
+
+    fn render_loading_notice(&self, text: &'static str, cx: &Context<Self>) -> AnyElement {
+        h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .px_3()
+            .py_1()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .text_xs()
+            .text_color(cx.theme().text_muted)
+            .child(ui::indicator::Indicator::new().small())
+            .child(text)
+            .into_any_element()
+    }
+
+    fn render_loading_empty_state(&self, text: &'static str, cx: &Context<Self>) -> AnyElement {
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .text_sm()
+            .text_color(cx.theme().text_muted)
+            .child(ui::indicator::Indicator::new().small())
+            .child(text)
+            .into_any_element()
     }
 
     fn render_announcement(&self, cx: &Context<Self>) -> AnyElement {
@@ -2019,6 +2073,7 @@ impl Render for ChatPanel {
         // continue scrolling inside the editor once they reach this limit.
         let composer_rows = ((window.viewport_size().height / window.rem_size()) / 4.) as usize;
         self.input.update(cx, |input, cx| input.set_auto_grow_max_rows(composer_rows.clamp(1, 20), cx));
+        let loading_message = self.loading_message(cx);
         v_flex()
             .image_cache(goop_cache(self.id.clone(), 100))
             .relative()
@@ -2062,8 +2117,14 @@ impl Render for ChatPanel {
                     .min_h_0()
                     .overflow_hidden()
                     .relative()
+                    .when_some(loading_message.filter(|_| !self.messages.is_empty()), |this, text| {
+                        this.child(self.render_loading_notice(text, cx))
+                    })
                     .map(|this| {
                         if self.messages.is_empty() {
+                            if let Some(text) = loading_message {
+                                return this.child(self.render_loading_empty_state(text, cx));
+                            }
                             this.child(
                                 div()
                                     .size_full()
