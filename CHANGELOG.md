@@ -7,6 +7,12 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.14.2] - 2026-09-30
+
+### Fixed
+
+- Show loading feedback in open chats while messages load, history is scanned, or messages are decrypted, instead of showing an empty conversation prematurely.
+
 ## [2.14.1] - 2026-09-30
 
 ### Fixed
