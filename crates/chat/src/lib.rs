@@ -146,6 +146,7 @@ pub struct ChatRegistry {
     pub draft_syncing: bool,
     pub archive_error: Option<String>,
     pub archive_syncing: bool,
+    local_owner: Option<PublicKey>,
     incoming: Option<RumorCache>,
     inbox: Option<inbox::Inbox>,
     reads: Option<unread::ReadStore>,
@@ -271,6 +272,7 @@ impl ChatRegistry {
             draft_syncing: false,
             archive_error: None,
             archive_syncing: false,
+            local_owner: None,
             incoming: None,
             inbox: None,
             reads: None,
@@ -299,6 +301,7 @@ impl ChatRegistry {
         let Some(user) = nostr.read(cx).current_user() else {
             return;
         };
+        self.local_owner = Some(user);
         self.reads = match unread::ReadStore::open(&common::config_dir(), user) {
             Ok(reads) => Some(reads),
             Err(error) => { cx.emit(ChatEvent::Error(format!("Could not load read state: {error}"))); None }
@@ -490,6 +493,75 @@ impl ChatRegistry {
         self.incoming.as_ref().map(|cache| cache.search_messages(room).into_iter().filter(|message| !self.is_blocked(message.author)).collect()).unwrap_or_default()
     }
 
+    fn ensure_local_account_state(&mut self, owner: PublicKey, cx: &mut Context<Self>) -> bool {
+        if self.local_owner != Some(owner) {
+            self.local_owner = Some(owner);
+            self.rooms.clear();
+            self.room_index.clear();
+            self.contacts.clear();
+            self.classification_ready = false;
+            self.incoming = None;
+            self.inbox = None;
+            self.reads = None;
+            if let Some(store) = self.archives.take() { store.stop(); }
+            self.archive_task = None;
+            self.archive_error = None;
+            self.archive_syncing = false;
+            if let Some(store) = self.moderation.take() { store.stop(); }
+            self.moderation_task = None;
+            self.moderation_error = None;
+        }
+
+        if self.reads.is_none() {
+            self.reads = match unread::ReadStore::open(&common::config_dir(), owner) {
+                Ok(reads) => Some(reads),
+                Err(error) => {
+                    cx.emit(ChatEvent::Error(format!("Could not load read state: {error}")));
+                    None
+                }
+            };
+        }
+        if self.inbox.is_none() {
+            self.inbox = match inbox::Inbox::open(common::config_dir(), owner) {
+                Ok(inbox) => Some(inbox),
+                Err(error) => {
+                    cx.emit(ChatEvent::Error(format!("Could not load Inbox state: {error}")));
+                    None
+                }
+            };
+        }
+        if self.archives.is_none() {
+            self.archives = match archive::ArchiveStore::open(&common::config_dir(), owner) {
+                Ok((store, _wake)) => Some(store),
+                Err(error) => {
+                    self.archive_error = Some(error.to_string());
+                    None
+                }
+            };
+        }
+        if self.moderation.is_none() {
+            self.moderation = match moderation::ModerationStore::open(&common::config_dir(), owner) {
+                Ok((store, _wake)) => Some(store),
+                Err(error) => {
+                    self.moderation_error = Some(error.to_string());
+                    None
+                }
+            };
+        }
+        if self.incoming.is_none() {
+            let client = NostrRegistry::global(cx).read(cx).client();
+            self.incoming = match RumorCache::open(client, owner) {
+                Ok(cache) => Some(cache),
+                Err(error) => {
+                    cx.emit(ChatEvent::Error(format!("Could not open message cache: {error}")));
+                    None
+                }
+            };
+        }
+
+        self.incoming.is_some()
+    }
+
     pub fn outgoing_phase(&self, id: EventId) -> Option<OutgoingPhase> {
         self.outgoing_activity.filter(|(active, _)| *active == id).map(|(_, phase)| phase)
     }
@@ -544,10 +616,12 @@ impl ChatRegistry {
     pub fn is_muted(&self, key: PublicKey) -> bool { self.moderation.as_ref().is_some_and(|store| store.muted(key)) }
     pub fn moderation_pending(&self) -> bool { self.moderation.as_ref().is_some_and(|store| store.pending()) }
     pub fn mute_user(&mut self, key: PublicKey, seconds: Option<u64>, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before muting");
         self.moderation.as_ref().ok_or_else(|| anyhow!("Connect your signer before muting"))?.mute(key, seconds)?;
         cx.notify(); Ok(())
     }
     pub fn block_user(&mut self, key: PublicKey, blocked: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before blocking");
         self.moderation.as_ref().ok_or_else(|| anyhow!("Connect your signer before blocking"))?.block(key, blocked)?;
         cx.notify(); Ok(())
     }
@@ -692,6 +766,7 @@ impl ChatRegistry {
     }
     pub fn retry_archives(&mut self, cx: &mut Context<Self>) {
         if self.archive_syncing { return; }
+        if NostrRegistry::global(cx).read(cx).current_user().is_none() { return; }
         if let Some(store) = &self.archives {
             self.archive_syncing = true;
             store.retry();
@@ -702,6 +777,7 @@ impl ChatRegistry {
         self.archives.as_ref().is_some_and(|store| store.is_pinned(room.members()))
     }
     pub fn set_pinned(&mut self, id: u64, pinned: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before pinning");
         let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
         let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before pinning"))?;
         store.pin(room.members(), pinned)?;
@@ -719,6 +795,7 @@ impl ChatRegistry {
         self.archives.as_ref().is_some_and(|store| store.has_left(room.members()))
     }
     pub fn set_archived(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before archiving");
         let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
         let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before archiving"))?;
         store.set(room.members(), archived)?;
@@ -726,6 +803,7 @@ impl ChatRegistry {
         Ok(())
     }
     pub fn leave_locally(&mut self, id: u64, left: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before leaving");
         let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
         anyhow::ensure!(room.is_group(), "Leave locally is available for group chats");
         let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before leaving"))?;
@@ -1223,6 +1301,7 @@ impl ChatRegistry {
         self.draft_syncing = false;
         self.archive_syncing = false;
         self.archive_error = None;
+        self.local_owner = None;
         self.incoming = None;
         self.inbox = None;
         self.reads = None;
@@ -1283,7 +1362,9 @@ impl ChatRegistry {
 
     /// Serialize room scans, coalescing requests received during the current scan.
     pub fn get_rooms(&mut self, cx: &mut Context<Self>) {
-        if NostrRegistry::global(cx).read(cx).current_user().is_none()
+        let owner = NostrRegistry::global(cx).read(cx).displayed_user();
+        let Some(owner) = owner else { return; };
+        if !self.ensure_local_account_state(owner, cx)
             || !self.room_reload.request() {
             return;
         }
@@ -1358,7 +1439,7 @@ impl ChatRegistry {
     fn get_rooms_task(&self, cx: &App) -> Task<Result<room_loader::LoadedRooms, Error>> {
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();
-        let owner = nostr.read(cx).current_user();
+        let owner = nostr.read(cx).displayed_user();
         let outgoing = self.outgoing.clone();
         let cache = self.incoming.clone();
         cx.background_spawn(async move {
