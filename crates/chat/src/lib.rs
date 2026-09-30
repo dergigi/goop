@@ -66,6 +66,8 @@ impl Global for GlobalChatRegistry {}
 pub enum ChatEvent {
     /// An event to open a room by its ID
     OpenRoom(u64),
+    /// Close tabs when the displayed account is replaced.
+    AccountChanged,
     /// Show a message author in the workspace profile sidepane.
     OpenProfile(PublicKey),
     /// An event to close a room by its ID
@@ -214,14 +216,14 @@ impl ChatRegistry {
     /// Create a new chat registry instance
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nostr = NostrRegistry::global(cx);
-        let (tx, rx) = flume::bounded::<Signal>(256);
         let mut subscriptions = smallvec![];
 
         subscriptions.push(
             // Subscribe to the signer event
             cx.subscribe(&nostr, |this, _nostr, event, cx| {
                 if event.signer_changed() {
-                    this.reset(cx);
+                    let owner = NostrRegistry::global(cx).read(cx).current_user();
+                    this.reset_for_signer(owner, cx);
                     this.handle_notifications(cx);
                     this.start_archives(cx);
                     this.start_drafts(cx);
@@ -242,6 +244,14 @@ impl ChatRegistry {
             if this.moderation.is_none() { this.start_moderation(cx); }
         });
 
+        let mut registry = Self::empty(cx);
+        registry._subscriptions = subscriptions;
+        registry
+    }
+
+    /// Construct inert state without starting I/O or signer workers.
+    fn empty(cx: &mut Context<Self>) -> Self {
+        let (tx, rx) = flume::bounded::<Signal>(256);
         Self {
             rooms: vec![],
             room_index: HashMap::new(),
@@ -289,7 +299,7 @@ impl ChatRegistry {
             tasks: smallvec![],
             notification_listener: None,
             signal_consumer: None,
-            _subscriptions: subscriptions,
+            _subscriptions: smallvec![],
         }
     }
 
@@ -507,6 +517,10 @@ impl ChatRegistry {
             self.archive_task = None;
             self.archive_error = None;
             self.archive_syncing = false;
+            if let Some(store) = self.drafts.take() { store.stop(); }
+            self.draft_task = None;
+            self.draft_error = None;
+            self.draft_syncing = false;
             if let Some(store) = self.moderation.take() { store.stop(); }
             self.moderation_task = None;
             self.moderation_error = None;
@@ -546,6 +560,12 @@ impl ChatRegistry {
                     self.moderation_error = Some(error.to_string());
                     None
                 }
+            };
+        }
+        if self.drafts.is_none() {
+            self.drafts = match drafts::DraftStore::open(common::support_dir(), owner) {
+                Ok((store, _wake)) => Some(store),
+                Err(error) => { self.draft_error = Some(error.to_string()); None }
             };
         }
         if self.incoming.is_none() {
@@ -629,12 +649,14 @@ impl ChatRegistry {
         if let Some(store) = &self.moderation { store.retry(); } else { self.start_moderation(cx); }
     }
     pub fn draft_snapshot(&self, owner: PublicKey, room: u64, cx: &App) -> Option<drafts::Snapshot> {
-        if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return None; }
+        if NostrRegistry::global(cx).read(cx).displayed_user() != Some(owner) { return None; }
         self.drafts.as_ref()?.snapshot(room)
     }
 
+    /// Stage account-local draft data even before connection. Only start_drafts
+    /// starts the publishing worker, and that still requires current_user.
     pub fn save_draft(&self, owner: PublicKey, members: &[PublicKey], snapshot: drafts::Snapshot, cx: &App) -> Result<(), Error> {
-        if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return Ok(()); }
+        if NostrRegistry::global(cx).read(cx).displayed_user() != Some(owner) { return Ok(()); }
         if let Some(store) = &self.drafts { store.stage(members, snapshot)?; }
         Ok(())
     }
@@ -1275,6 +1297,22 @@ impl ChatRegistry {
         }
     }
 
+    /// Restart signer workers without orphaning tabs for the same account.
+    fn reset_for_signer(&mut self, owner: Option<PublicKey>, cx: &mut Context<Self>) {
+        let same_account = owner.is_some() && owner == self.local_owner;
+        let previous_owner = self.local_owner;
+        let rooms = same_account.then(|| std::mem::take(&mut self.rooms));
+        let index = same_account.then(|| std::mem::take(&mut self.room_index));
+        self.reset(cx);
+        if let (Some(rooms), Some(index)) = (rooms, index) {
+            self.rooms = rooms;
+            self.room_index = index;
+        } else if previous_owner.is_some() {
+            cx.emit(ChatEvent::AccountChanged);
+        }
+        self.local_owner = owner;
+    }
+
     /// Reset the registry.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
         self.tasks.clear();
@@ -1430,6 +1468,9 @@ impl ChatRegistry {
             });
         }
         self.extend_rooms(rooms, cx);
+        for room in &self.rooms {
+            room.update(cx, |room, cx| room.emit_refresh(cx));
+        }
         self.import_local_drafts(cx);
         self.sort(cx);
         cx.notify();
@@ -1908,5 +1949,69 @@ mod validation_tests {
             assert_eq!(cache.get(wrap.id).await.unwrap(), result);
         }
         client.shutdown().await;
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod lifecycle_tests {
+    use super::*;
+
+    #[gpui::test]
+    fn connecting_same_account_preserves_room_handles_and_live_subscriptions(cx: &mut gpui::TestAppContext) {
+        let owner = Keys::generate().public_key();
+        let peer = Keys::generate().public_key();
+        let registry = cx.new(ChatRegistry::empty);
+        let room = cx.new(|_| Room::new(owner, [peer]));
+        let weak = room.downgrade();
+        let id = room.read_with(cx, |room, _| room.id);
+        let events = cx.new(|cx| {
+            cx.subscribe(&room, |count: &mut usize, _, _: &RoomEvent, _| *count += 1).detach();
+            0_usize
+        });
+        registry.update(cx, |registry, cx| {
+            registry.local_owner = Some(owner);
+            registry.rooms.push(room.clone());
+            registry.room_index.insert(id, room.clone());
+            registry.room_reload.request();
+            registry.reset_for_signer(Some(owner), cx);
+            assert_eq!(registry.room_index[&id], room);
+            assert_eq!(weak.upgrade().unwrap(), room);
+            assert!(registry.room_reload.request(), "old load must not block a new scan");
+            registry.extend_rooms([Room::new(owner, [peer])].into(), cx);
+            assert_eq!(registry.room_index[&id], room, "new scan must merge into the existing room");
+            let rumor = EventBuilder::new(Kind::PrivateDirectMessage, "after reconnect")
+                .finalize_unsigned(peer);
+            room.update(cx, |room, cx| {
+                room.emit_refresh(cx);
+                room.push_message(NewMessage::new(EventId::from_byte_array([0; 32]), rumor), cx);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(events.read_with(cx, |count, _| *count), 2);
+    }
+
+    #[gpui::test]
+    fn switching_accounts_clears_rooms_and_requests_tab_cleanup(cx: &mut gpui::TestAppContext) {
+        let owner = Keys::generate().public_key();
+        let other = Keys::generate().public_key();
+        let registry = cx.new(ChatRegistry::empty);
+        let changes = cx.new(|cx| {
+            cx.subscribe(&registry, |count: &mut usize, _, event, _| {
+                if matches!(event, ChatEvent::AccountChanged) { *count += 1; }
+            }).detach();
+            0_usize
+        });
+        registry.update(cx, |registry, cx| {
+            registry.local_owner = Some(owner);
+            let room = cx.new(|_| Room::new(owner, [other]));
+            registry.room_index.insert(room.read(cx).id, room.clone());
+            registry.rooms.push(room);
+            registry.reset_for_signer(Some(other), cx);
+            assert!(registry.rooms.is_empty());
+            assert!(registry.room_index.is_empty());
+            assert_eq!(registry.local_owner, Some(other));
+        });
+        cx.run_until_parked();
+        assert_eq!(changes.read_with(cx, |count, _| *count), 1);
     }
 }

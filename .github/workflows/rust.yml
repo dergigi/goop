@@ -54,6 +54,7 @@ jobs:
       - name: Run cache, UI interaction, and layout regressions
         run: |
           cargo test --locked -p common --features test-support --lib avatars::cache_tests
+          cargo test --locked -p chat --features test-support --lib lifecycle_tests
           cargo test --locked -p ui --features test-support --lib
           cargo test --locked -p chat_ui --features test-support --lib emoji_picker::interaction_tests
           cargo test --locked -p workspace --features test-support --lib panels::connection_status::scroll_tests
