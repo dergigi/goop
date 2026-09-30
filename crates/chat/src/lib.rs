@@ -66,6 +66,8 @@ impl Global for GlobalChatRegistry {}
 pub enum ChatEvent {
     /// An event to open a room by its ID
     OpenRoom(u64),
+    /// Close tabs when the displayed account is replaced.
+    AccountChanged,
     /// Show a message author in the workspace profile sidepane.
     OpenProfile(PublicKey),
     /// An event to close a room by its ID
@@ -146,6 +148,7 @@ pub struct ChatRegistry {
     pub draft_syncing: bool,
     pub archive_error: Option<String>,
     pub archive_syncing: bool,
+    local_owner: Option<PublicKey>,
     incoming: Option<RumorCache>,
     inbox: Option<inbox::Inbox>,
     reads: Option<unread::ReadStore>,
@@ -213,14 +216,14 @@ impl ChatRegistry {
     /// Create a new chat registry instance
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let nostr = NostrRegistry::global(cx);
-        let (tx, rx) = flume::bounded::<Signal>(256);
         let mut subscriptions = smallvec![];
 
         subscriptions.push(
             // Subscribe to the signer event
             cx.subscribe(&nostr, |this, _nostr, event, cx| {
                 if event.signer_changed() {
-                    this.reset(cx);
+                    let owner = NostrRegistry::global(cx).read(cx).current_user();
+                    this.reset_for_signer(owner, cx);
                     this.handle_notifications(cx);
                     this.start_archives(cx);
                     this.start_drafts(cx);
@@ -241,6 +244,14 @@ impl ChatRegistry {
             if this.moderation.is_none() { this.start_moderation(cx); }
         });
 
+        let mut registry = Self::empty(cx);
+        registry._subscriptions = subscriptions;
+        registry
+    }
+
+    /// Construct inert state without starting I/O or signer workers.
+    fn empty(cx: &mut Context<Self>) -> Self {
+        let (tx, rx) = flume::bounded::<Signal>(256);
         Self {
             rooms: vec![],
             room_index: HashMap::new(),
@@ -271,6 +282,7 @@ impl ChatRegistry {
             draft_syncing: false,
             archive_error: None,
             archive_syncing: false,
+            local_owner: None,
             incoming: None,
             inbox: None,
             reads: None,
@@ -287,7 +299,7 @@ impl ChatRegistry {
             tasks: smallvec![],
             notification_listener: None,
             signal_consumer: None,
-            _subscriptions: subscriptions,
+            _subscriptions: smallvec![],
         }
     }
 
@@ -299,6 +311,7 @@ impl ChatRegistry {
         let Some(user) = nostr.read(cx).current_user() else {
             return;
         };
+        self.local_owner = Some(user);
         self.reads = match unread::ReadStore::open(&common::config_dir(), user) {
             Ok(reads) => Some(reads),
             Err(error) => { cx.emit(ChatEvent::Error(format!("Could not load read state: {error}"))); None }
@@ -490,6 +503,85 @@ impl ChatRegistry {
         self.incoming.as_ref().map(|cache| cache.search_messages(room).into_iter().filter(|message| !self.is_blocked(message.author)).collect()).unwrap_or_default()
     }
 
+    fn ensure_local_account_state(&mut self, owner: PublicKey, cx: &mut Context<Self>) -> bool {
+        if self.local_owner != Some(owner) {
+            self.local_owner = Some(owner);
+            self.rooms.clear();
+            self.room_index.clear();
+            self.contacts.clear();
+            self.classification_ready = false;
+            self.incoming = None;
+            self.inbox = None;
+            self.reads = None;
+            if let Some(store) = self.archives.take() { store.stop(); }
+            self.archive_task = None;
+            self.archive_error = None;
+            self.archive_syncing = false;
+            if let Some(store) = self.drafts.take() { store.stop(); }
+            self.draft_task = None;
+            self.draft_error = None;
+            self.draft_syncing = false;
+            if let Some(store) = self.moderation.take() { store.stop(); }
+            self.moderation_task = None;
+            self.moderation_error = None;
+        }
+
+        if self.reads.is_none() {
+            self.reads = match unread::ReadStore::open(&common::config_dir(), owner) {
+                Ok(reads) => Some(reads),
+                Err(error) => {
+                    cx.emit(ChatEvent::Error(format!("Could not load read state: {error}")));
+                    None
+                }
+            };
+        }
+        if self.inbox.is_none() {
+            self.inbox = match inbox::Inbox::open(common::config_dir(), owner) {
+                Ok(inbox) => Some(inbox),
+                Err(error) => {
+                    cx.emit(ChatEvent::Error(format!("Could not load Inbox state: {error}")));
+                    None
+                }
+            };
+        }
+        if self.archives.is_none() {
+            self.archives = match archive::ArchiveStore::open(&common::config_dir(), owner) {
+                Ok((store, _wake)) => Some(store),
+                Err(error) => {
+                    self.archive_error = Some(error.to_string());
+                    None
+                }
+            };
+        }
+        if self.moderation.is_none() {
+            self.moderation = match moderation::ModerationStore::open(&common::config_dir(), owner) {
+                Ok((store, _wake)) => Some(store),
+                Err(error) => {
+                    self.moderation_error = Some(error.to_string());
+                    None
+                }
+            };
+        }
+        if self.drafts.is_none() {
+            self.drafts = match drafts::DraftStore::open(common::support_dir(), owner) {
+                Ok((store, _wake)) => Some(store),
+                Err(error) => { self.draft_error = Some(error.to_string()); None }
+            };
+        }
+        if self.incoming.is_none() {
+            let client = NostrRegistry::global(cx).read(cx).client();
+            self.incoming = match RumorCache::open(client, owner) {
+                Ok(cache) => Some(cache),
+                Err(error) => {
+                    cx.emit(ChatEvent::Error(format!("Could not open message cache: {error}")));
+                    None
+                }
+            };
+        }
+
+        self.incoming.is_some()
+    }
+
     pub fn outgoing_phase(&self, id: EventId) -> Option<OutgoingPhase> {
         self.outgoing_activity.filter(|(active, _)| *active == id).map(|(_, phase)| phase)
     }
@@ -544,10 +636,12 @@ impl ChatRegistry {
     pub fn is_muted(&self, key: PublicKey) -> bool { self.moderation.as_ref().is_some_and(|store| store.muted(key)) }
     pub fn moderation_pending(&self) -> bool { self.moderation.as_ref().is_some_and(|store| store.pending()) }
     pub fn mute_user(&mut self, key: PublicKey, seconds: Option<u64>, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before muting");
         self.moderation.as_ref().ok_or_else(|| anyhow!("Connect your signer before muting"))?.mute(key, seconds)?;
         cx.notify(); Ok(())
     }
     pub fn block_user(&mut self, key: PublicKey, blocked: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before blocking");
         self.moderation.as_ref().ok_or_else(|| anyhow!("Connect your signer before blocking"))?.block(key, blocked)?;
         cx.notify(); Ok(())
     }
@@ -555,12 +649,14 @@ impl ChatRegistry {
         if let Some(store) = &self.moderation { store.retry(); } else { self.start_moderation(cx); }
     }
     pub fn draft_snapshot(&self, owner: PublicKey, room: u64, cx: &App) -> Option<drafts::Snapshot> {
-        if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return None; }
+        if NostrRegistry::global(cx).read(cx).displayed_user() != Some(owner) { return None; }
         self.drafts.as_ref()?.snapshot(room)
     }
 
+    /// Stage account-local draft data even before connection. Only start_drafts
+    /// starts the publishing worker, and that still requires current_user.
     pub fn save_draft(&self, owner: PublicKey, members: &[PublicKey], snapshot: drafts::Snapshot, cx: &App) -> Result<(), Error> {
-        if NostrRegistry::global(cx).read(cx).current_user() != Some(owner) { return Ok(()); }
+        if NostrRegistry::global(cx).read(cx).displayed_user() != Some(owner) { return Ok(()); }
         if let Some(store) = &self.drafts { store.stage(members, snapshot)?; }
         Ok(())
     }
@@ -692,6 +788,7 @@ impl ChatRegistry {
     }
     pub fn retry_archives(&mut self, cx: &mut Context<Self>) {
         if self.archive_syncing { return; }
+        if NostrRegistry::global(cx).read(cx).current_user().is_none() { return; }
         if let Some(store) = &self.archives {
             self.archive_syncing = true;
             store.retry();
@@ -702,6 +799,7 @@ impl ChatRegistry {
         self.archives.as_ref().is_some_and(|store| store.is_pinned(room.members()))
     }
     pub fn set_pinned(&mut self, id: u64, pinned: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before pinning");
         let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
         let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before pinning"))?;
         store.pin(room.members(), pinned)?;
@@ -719,6 +817,7 @@ impl ChatRegistry {
         self.archives.as_ref().is_some_and(|store| store.has_left(room.members()))
     }
     pub fn set_archived(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before archiving");
         let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
         let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before archiving"))?;
         store.set(room.members(), archived)?;
@@ -726,6 +825,7 @@ impl ChatRegistry {
         Ok(())
     }
     pub fn leave_locally(&mut self, id: u64, left: bool, cx: &mut Context<Self>) -> Result<(), Error> {
+        anyhow::ensure!(NostrRegistry::global(cx).read(cx).current_user().is_some(), "Connect your signer before leaving");
         let room = self.room_index.get(&id).ok_or_else(|| anyhow!("Conversation not found"))?.read(cx);
         anyhow::ensure!(room.is_group(), "Leave locally is available for group chats");
         let store = self.archives.as_ref().ok_or_else(|| anyhow!("Connect your signer before leaving"))?;
@@ -1197,6 +1297,22 @@ impl ChatRegistry {
         }
     }
 
+    /// Restart signer workers without orphaning tabs for the same account.
+    fn reset_for_signer(&mut self, owner: Option<PublicKey>, cx: &mut Context<Self>) {
+        let same_account = owner.is_some() && owner == self.local_owner;
+        let previous_owner = self.local_owner;
+        let rooms = same_account.then(|| std::mem::take(&mut self.rooms));
+        let index = same_account.then(|| std::mem::take(&mut self.room_index));
+        self.reset(cx);
+        if let (Some(rooms), Some(index)) = (rooms, index) {
+            self.rooms = rooms;
+            self.room_index = index;
+        } else if previous_owner.is_some() {
+            cx.emit(ChatEvent::AccountChanged);
+        }
+        self.local_owner = owner;
+    }
+
     /// Reset the registry.
     pub fn reset(&mut self, cx: &mut Context<Self>) {
         self.tasks.clear();
@@ -1223,6 +1339,7 @@ impl ChatRegistry {
         self.draft_syncing = false;
         self.archive_syncing = false;
         self.archive_error = None;
+        self.local_owner = None;
         self.incoming = None;
         self.inbox = None;
         self.reads = None;
@@ -1283,7 +1400,9 @@ impl ChatRegistry {
 
     /// Serialize room scans, coalescing requests received during the current scan.
     pub fn get_rooms(&mut self, cx: &mut Context<Self>) {
-        if NostrRegistry::global(cx).read(cx).current_user().is_none()
+        let owner = NostrRegistry::global(cx).read(cx).displayed_user();
+        let Some(owner) = owner else { return; };
+        if !self.ensure_local_account_state(owner, cx)
             || !self.room_reload.request() {
             return;
         }
@@ -1349,6 +1468,9 @@ impl ChatRegistry {
             });
         }
         self.extend_rooms(rooms, cx);
+        for room in &self.rooms {
+            room.update(cx, |room, cx| room.emit_refresh(cx));
+        }
         self.import_local_drafts(cx);
         self.sort(cx);
         cx.notify();
@@ -1358,7 +1480,7 @@ impl ChatRegistry {
     fn get_rooms_task(&self, cx: &App) -> Task<Result<room_loader::LoadedRooms, Error>> {
         let nostr = NostrRegistry::global(cx);
         let client = nostr.read(cx).client();
-        let owner = nostr.read(cx).current_user();
+        let owner = nostr.read(cx).displayed_user();
         let outgoing = self.outgoing.clone();
         let cache = self.incoming.clone();
         cx.background_spawn(async move {
@@ -1827,5 +1949,69 @@ mod validation_tests {
             assert_eq!(cache.get(wrap.id).await.unwrap(), result);
         }
         client.shutdown().await;
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod lifecycle_tests {
+    use super::*;
+
+    #[gpui::test]
+    fn connecting_same_account_preserves_room_handles_and_live_subscriptions(cx: &mut gpui::TestAppContext) {
+        let owner = Keys::generate().public_key();
+        let peer = Keys::generate().public_key();
+        let registry = cx.new(ChatRegistry::empty);
+        let room = cx.new(|_| Room::new(owner, [peer]));
+        let weak = room.downgrade();
+        let id = room.read_with(cx, |room, _| room.id);
+        let events = cx.new(|cx| {
+            cx.subscribe(&room, |count: &mut usize, _, _: &RoomEvent, _| *count += 1).detach();
+            0_usize
+        });
+        registry.update(cx, |registry, cx| {
+            registry.local_owner = Some(owner);
+            registry.rooms.push(room.clone());
+            registry.room_index.insert(id, room.clone());
+            registry.room_reload.request();
+            registry.reset_for_signer(Some(owner), cx);
+            assert_eq!(registry.room_index[&id], room);
+            assert_eq!(weak.upgrade().unwrap(), room);
+            assert!(registry.room_reload.request(), "old load must not block a new scan");
+            registry.extend_rooms([Room::new(owner, [peer])].into(), cx);
+            assert_eq!(registry.room_index[&id], room, "new scan must merge into the existing room");
+            let rumor = EventBuilder::new(Kind::PrivateDirectMessage, "after reconnect")
+                .finalize_unsigned(peer);
+            room.update(cx, |room, cx| {
+                room.emit_refresh(cx);
+                room.push_message(NewMessage::new(EventId::from_byte_array([0; 32]), rumor), cx);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(events.read_with(cx, |count, _| *count), 2);
+    }
+
+    #[gpui::test]
+    fn switching_accounts_clears_rooms_and_requests_tab_cleanup(cx: &mut gpui::TestAppContext) {
+        let owner = Keys::generate().public_key();
+        let other = Keys::generate().public_key();
+        let registry = cx.new(ChatRegistry::empty);
+        let changes = cx.new(|cx| {
+            cx.subscribe(&registry, |count: &mut usize, _, event, _| {
+                if matches!(event, ChatEvent::AccountChanged) { *count += 1; }
+            }).detach();
+            0_usize
+        });
+        registry.update(cx, |registry, cx| {
+            registry.local_owner = Some(owner);
+            let room = cx.new(|_| Room::new(owner, [other]));
+            registry.room_index.insert(room.read(cx).id, room.clone());
+            registry.rooms.push(room);
+            registry.reset_for_signer(Some(other), cx);
+            assert!(registry.rooms.is_empty());
+            assert!(registry.room_index.is_empty());
+            assert_eq!(registry.local_owner, Some(other));
+        });
+        cx.run_until_parked();
+        assert_eq!(changes.read_with(cx, |count, _| *count), 1);
     }
 }

@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show cached chats before the signer connects, save drafts for the remembered account, and keep open chats working when its signer reconnects.
+
 ## [2.14.0] - 2026-09-25
 
 ### Added

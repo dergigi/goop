@@ -246,6 +246,10 @@ impl Workspace {
                             cx,
                         );
                     }
+                    ChatEvent::AccountChanged => {
+                        DockArea::close_all(&this.dock, window, cx);
+                        this.dock.update(cx, |dock, _| dock.clear_closed_panels());
+                    }
                     ChatEvent::OpenProfile(public_key) => {
                         let public_key = *public_key;
                         // Let the context menu finish dismissing before moving focus.

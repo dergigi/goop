@@ -521,6 +521,38 @@ mod tests {
     use super::*;
     use crate::test_state_dir::StateDir;
 
+    #[test]
+    fn offline_edit_survives_reopen_with_an_older_pending_draft() {
+        let root = StateDir::new();
+        let owner = Keys::generate().public_key();
+        let peer = Keys::generate().public_key();
+        let room = crate::Room::new(owner, [peer]);
+        let writer = common::persistence::global();
+        let (store, _) = DraftStore::open(root.path(), owner).unwrap();
+        store.stage(room.members(), text("old pending text")).unwrap();
+        store.stop();
+
+        // Startup opens a local store without starting its signer worker.
+        let (offline, _) = DraftStore::open(root.path(), owner).unwrap();
+        let edit = text("typed before connecting\n🧡");
+        let draft_path = path(root.path(), owner, room.id);
+        writer.save(&draft_path, edit.clone()).unwrap();
+        offline.stage(room.members(), edit.clone()).unwrap();
+        offline.stop();
+        writer.flush_blocking().unwrap();
+
+        // Both restart and signer connection reopen the same pending state.
+        let (connected, _) = DraftStore::open(root.path(), owner).unwrap();
+        connected.import_local(room.members()).unwrap();
+        assert_eq!(connected.snapshot(room.id), Some(edit.clone()));
+        assert_eq!(writer.load::<Snapshot>(&draft_path).unwrap(), edit);
+        let (other, _) = DraftStore::open(root.path(), peer).unwrap();
+        assert_eq!(other.snapshot(room.id), None);
+        assert_eq!(writer.load::<Snapshot>(&path(root.path(), peer, room.id)).unwrap(), Snapshot::default());
+        connected.stop();
+        other.stop();
+    }
+
     fn text(value: &str) -> Snapshot {
         Snapshot {
             text: value.into(),

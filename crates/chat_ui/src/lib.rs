@@ -159,7 +159,7 @@ impl ChatPanel {
                 .submit_on_enter(true)
         });
 
-        let draft = NostrRegistry::global(cx).read(cx).current_user().and_then(|owner| {
+        let draft = NostrRegistry::global(cx).read(cx).displayed_user().and_then(|owner| {
             room.read_with(cx, |room, _| drafts::Draft::new(common::support_dir(), owner, room.id)).ok()
         });
 
