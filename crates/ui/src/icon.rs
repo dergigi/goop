@@ -20,6 +20,7 @@ impl<T: IconNamed> From<T> for Icon {
 
 #[derive(IntoElement, Clone)]
 pub enum IconName {
+    Microphone,
     Activity,
     Archive,
     Block,
@@ -117,6 +118,7 @@ impl IconName {
 impl IconNamed for IconName {
     fn path(self) -> SharedString {
         match self {
+            Self::Microphone => "icons/microphone.svg",
             Self::Hourglass => "icons/hourglass.svg",
             Self::Pencil => "icons/pencil.svg",
             Self::ArrowLeft => "icons/arrow-left.svg",

@@ -36,6 +36,7 @@ use crate::text::RenderedText;
 
 mod actions;
 mod composer;
+mod dictation;
 mod drafts;
 pub use drafts::DraftIndicators;
 mod encrypted_media;
@@ -85,6 +86,7 @@ pub struct ChatPanel {
     input: Entity<InputState>,
     draft: Option<drafts::Draft>,
     sent_history: Option<composer::SentHistory>,
+    dictation: dictation::Dictation,
 
     /// Subject input state
     subject_input: Entity<InputState>,
@@ -267,6 +269,7 @@ impl ChatPanel {
             input,
             draft,
             sent_history: None,
+            dictation: dictation::Dictation::default(),
             subject_input,
             subject_bar,
             history_bar: cx.new(|_| false),
@@ -502,6 +505,7 @@ impl ChatPanel {
     }
 
     fn send_text_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.active() { return; }
         if self.uploading {
             window.push_notification("Wait for attachments to finish uploading", cx);
             return;
@@ -2224,24 +2228,26 @@ impl Render for ChatPanel {
                                     .px_4()
                                     .py_3(),
                             )
-                            .child(
+                            .when(!self.dictation.active(), |row| row.child(
                                 h_flex()
                                     .pl_1()
                                     .gap_1()
+                                    .child(self.render_dictation(self.uploading || left_room.is_some() || blocked_room, cx))
                                     .child(self.render_emoji_menu(window, cx))
                                     .child(self.render_config_menu(window, cx))
                                     .child(
                                         Button::new("send")
                                             .icon(IconName::PaperPlaneFill)
-                                            .disabled(self.uploading || left_room.is_some() || blocked_room)
+                                            .disabled(self.dictation.active() || self.uploading || left_room.is_some() || blocked_room)
                                             .ghost()
                                             .large()
                                             .on_click(cx.listener(move |this, _ev, window, cx| {
                                                 this.send_text_message(window, cx);
                                             })),
                                     ),
-                            ),
-                    ),
+                            )),
+                    )
+                    .when(self.dictation.active(), |view| view.child(self.render_dictation(self.uploading || left_room.is_some() || blocked_room, cx))),
             )
             .child(
                 v_flex()

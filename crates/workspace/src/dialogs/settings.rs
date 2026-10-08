@@ -13,7 +13,7 @@ use ui::input::{Input, InputState};
 use ui::menu::{DropdownMenu, PopupMenuItem};
 use ui::notification::Notification;
 use ui::switch::Switch;
-use ui::{IconName, Sizable, WindowExtension, h_flex, v_flex};
+use ui::{Disableable, IconName, Sizable, WindowExtension, h_flex, v_flex};
 
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<Preferences> {
     cx.new(|cx| Preferences::new(window, cx))
@@ -21,6 +21,8 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Preferences> {
 
 pub struct Preferences {
     file_input: Entity<InputState>,
+    removing_model: bool,
+    model_available: bool,
     _subscription: Subscription,
 }
 
@@ -38,6 +40,8 @@ impl Preferences {
         registry.update(cx, |registry, cx| registry.refresh_media_servers(cx));
         Self {
             file_input,
+            removing_model: false,
+            model_available: speech::model::directory(&common::support_dir().join("speech")).exists(),
             _subscription: subscription,
         }
     }
@@ -54,6 +58,28 @@ impl Preferences {
                 window.push_notification(Notification::error(e.to_string()).autohide(false), cx);
             }
         }
+    }
+
+    fn remove_dictation_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.removing_model = true;
+        let task = cx.background_executor().spawn(async {
+            speech::remove_model(&common::support_dir().join("speech"))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.removing_model = false;
+                match result {
+                    Ok(()) => {
+                        this.model_available = false;
+                        window.push_notification("Dictation model removed", cx);
+                    },
+                    Err(error) => window.push_notification(Notification::error(error.to_string()), cx),
+                }
+                cx.notify();
+            });
+        }).detach();
+        cx.notify();
     }
 
     /// Set the theme mode (light or dark)
@@ -149,6 +175,14 @@ impl Render for Preferences {
                                     }),
                             ),
                     ),
+            )
+            .child(
+                GroupBox::new().id("dictation-settings").title("Local dictation").fill()
+                    .child(h_flex().gap_2()
+                        .child(div().flex_1().text_sm().child("NVIDIA Parakeet v3 · 25 languages"))
+                        .child(Button::new("remove-dictation-model").label("Remove model")
+                            .ghost().small().loading(self.removing_model).disabled(!self.model_available)
+                            .on_click(cx.listener(|this, _, window, cx| this.remove_dictation_model(window, cx)))))
             )
             .child(
                 GroupBox::new()

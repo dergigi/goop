@@ -19,6 +19,7 @@ state = { path = "../state" }
 chat = { path = "../chat" }
 chat_ui = { path = "../chat_ui" }
 settings = { path = "../settings" }
+speech = { path = "../speech" }
 person = { path = "../person" }
 update_check = { path = "../update_check" }
 
