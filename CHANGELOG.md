@@ -7,6 +7,16 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.14.3] - 2026-10-08
+
+### Fixed
+
+- Reduce startup relay request bursts by batching profile and relay-list lookups, pacing background refreshes, and backing off after rate limiting. Cached profiles remain available immediately.
+
+### Added
+
+- Open profiles on ants.sh from the profile pane, alongside njump.to.
+
 ## [2.14.2] - 2026-09-30
 
 ### Fixed
