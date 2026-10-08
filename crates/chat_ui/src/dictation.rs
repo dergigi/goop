@@ -21,6 +21,7 @@ pub(super) struct Dictation {
     seconds: u64,
     level: f32,
     downloaded: u64,
+    download: bool,
     error: String,
     retryable: bool,
     send_guard: Option<ComposerSnapshot>,
@@ -81,6 +82,7 @@ impl ChatPanel {
         self.dictation = Dictation {
             session: Some(session),
             owner: Some(owner),
+            download,
             phase: if download {
                 Phase::Downloading
             } else {
@@ -273,7 +275,7 @@ impl ChatPanel {
                                 this.dictation.phase = Phase::Processing;
                                 cx.notify();
                             } else {
-                                this.start_dictation(false, window, cx);
+                                this.start_dictation(this.dictation.download, window, cx);
                             }
                         })),
                 );

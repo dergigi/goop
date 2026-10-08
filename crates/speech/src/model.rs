@@ -51,7 +51,26 @@ pub(crate) fn check_cancel(cancel: &AtomicBool) -> Result<()> {
 }
 
 /// Download into a staging directory. Only an entirely verified model is installed.
-pub fn install(root: &Path, cancel: &AtomicBool, mut progress: impl FnMut(u64)) -> Result<()> {
+pub fn install(root: &Path, cancel: &AtomicBool, progress: impl FnMut(u64)) -> Result<()> {
+    install_from(root, cancel, progress, || {
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(20))
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+        client
+            .get(URL)
+            .send()
+            .context("Could not download dictation. Check your connection and try again")?
+            .error_for_status()
+            .context("Dictation download is unavailable. Please try again later")
+    })
+}
+fn install_from<R: Read>(
+    root: &Path,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(u64),
+    open: impl FnOnce() -> Result<R>,
+) -> Result<()> {
     check_cancel(cancel)?;
     let _lock = lock(root)?;
     if ready(root) {
@@ -64,16 +83,7 @@ pub fn install(root: &Path, cancel: &AtomicBool, mut progress: impl FnMut(u64)) 
     }
     fs::create_dir(&staging)?;
     let result = (|| {
-        let client = reqwest::blocking::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(20))
-            .timeout(std::time::Duration::from_secs(15))
-            .build()?;
-        let mut response = client
-            .get(URL)
-            .send()
-            .context("Could not download dictation. Check your connection and try again")?
-            .error_for_status()
-            .context("Dictation download is unavailable. Please try again later")?;
+        let mut response = open()?;
         let archive = staging.join("model.tar.bz2");
         let mut file = fs::File::create(&archive)?;
         let mut hash = Sha256::new();
@@ -251,5 +261,58 @@ mod tests {
         assert!(lock(root.path()).is_err());
         drop(lease);
         assert!(lock(root.path()).is_ok());
+    }
+
+    #[test]
+    fn incomplete_transfer_and_mid_transfer_cancellation_leave_no_model() {
+        let root = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let incomplete = install_from(root.path(), &cancel, |_| {}, || Ok(&b"incomplete"[..]));
+        assert!(
+            incomplete
+                .unwrap_err()
+                .to_string()
+                .contains("incomplete or corrupt")
+        );
+        assert!(!ready(root.path()));
+        assert!(!root.path().join("parakeet-v3-download").exists());
+        let cancelled = install_from(
+            root.path(),
+            &cancel,
+            |_| cancel.store(true, Ordering::Relaxed),
+            || Ok(std::io::repeat(0).take(2_000_000)),
+        );
+        assert!(cancelled.is_err());
+        assert!(!ready(root.path()));
+        assert!(!root.path().join("parakeet-v3-download").exists());
+    }
+    #[test]
+    #[ignore = "requires GOOP_SPEECH_ARCHIVE; validates the real archive without network"]
+    fn installs_verified_archive_fixture() {
+        let root = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut last_progress = 0;
+        install_from(
+            root.path(),
+            &cancel,
+            |bytes| last_progress = bytes,
+            || {
+                Ok(fs::File::open(
+                    std::env::var("GOOP_SPEECH_ARCHIVE").unwrap(),
+                )?)
+            },
+        )
+        .unwrap();
+        assert_eq!(last_progress, DOWNLOAD_BYTES);
+        assert!(ready(root.path()));
+        assert!(!root.path().join("parakeet-v3-download").exists());
+        assert!(directory(root.path()).join("ATTRIBUTION.txt").exists());
+        install_from(
+            root.path(),
+            &cancel,
+            |_| {},
+            || -> Result<fs::File> { panic!("ready model must not download again") },
+        )
+        .unwrap();
     }
 }

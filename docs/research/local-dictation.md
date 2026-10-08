@@ -39,6 +39,9 @@ Development Mac: Apple M4 Pro, 2026-10-08. Measurements use the actual INT8 mode
 - German synthetic speech: load 0.82 s; transcription 0.40 s; expected sentence recognized.
 - Portuguese synthetic speech: load 0.76 s; transcription 0.45 s; expected sentence recognized.
 - 38.45 s repeated English fixture: load 0.82 s; transcription 5.42 s, exercising segmentation. Peak resident set about 1.48 GB; macOS reported peak memory footprint about 1.06 GB. These are test-process measurements, not total Goop memory usage.
+- Silent audio produced an empty transcript, exercising the retry/discard path.
+- The complete prefetched archive passed the production installation path: digest, extraction, attribution, atomic publication, cleanup, and reuse without another download.
+- 81 deterministic speech, chat UI, and workspace tests passed.
 - Unit coverage includes downmixing and bounded audio, segment boundaries, malformed/incomplete archives, cancellation, filesystem locking, preservation of edited drafts, and send/account guards.
 
 Run deterministic tests with `cargo test -p speech -p chat_ui -p workspace --lib`. Hardware/model tests are explicitly ignored by default:
@@ -48,6 +51,9 @@ GOOP_SPEECH_MODEL_ROOT=/path/to/speech \
 GOOP_SPEECH_WAV=/path/to/fixture.wav \
 GOOP_SPEECH_EXPECT='expected words' \
 cargo test -p speech real_model_transcribes_fixture -- --ignored --nocapture
+
+GOOP_SPEECH_ARCHIVE=/path/to/model.tar.bz2 \
+cargo test -p speech installs_verified_archive_fixture -- --ignored --nocapture
 
 GOOP_DOWNLOAD_ROOT=/path/to/test-models \
 cargo test -p speech downloads_verified_model -- --ignored --nocapture
