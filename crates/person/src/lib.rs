@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Error;
@@ -79,21 +79,33 @@ impl PersonRegistry {
         tasks.push(cx.background_spawn(async move {
             dispatch_requests(&cache_client, metadata_rx, network_tx, &cache_tx).await;
         }));
-        // Reserve bounded parallelism for visible people; no idle batching timer.
-        for _ in 0..4 {
-            let client = client.clone();
-            let requests = network_rx.clone();
-            let tx = tx.clone();
-            let pending = pending.clone();
-            tasks.push(cx.background_spawn(async move {
-                while let Ok(public_key) = requests.recv_async().await {
-                    if let Err(error) = fetch_profile(&client, public_key, &tx).await {
-                        log::warn!("Could not refresh visible profile: {error}");
-                    }
-                    pending.write().unwrap().remove(&public_key);
+        // Coalesce startup lookups and pace batches, not just concurrent requests.
+        // A fast relay can exhaust its request budget with four serial workers.
+        let executor = cx.background_executor().clone();
+        let network_client = client.clone();
+        let network_updates = tx.clone();
+        let network_pending = pending.clone();
+        tasks.push(cx.background_spawn(async move {
+            while let Ok(first) = network_rx.recv_async().await {
+                executor.timer(Duration::from_millis(200)).await;
+                let authors = profile_batch(first, &network_rx);
+                let rate_limited =
+                    match fetch_profiles(&network_client, &authors, &network_updates).await {
+                        Ok(rate_limited) => rate_limited,
+                        Err(error) => {
+                            log::warn!("Could not refresh visible profiles: {error}");
+                            true // Back off on setup failures as well.
+                        }
+                    };
+                // Retain pending keys during the cooldown so redraws cannot queue
+                // duplicate work while a relay is refusing requests.
+                executor.timer(profile_batch_delay(rate_limited)).await;
+                let mut pending = network_pending.write().unwrap();
+                for author in authors {
+                    pending.remove(&author);
                 }
-            }));
-        }
+            }
+        }));
 
         tasks.push(cx.spawn(async move |this, cx| {
             let mut budget = common::UiWorkBudget::default();
@@ -348,25 +360,146 @@ async fn cached_profile(client: &Client, public_key: PublicKey) -> Result<Option
         .find_map(|event| Person::from_metadata_event(event).ok()))
 }
 
-async fn fetch_profile(
+const PROFILE_BATCH_SIZE: usize = 64;
+
+fn profile_batch(first: PublicKey, requests: &flume::Receiver<PublicKey>) -> HashSet<PublicKey> {
+    let mut authors = HashSet::from([first]);
+    while authors.len() < PROFILE_BATCH_SIZE {
+        let Ok(author) = requests.try_recv() else {
+            break;
+        };
+        authors.insert(author);
+    }
+    authors
+}
+
+fn profile_batch_delay(rate_limited: bool) -> Duration {
+    // Leave room for discovery, messages and account-list requests on relays
+    // with small per-IP budgets. This only paces background profile refreshes.
+    Duration::from_secs(if rate_limited { 120 } else { 60 })
+}
+
+async fn fetch_profiles(
     client: &Client,
-    public_key: PublicKey,
+    authors: &HashSet<PublicKey>,
     tx: &flume::Sender<Dispatch>,
+) -> Result<bool, Error> {
+    fetch_profiles_with_allowed_relays(client, authors, tx, GossipAllowedRelays::default()).await
+}
+
+async fn fetch_profiles_with_allowed_relays(
+    client: &Client,
+    authors: &HashSet<PublicKey>,
+    tx: &flume::Sender<Dispatch>,
+    allowed: GossipAllowedRelays,
+) -> Result<bool, Error> {
+    if authors.is_empty() {
+        return Ok(false);
+    }
+    let read_relays = client
+        .relays()
+        .with_capabilities(RelayCapabilities::READ)
+        .await;
+    let discovery_relays = client
+        .relays()
+        .with_capabilities(RelayCapabilities::READ | RelayCapabilities::DISCOVERY)
+        .await;
+    let mut limited_relays = HashSet::new();
+    // Use one grouped discovery filter. Automatic gossip's negentropy fallback
+    // can generate one filter per cached relay list even for a batched query.
+    let discovery = Filter::new()
+        .kind(Kind::RelayList)
+        .authors(authors.iter().copied());
+    let targets: Vec<_> = discovery_relays
+        .into_keys()
+        .map(|relay| (relay, vec![discovery.clone()]))
+        .collect();
+    if !targets.is_empty() {
+        collect_profile_events(client, targets, tx, &mut limited_relays).await?;
+    }
+
+    // Keep fallback on configured read relays, including authors with no outbox.
+    let mut targets: HashMap<RelayUrl, HashSet<PublicKey>> = read_relays
+        .into_keys()
+        .filter(|relay| !limited_relays.contains(relay))
+        .map(|relay| (relay, authors.clone()))
+        .collect();
+    // The database retains valid cached relay lists when discovery is offline.
+    let lists = client.database().query(discovery).await?;
+    let mut latest = HashMap::new();
+    for event in lists {
+        if event.verify().is_ok() {
+            let entry = latest.entry(event.pubkey).or_insert(event.clone());
+            if event.created_at > entry.created_at {
+                *entry = event;
+            }
+        }
+    }
+    for (author, event) in latest {
+        let relays: BTreeSet<_> = nip65::extract_relay_list(&event)
+            .filter(|(relay, usage)| {
+                *usage != Some(RelayMetadata::Read)
+                    && allowed.is_allowed(relay)
+                    && !limited_relays.contains(relay)
+            })
+            .map(|(relay, _)| relay.clone())
+            .collect();
+        // Bound the number of outboxes queried per author.
+        for relay in relays.into_iter().take(3) {
+            if let Err(error) = client
+                .add_relay(&relay)
+                .capabilities(RelayCapabilities::GOSSIP)
+                .and_connect()
+                .await
+            {
+                log::warn!("Could not connect profile relay: {error}");
+                continue;
+            }
+            targets.entry(relay).or_default().insert(author);
+        }
+    }
+    let targets = targets
+        .into_iter()
+        .map(|(relay, authors)| {
+            // Metadata is replaceable; a shared limit(1) would omit other authors.
+            (
+                relay,
+                vec![Filter::new().kind(Kind::Metadata).authors(authors)],
+            )
+        })
+        .collect();
+    collect_profile_events(client, targets, tx, &mut limited_relays).await?;
+    Ok(!limited_relays.is_empty())
+}
+
+async fn collect_profile_events(
+    client: &Client,
+    targets: Vec<(RelayUrl, Vec<Filter>)>,
+    tx: &flume::Sender<Dispatch>,
+    limited_relays: &mut HashSet<RelayUrl>,
 ) -> Result<(), Error> {
-    let filter = Filter::new()
-        .kind(Kind::Metadata)
-        .author(public_key)
-        .limit(1);
-    // Filter-based targeting preserves the SDK's automatic outbox discovery.
+    if targets.is_empty() {
+        return Ok(());
+    }
     let mut stream = client
-        .stream_events(filter)
+        .stream_events(ReqTarget::manual(targets))
         .timeout(Duration::from_secs(10))
         .await?;
-    while let Some((_, event)) = stream.next().await {
-        if let Ok(event) = event
-            && let Ok(person) = Person::from_metadata_event(&event)
-        {
-            tx.send_async(Dispatch::Person(person)).await?;
+    while let Some((relay, event)) = stream.next().await {
+        match event {
+            Ok(event) => {
+                if event.kind == Kind::RelayList && event.verify().is_ok() {
+                    client.database().save_event(&event).await?;
+                }
+                if let Ok(person) = Person::from_metadata_event(&event) {
+                    tx.send_async(Dispatch::Person(person)).await?;
+                }
+            }
+            Err(error) => {
+                if error.to_string().contains("rate-limited:") {
+                    limited_relays.insert(relay);
+                }
+            }
         }
     }
     Ok(())
@@ -395,6 +528,148 @@ async fn dispatch_requests(
 #[cfg(test)]
 mod loading_tests {
     use super::*;
+    #[test]
+    fn startup_batches_are_bounded_and_deduplicate_profiles() {
+        let (tx, rx) = flume::unbounded();
+        let first = Keys::generate().public_key();
+        tx.send(first).unwrap();
+        for _ in 0..PROFILE_BATCH_SIZE {
+            tx.send(Keys::generate().public_key()).unwrap();
+        }
+        let batch = profile_batch(first, &rx);
+        assert_eq!(batch.len(), PROFILE_BATCH_SIZE);
+        assert!(batch.contains(&first));
+        assert_eq!(rx.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn startup_profiles_fit_in_two_relay_queries() {
+        use nostr_gossip_memory::prelude::NostrGossipMemory;
+        use nostr_sdk::local_relay::LocalRelay;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let relay = LocalRelay::builder().queries_per_minute(2).build();
+            relay.run().await.unwrap();
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .gossip(NostrGossipMemory::unbounded())
+                .gossip_config(GossipConfig::default().no_background_refresh())
+                .build();
+            let mut authors = HashSet::new();
+            for _ in 0..PROFILE_BATCH_SIZE {
+                let keys = Keys::generate();
+                authors.insert(keys.public_key());
+                relay.add_event(profile(&keys, 1)).await.unwrap();
+                // Simulate a returning user with cached discovery data. The
+                // SDK's automatic fallback must not refresh these one by one.
+                client
+                    .database()
+                    .save_event(
+                        &EventBuilder::new(Kind::RelayList, "")
+                            .finalize(&keys)
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            client
+                .add_relay(relay.url().await)
+                .and_connect()
+                .await
+                .unwrap();
+            let (tx, rx) = flume::unbounded();
+            assert!(!fetch_profiles(&client, &authors, &tx).await.unwrap());
+            let found: HashSet<_> = rx
+                .try_iter()
+                .filter_map(|item| match item {
+                    Dispatch::Person(person) => Some(person.public_key()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(found, authors);
+            // Both query tokens are now spent. A subsequent batch must signal
+            // cooldown, not silently discard the relay's rejection.
+            assert!(fetch_profiles(&client, &authors, &tx).await.unwrap());
+            client.shutdown().await;
+            relay.shutdown();
+        })
+        .await
+        .expect("a batch should not require a query per author");
+    }
+
+    #[tokio::test]
+    async fn profile_batch_keeps_outbox_discovery_and_unknown_author_fallback() {
+        use nostr_gossip_memory::prelude::*;
+        use nostr_sdk::local_relay::MockRelay;
+        tokio::time::timeout(Duration::from_secs(20), async {
+            let bootstrap = MockRelay::run().await.unwrap();
+            let outbox = MockRelay::run().await.unwrap();
+            let known = Keys::generate();
+            let unknown = Keys::generate();
+            outbox.add_event(profile(&known, 1)).await.unwrap();
+            bootstrap.add_event(profile(&unknown, 1)).await.unwrap();
+            bootstrap
+                .add_event(
+                    EventBuilder::new(Kind::RelayList, "")
+                        .tag(Tag::custom(
+                            "r",
+                            [outbox.url().await.to_string(), "write".into()],
+                        ))
+                        .finalize(&known)
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let client = Client::builder()
+                .database(nostr_memory::MemoryDatabase::unbounded())
+                .gossip(NostrGossipMemory::unbounded())
+                .gossip_config(
+                    GossipConfig::default()
+                        .allowed(GossipAllowedRelays {
+                            local: true,
+                            without_tls: true,
+                            ..Default::default()
+                        })
+                        .sync_initial_timeout(Duration::from_millis(500))
+                        .sync_idle_timeout(Duration::from_secs(1))
+                        .fetch_timeout(Duration::from_secs(2))
+                        .no_background_refresh(),
+                )
+                .build();
+            client
+                .add_relay(bootstrap.url().await)
+                .and_connect()
+                .await
+                .unwrap();
+            let (tx, rx) = flume::unbounded();
+            let authors = HashSet::from([known.public_key(), unknown.public_key()]);
+            assert!(
+                !fetch_profiles_with_allowed_relays(
+                    &client,
+                    &authors,
+                    &tx,
+                    GossipAllowedRelays {
+                        local: true,
+                        without_tls: true,
+                        ..Default::default()
+                    }
+                )
+                .await
+                .unwrap()
+            );
+            let found: HashSet<_> = rx
+                .try_iter()
+                .filter_map(|item| match item {
+                    Dispatch::Person(person) => Some(person.public_key()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(found, authors);
+            client.shutdown().await;
+        })
+        .await
+        .expect("batched profiles should arrive from both relays");
+    }
+
     fn profile(keys: &Keys, time: u64) -> Event {
         EventBuilder::new(
             Kind::Metadata,

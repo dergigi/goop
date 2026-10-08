@@ -17,5 +17,7 @@ flume.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+nostr-gossip-memory.workspace = true
+nostr-sdk = { workspace = true, features = ["local-relay"] }
 nostr-memory.workspace = true
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

@@ -5304,6 +5304,7 @@ dependencies = [
  "gpui",
  "instant",
  "log",
+ "nostr-gossip-memory",
  "nostr-memory",
  "nostr-sdk",
  "smallvec",
