@@ -461,6 +461,18 @@ impl Render for Screening {
                                         this.open_njump(window, cx);
                                     })),
                             )
+                            .child(
+                                Button::new("ants")
+                                    .icon(IconName::Link)
+                                    .label("ants.sh")
+                                    .secondary()
+                                    .small()
+                                    .rounded()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let Ok(npub) = this.public_key.to_bech32();
+                                        cx.open_url(&format!("https://ants.sh/p/{npub}"));
+                                    })),
+                            )
                             .when_some(website, |row, url| row.child(
                                 Button::new("profile-website")
                                     .min_w_0().max_w_full().truncate_label()
