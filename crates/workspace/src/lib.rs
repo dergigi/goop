@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ::settings::AppSettings;
 use update_check::ReleaseChecker;
 use chat::{ChatEvent, ChatRegistry};
-pub use chat_ui::FocusComposer;
+pub use chat_ui::{FocusComposer, ToggleDictation};
 use common::GoopImageCache;
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -75,6 +75,7 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Workspace> {
         KeyBinding::new(&format!("{modifier}-2"), Command::ShowRequests, None),
         KeyBinding::new(&format!("{modifier}-3"), FocusComposer, None),
         KeyBinding::new(&format!("{modifier}-l"), FocusComposer, None),
+        KeyBinding::new(&format!("{modifier}-d"), ToggleDictation, None),
         KeyBinding::new(&format!("{modifier}-t"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-n"), Command::NewConversation, None),
         KeyBinding::new(&format!("{modifier}-shift-n"), Command::NewGroup, None),
@@ -820,6 +821,11 @@ impl Render for Workspace {
                 }
             })))
             .when(chat_actions_available, |view| view
+                .on_action(cx.listener(|this, _: &ToggleDictation, window, cx| {
+                    if let Some(panel) = this.active_chat_panel(window, cx) {
+                        panel.update(cx, |chat, cx| chat.toggle_dictation(window, cx));
+                    }
+                }))
                 .on_action(cx.listener(|this, _: &FindInChat, window, cx| {
                     if let Some(panel) = this.active_chat_panel(window, cx) {
                         panel.update(cx, |chat, cx| chat.focus_find(window, cx));

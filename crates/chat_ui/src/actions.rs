@@ -26,3 +26,7 @@ pub struct ShowConnectionStatus;
 #[derive(Action, Clone, Default, PartialEq, Eq, Deserialize)]
 #[action(namespace = chat, no_json)]
 pub struct FocusComposer;
+
+#[derive(Action, Clone, Default, PartialEq, Eq, Deserialize)]
+#[action(namespace = chat, no_json)]
+pub struct ToggleDictation;
