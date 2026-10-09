@@ -32,6 +32,9 @@ impl Dictation {
     pub(super) fn active(&self) -> bool {
         self.phase != Phase::Idle
     }
+    pub(super) fn recording(&self) -> bool {
+        self.phase == Phase::Recording
+    }
     fn accepts_result(&self, owner: Option<PublicKey>) -> bool {
         self.active() && self.owner.is_some() && self.owner == owner
     }
@@ -53,6 +56,29 @@ fn append_transcript(current: &str, transcript: &str) -> String {
     format!("{current}{separator}{}", transcript.trim())
 }
 impl ChatPanel {
+    pub(super) fn escape_chat(&mut self, action: &ui::input::Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.recording() && self.input.read(cx).focus_handle(cx).is_focused(window) {
+            self.dictation = Dictation::default();
+            cx.notify();
+        } else {
+            self.escape_find(action, window, cx);
+        }
+    }
+    pub fn toggle_dictation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.recording() {
+            if self.uploading { return; }
+            self.focus_composer(window, cx);
+            self.finish_dictation(true, cx);
+        } else if !self.dictation.active() && !self.uploading {
+            let Some(room) = self.room.upgrade() else { return };
+            let registry = ChatRegistry::global(cx).read(cx);
+            if registry.has_left(room.read(cx)) || registry.room_blocked(room.read(cx)) {
+                return;
+            }
+            self.focus_composer(window, cx);
+            self.start_dictation(false, window, cx);
+        }
+    }
     fn dictation_guard(&self, cx: &App) -> ComposerSnapshot {
         (
             self.draft_snapshot(cx),
@@ -169,7 +195,7 @@ impl ChatPanel {
         }
         cx.notify();
     }
-    fn finish_dictation(&mut self, send: bool, cx: &mut Context<Self>) {
+    pub(super) fn finish_dictation(&mut self, send: bool, cx: &mut Context<Self>) {
         self.dictation.send_guard = send.then(|| self.dictation_guard(cx));
         if let Some(session) = &self.dictation.session {
             session.finish();
@@ -182,7 +208,7 @@ impl ChatPanel {
         if !d.active() {
             return Button::new("dictation")
                 .icon(IconName::Microphone)
-                .tooltip("Dictate")
+                .tooltip(if cfg!(target_os = "macos") { "Dictate (⌘D)" } else { "Dictate (Ctrl+D)" })
                 .ghost()
                 .large()
                 .disabled(disabled)
@@ -254,7 +280,7 @@ impl ChatPanel {
                 .child(
                     Button::new("dictation-send")
                         .icon(IconName::PaperPlaneFill)
-                        .tooltip("Transcribe and send")
+                        .tooltip("Transcribe and send (Enter)")
                         .primary()
                         .disabled(disabled)
                         .on_click(cx.listener(|this, _, _, cx| this.finish_dictation(true, cx))),
@@ -285,7 +311,7 @@ impl ChatPanel {
                     "Installing dictation…".into()
                 }
                 Phase::Downloading => format!(
-                    "Downloading dictation… {}%",
+                    "Downloading local speech model (parakeet-v3)… {}%",
                     d.downloaded * 100 / speech::model::DOWNLOAD_BYTES
                 ),
                 Phase::Preparing => "Preparing dictation…".into(),

@@ -505,6 +505,10 @@ impl ChatPanel {
     }
 
     fn send_text_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.recording() && !self.uploading {
+            self.finish_dictation(true, cx);
+            return;
+        }
         if self.dictation.active() { return; }
         if self.uploading {
             window.push_notification("Wait for attachments to finish uploading", cx);
@@ -2085,7 +2089,7 @@ impl Render for ChatPanel {
             .on_drop(cx.listener(Self::drop_files))
             .capture_key_down(cx.listener(Self::browse_sent_history))
             .on_action(cx.listener(Self::on_command))
-            .on_action(cx.listener(Self::escape_find))
+            .on_action(cx.listener(Self::escape_chat))
             .size_full()
             .min_h_0()
             .overflow_hidden()

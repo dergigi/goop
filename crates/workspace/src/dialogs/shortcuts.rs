@@ -24,6 +24,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
                 ("Inbox", Box::new(Command::ShowInbox)),
                 ("Requests", Box::new(Command::ShowRequests)),
                 ("Focus message box", Box::new(crate::FocusComposer)),
+                ("Start/stop dictation", Box::new(crate::ToggleDictation)),
             ]),
             ("Tabs", vec![
                 ("Close tab", Box::new(ClosePanel)),
@@ -60,6 +61,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
                 .child(v_flex().gap_2().text_sm()
                     .child(div().font_semibold().child("While typing"))
                     .child("Enter sends a message; Shift+Enter adds a new line.")
+                    .child("While recording, Enter or the dictation shortcut transcribes and sends. Esc discards the recording.")
                     .child(if cfg!(target_os = "macos") { "⌘⌥↑ / ⌘⌥↓ browse your sent messages." } else { "Ctrl+Alt+↑ / Ctrl+Alt+↓ browse your sent messages." })
                     .child("In search, use ↑ / ↓ to choose and Enter to open. Esc returns to your previous view.")
                     .child("In chat find, Enter / Shift+Enter move to the next / previous match.")
