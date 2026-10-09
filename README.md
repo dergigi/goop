@@ -40,6 +40,7 @@ Downloads the latest x64 or ARM64 installer, verifies its checksum and opens set
 
 - Encrypted direct and group chats, attachments, and Note to self.
 - Search conversations, message contents, and profiles.
+- Local voice dictation in 25 languages with Parakeet v3.
 - Archive and pin chats, with conversations grouped by date.
 - A keyboard-friendly interface with tabs and resizable sidebars.
 

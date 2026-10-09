@@ -7,6 +7,14 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-10-09
+
+### Added
+
+- Dictate messages locally with Parakeet v3, with automatic recognition of 25 languages. Audio stays on your device. The speech model is an optional, one-time 487 MB download and can be removed in Settings.
+- Recording controls with a live level meter, timer, discard button, and separate actions to insert text into a draft or transcribe and send. Typed text remains editable and transcripts use Goop's existing draft storage and sync.
+- Dictation shortcuts: Cmd+D on macOS or Ctrl+D on Windows/Linux starts recording; pressing it again or Enter transcribes and sends. Escape transcribes into the draft without sending. Shift+Enter still inserts a newline.
+
 ## [2.14.3] - 2026-10-08
 
 ### Fixed
@@ -502,7 +510,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.13.1...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.0...HEAD
+[2.15.0]: https://github.com/dergigi/goop/compare/v2.14.3...v2.15.0
 [2.13.1]: https://github.com/dergigi/goop/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/dergigi/goop/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/dergigi/goop/compare/v2.11.2...v2.12.0

@@ -86,6 +86,18 @@ Sync runs in the background after a pause in typing and checks for remote change
 
 Goop keeps one visible draft per conversation. When several remote drafts exist for a conversation, it shows the newest one. Attachments and optional NIP-37 revision history are not synced.
 
+## Local dictation
+
+Click the microphone in a chat, or press **Cmd+D** on macOS / **Ctrl+D** on Windows and Linux. First use offers a 487 MB download of the Parakeet v3 speech model, then asks for microphone permission. Later recordings work offline, with automatic recognition of 25 languages.
+
+- **Enter** or the dictation shortcut again: stop, transcribe, and send.
+- **Esc** or the pencil button: stop and transcribe into the draft without sending.
+- **×**: discard the recording.
+
+You can keep editing the message box while recording. If you change the draft or switch chats while transcription runs, the result stays in the original chat's draft rather than being sent automatically. Recordings stop after five minutes and become a draft. Audio stays in memory on your device; transcribed text uses your normal draft storage and sync settings.
+
+Use **Settings → Local dictation → Remove model** to recover the model's disk space.
+
 ## Emoji and reactions
 
 Use the composer’s emoji button to browse or search by name, shortcode, or emoji. Categories and skin-tone controls include an **All** option for mixed-tone variants. Choose an emoji to insert it at the cursor.
@@ -203,6 +215,7 @@ Use **Cmd** on macOS or **Ctrl** on Windows/Linux unless noted otherwise.
 - **Cmd/Ctrl+Shift+G** — open Gossip Relays.
 - **Cmd/Ctrl+Shift+R**: open Private Storage Relays.
 - **Cmd/Ctrl+,** — open settings.
+- **Cmd/Ctrl+D**: start dictation; press again to transcribe and send. While recording, Enter also transcribes and sends; Esc transcribes into the draft.
 - **Enter / Shift+Enter** — send a message / insert a newline.
 
 Quick search filters an in-memory snapshot of loaded items without querying relays as you type. Opening a profile can refresh its details. The sidebar buttons and account menu also expose the quick-search shortcuts.
