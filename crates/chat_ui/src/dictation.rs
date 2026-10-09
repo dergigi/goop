@@ -58,8 +58,7 @@ fn append_transcript(current: &str, transcript: &str) -> String {
 impl ChatPanel {
     pub(super) fn escape_chat(&mut self, action: &ui::input::Escape, window: &mut Window, cx: &mut Context<Self>) {
         if self.dictation.recording() && self.input.read(cx).focus_handle(cx).is_focused(window) {
-            self.dictation = Dictation::default();
-            cx.notify();
+            self.finish_dictation(false, cx);
         } else {
             self.escape_find(action, window, cx);
         }
@@ -273,7 +272,7 @@ impl ChatPanel {
                 .child(
                     Button::new("dictation-insert")
                         .icon(IconName::Pencil)
-                        .tooltip("Transcribe into draft")
+                        .tooltip("Transcribe into draft (Esc)")
                         .ghost()
                         .on_click(cx.listener(|this, _, _, cx| this.finish_dictation(false, cx))),
                 )
