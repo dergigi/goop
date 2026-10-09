@@ -958,6 +958,9 @@ impl ChatPanel {
             Command::Njump(public_key) => {
                 self.open_njump(public_key, cx);
             }
+            Command::Ants(public_key) => {
+                self.open_ants(public_key, cx);
+            }
             Command::Rebroadcast(id) => {
                 let task = ChatRegistry::global(cx).read(cx).rebroadcast(*id, cx);
                 cx.spawn_in(window, async move |_, cx| {
@@ -1051,6 +1054,24 @@ impl ChatPanel {
     fn open_njump(&mut self, public_key: &PublicKey, cx: &mut Context<Self>) {
         let content = format!("https://njump.to/{}", public_key.to_bech32().unwrap());
         cx.open_url(&content);
+    }
+
+    fn open_ants(&mut self, public_key: &PublicKey, cx: &mut Context<Self>) {
+        let profile = self.profile(public_key, cx);
+        let identifier = profile
+            .metadata()
+            .nip05
+            .as_deref()
+            .map(str::trim)
+            .filter(|address| Nip05Address::parse(address).is_ok())
+            .map(|address| {
+                address
+                    .strip_prefix("_@")
+                    .unwrap_or(address)
+                    .to_string()
+            })
+            .unwrap_or_else(|| public_key.to_bech32().unwrap());
+        cx.open_url(&format!("https://ants.sh/p/{identifier}"));
     }
 
     pub fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1364,6 +1385,7 @@ impl ChatPanel {
                     .menu("View profile", Box::new(Command::ViewProfile(pk)))
                     .menu("View relays", Box::new(Command::Relays(pk)))
                     .menu("View on njump.to", Box::new(Command::Njump(pk)))
+                    .menu("View on ants.sh", Box::new(Command::Ants(pk)))
                     .separator()
                     .menu("Seen on", Box::new(Command::Trace(id)))
                     .when(NostrRegistry::global(cx).read(cx).current_user() == Some(pk), |menu| {
