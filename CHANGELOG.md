@@ -7,6 +7,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.15.1] - 2026-10-10
+
 ### Fixed
 
 - Select message text by dragging, double-clicking a word, or triple-clicking a paragraph. Copy the selection with Cmd/Ctrl+C or the context menu. Double-click no longer starts a reply.
@@ -514,7 +516,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.0...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.1...HEAD
+[2.15.1]: https://github.com/dergigi/goop/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/dergigi/goop/compare/v2.14.3...v2.15.0
 [2.13.1]: https://github.com/dergigi/goop/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/dergigi/goop/compare/v2.12.0...v2.13.0
