@@ -28,7 +28,7 @@ use ui::menu::{ContextMenuExt, DropdownMenu};
 use ui::notification::Notification;
 use ui::scroll::Scrollbar;
 use ui::{
-    Disableable, Icon, IconName, InteractiveElementExt, Selectable, Sizable, StyledExt,
+    Disableable, Icon, IconName, Selectable, Sizable, StyledExt,
     WindowExtension, h_flex, v_flex,
 };
 
@@ -45,6 +45,7 @@ mod reactions;
 mod emoji_picker;
 mod find;
 mod text;
+mod text_selection;
 
 pub fn init(room: WeakEntity<Room>, window: &mut Window, cx: &mut App) -> Entity<ChatPanel> {
     cx.new(|cx| ChatPanel::new(room, window, cx))
@@ -1245,7 +1246,7 @@ impl ChatPanel {
                     )
                 })
                 .element(
-                    ix.into(),
+                    SharedString::from(message.id.to_string()).into(),
                     self.find
                         .open
                         .then_some(self.find.pattern.as_ref())
@@ -1273,6 +1274,8 @@ impl ChatPanel {
         let pk = author.public_key();
         let focus_handle = self.focus_handle(cx);
 
+        let selection = self.rendered_texts_by_id.get(&id)
+            .map(|text| (text.selection.clone(), text.text.clone()));
         let replies = message.replies_to.as_slice();
         let has_replies = !replies.is_empty();
         let has_reactions = self.has_reaction(&id);
@@ -1352,13 +1355,19 @@ impl ChatPanel {
                     this.copy_message(&id, cx);
                 }),
             )
-            .on_double_click(cx.listener(move |this, _, _window, cx| {
-                this.reply_to(&id, cx);
-            }))
             .hover(|this| this.bg(cx.theme().surface_background))
-            .context_menu_with_id(format!("message-context-{id}"), move |menu, _, cx| {
+            .context_menu_with_id(format!("message-context-{id}"), move |menu, window, cx| {
                 menu.action_context(focus_handle.clone())
                     .menu("Reply", Box::new(Command::Reply(id)))
+                    .when_some(selection.as_ref(), |menu, (selection, text)| {
+                        let range = selection.borrow().visible_range(window);
+                        menu.when(!range.is_empty(), |menu| {
+                            let selected = text[range].to_string();
+                            menu.item(ui::menu::PopupMenuItem::new("Copy selection").on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(selected.clone()));
+                            }))
+                        })
+                    })
                     .menu("Copy message", Box::new(Command::CopyMessage(id)))
                     .separator()
                     .menu("View profile", Box::new(Command::ViewProfile(pk)))

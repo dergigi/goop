@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Select message text by dragging, double-clicking a word, or triple-clicking a paragraph. Copy the selection with Cmd/Ctrl+C or the context menu. Double-click no longer starts a reply.
+
 ## [2.15.0] - 2026-10-09
 
 ### Added

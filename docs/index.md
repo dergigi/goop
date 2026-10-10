@@ -86,6 +86,10 @@ Sync runs in the background after a pause in typing and checks for remote change
 
 Goop keeps one visible draft per conversation. When several remote drafts exist for a conversation, it shows the newest one. Attachments and optional NIP-37 revision history are not synced.
 
+## Selecting message text
+
+Drag across a message to select text. Double-click selects a word; triple-click selects a paragraph. Hold Shift and click to extend the selection. Use **Cmd+C** on macOS or **Ctrl+C** on Windows/Linux, or right-click and choose **Copy selection**. **Copy message** still copies the whole message. Use the reply button or **Reply** in the context menu to reply.
+
 ## Local dictation
 
 Click the microphone in a chat, or press **Cmd+D** on macOS / **Ctrl+D** on Windows and Linux. First use offers a 487 MB download of the Parakeet v3 speech model, then asks for microphone permission. Later recordings work offline, with automatic recognition of 25 languages.
