@@ -32,6 +32,22 @@ impl TextSelection {
         }
     }
 
+    fn copy(&self, text: &str, cx: &mut App) -> bool {
+        if self.range.is_empty() {
+            return false;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            text[self.range.clone()].to_string(),
+        ));
+        true
+    }
+
+    fn select_all(&mut self, len: usize) {
+        self.range = 0..len;
+        self.anchor = 0..0;
+        self.clicks = 1;
+    }
+
     fn begin(&mut self, text: &str, index: usize, clicks: usize, shift: bool) {
         self.clicks = clicks;
         self.moved = shift;
@@ -143,6 +159,21 @@ pub(super) fn selectable(
                 }
             }
         })
+        .on_action({
+            let state = state.clone();
+            let content = content.clone();
+            move |_: &ui::input::Copy, _, cx| {
+                state.borrow().copy(&content, cx);
+            }
+        })
+        .on_action({
+            let state = state.clone();
+            let len = content.len();
+            move |_: &ui::input::SelectAll, _, cx| {
+                state.borrow_mut().select_all(len);
+                cx.notify(owner);
+            }
+        })
         .on_key_down({
             let state = state.clone();
             let content = content.clone();
@@ -158,19 +189,12 @@ pub(super) fn selectable(
                 }
                 match event.keystroke.key.as_str() {
                     "c" => {
-                        let range = state.borrow().range.clone();
-                        if !range.is_empty() {
-                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                content[range].to_string(),
-                            ));
+                        if state.borrow().copy(&content, cx) {
                             cx.stop_propagation();
                         }
                     }
                     "a" => {
-                        let mut state = state.borrow_mut();
-                        state.range = 0..content.len();
-                        state.anchor = 0..0;
-                        state.clicks = 1;
+                        state.borrow_mut().select_all(content.len());
                         cx.notify(owner);
                         cx.stop_propagation();
                     }
@@ -317,7 +341,10 @@ mod tests {
             })
         };
         let word = point_at(5, cx);
-        assert!(word.y > point_at(0, cx).y, "fixture must wrap its first line");
+        assert!(
+            word.y > point_at(0, cx).y,
+            "fixture must wrap its first line"
+        );
         cx.simulate_event(MouseDownEvent {
             position: word,
             button: MouseButton::Left,
@@ -332,6 +359,15 @@ mod tests {
             "ctrl-c"
         });
         cx.update(|_, cx| assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "two"));
+        cx.dispatch_action(ui::input::SelectAll);
+        assert_eq!(selection.borrow().range, 0..13);
+        cx.dispatch_action(ui::input::Copy);
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().unwrap(),
+                "one two\nthree"
+            )
+        });
         let start = point_at(1, cx);
         let end = point_at(11, cx);
         cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
