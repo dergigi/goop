@@ -386,6 +386,15 @@ mod tests {
             cx.opened_url().is_none(),
             "selecting link text must not open it"
         );
+        // Keyboard focus can leave without a mouse-down outside the message.
+        // Context-menu copying must use the same visible range as highlighting.
+        cx.update(|window, cx| {
+            assert_eq!(selection.borrow().visible_range(window), 1..13);
+            let other = cx.focus_handle();
+            other.focus(window, cx);
+            assert_eq!(selection.borrow().range, 1..13);
+            assert!(selection.borrow().visible_range(window).is_empty());
+        });
         cx.simulate_click(word, Modifiers::default());
         assert_eq!(cx.opened_url().as_deref(), Some("https://goop.dergigi.com"));
     }

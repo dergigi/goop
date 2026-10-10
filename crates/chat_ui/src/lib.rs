@@ -1356,11 +1356,11 @@ impl ChatPanel {
                 }),
             )
             .hover(|this| this.bg(cx.theme().surface_background))
-            .context_menu_with_id(format!("message-context-{id}"), move |menu, _, cx| {
+            .context_menu_with_id(format!("message-context-{id}"), move |menu, window, cx| {
                 menu.action_context(focus_handle.clone())
                     .menu("Reply", Box::new(Command::Reply(id)))
                     .when_some(selection.as_ref(), |menu, (selection, text)| {
-                        let range = selection.borrow().range.clone();
+                        let range = selection.borrow().visible_range(window);
                         menu.when(!range.is_empty(), |menu| {
                             let selected = text[range].to_string();
                             menu.item(ui::menu::PopupMenuItem::new("Copy selection").on_click(move |_, _, cx| {
