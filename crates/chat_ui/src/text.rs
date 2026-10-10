@@ -1,10 +1,11 @@
 use std::ops::Range;
 use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc};
 
 use chat::Mention;
 use gpui::{
-    AnyElement, App, ElementId, Entity, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle, Window,
+    AnyElement, App, ElementId, Entity, FontStyle, FontWeight, HighlightStyle, SharedString,
+    StrikethroughStyle, StyledText, UnderlineStyle, Window,
 };
 use person::PersonRegistry;
 use theme::ActiveTheme;
@@ -26,6 +27,7 @@ impl From<HighlightStyle> for Highlight {
 
 #[derive(Default)]
 pub struct RenderedText {
+    pub selection: Rc<RefCell<super::text_selection::TextSelection>>,
     pub text: SharedString,
     pub highlights: Vec<(Range<usize>, Highlight)>,
     pub link_ranges: Vec<Range<usize>>,
@@ -68,6 +70,7 @@ impl RenderedText {
         );
 
         RenderedText {
+            selection: Default::default(),
             text: SharedString::from(text),
             link_urls: link_urls.into(),
             link_ranges,
@@ -92,11 +95,11 @@ impl RenderedText {
             "monospace"
         };
 
-        InteractiveText::new(
-            id,
-            StyledText::new(self.text.clone())
-                .with_default_highlights(
-                    &window.text_style(),
+        let selection = self.selection.borrow().visible_range(window);
+        let text = StyledText::new(self.text.clone())
+            .with_default_highlights(
+                &window.text_style(),
+                overlay_highlights(
                     search_highlights(
                         &self.text,
                         self.highlights
@@ -142,24 +145,28 @@ impl RenderedText {
                         search,
                         cx.theme().element_active,
                     ),
-                )
-                .with_font_family_overrides(self.highlights.iter().filter_map(
-                    |(range, highlight)| {
-                        matches!(highlight, Highlight::Code | Highlight::InlineCode(_))
-                            .then(|| (range.clone(), code_font.into()))
-                    },
-                )),
+                    &[selection],
+                    cx.theme().selection,
+                    self.text.len(),
+                ),
+            )
+            .with_font_family_overrides(self.highlights.iter().filter_map(|(range, highlight)| {
+                matches!(highlight, Highlight::Code | Highlight::InlineCode(_))
+                    .then(|| (range.clone(), code_font.into()))
+            }));
+        super::text_selection::selectable(
+            id,
+            text,
+            self.text.clone(),
+            self.link_ranges
+                .iter()
+                .cloned()
+                .zip(self.link_urls.iter().cloned())
+                .collect(),
+            self.selection.clone(),
+            window,
+            cx,
         )
-        .on_click(self.link_ranges.clone(), {
-            let link_urls = self.link_urls.clone();
-            move |ix, _, cx| {
-                let url = &link_urls[ix];
-                if is_web_url(url) {
-                    cx.open_url(url);
-                }
-            }
-        })
-        .into_any_element()
     }
 }
 
@@ -178,7 +185,19 @@ fn search_highlights(
     if matches.is_empty() {
         return base;
     }
-    let mut boundaries = vec![0, text.len()];
+    overlay_highlights(base, &matches, background, text.len())
+}
+
+fn overlay_highlights(
+    base: Vec<(Range<usize>, HighlightStyle)>,
+    matches: &[Range<usize>],
+    background: gpui::Hsla,
+    len: usize,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    if matches.iter().all(Range::is_empty) {
+        return base;
+    }
+    let mut boundaries = vec![0, len];
     for range in base.iter().map(|(range, _)| range).chain(matches.iter()) {
         boundaries.extend([range.start, range.end]);
     }
@@ -508,7 +527,7 @@ fn new_paragraph(text: &mut String, list_stack: &mut [(Option<u64>, bool)]) {
     }
 }
 
-fn is_web_url(url: &str) -> bool {
+pub(super) fn is_web_url(url: &str) -> bool {
     url.get(..7)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
         || url

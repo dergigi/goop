@@ -1232,6 +1232,7 @@ dependencies = [
  "tempfile",
  "theme",
  "ui",
+ "unicode-segmentation",
 ]
 
 [[package]]
