@@ -14,6 +14,7 @@ pub enum Command {
     Reply(EventId),
     Relays(PublicKey),
     Njump(PublicKey),
+    Ants(PublicKey),
     Trace(EventId),
     Rebroadcast(EventId),
 }
