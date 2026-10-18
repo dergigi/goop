@@ -76,3 +76,7 @@ Goop only notifies users about new releases. The cask uses normal Homebrew updat
 The [goop-bin AUR package](https://aur.archlinux.org/packages/goop-bin) installs the published x86_64 Linux tarball using Arch's system libraries. Its recipe is maintained in `packaging/aur`; the [package README](../packaging/aur/README.md) describes validation and publishing.
 
 After publishing a release, update the recipe's version and verified checksum, run the **AUR package** workflow, and publish its generated `.SRCINFO` together with the recipe and launcher to AUR. This is currently a manual release step; GitHub Actions does not hold the AUR publishing key.
+
+## Nostr mirror
+
+After publishing and completing distribution updates, mirror the release tag and final master commit to both GRASP hosts using the [Nostr mirror workflow](ngit.md). The local `ngit-goop` signer must be online.

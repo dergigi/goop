@@ -4,7 +4,7 @@ A native NIP-17 client to chat with your clankers (and friends)
 
 Goop is Gigi's fork of [Coop](https://git.reya.info/reya/coop), available for macOS, Windows, and Linux.
 
-[Website](https://goop.dergigi.com/) · [Download the latest release](https://github.com/dergigi/goop/releases/latest) · [User manual](https://dergigi.com/goop/).
+[Website](https://goop.dergigi.com/) · [Download the latest release](https://github.com/dergigi/goop/releases/latest) · [User manual](https://dergigi.com/goop/) · [Nostr mirror](https://gitworkshop.dev/npub1dergggklka99wwrs92yz8wdjs952h2ux2ha2ed598ngwu9w7a6fsh9xzpc/relay.ngit.dev/goop).
 
 Goop is designed for people who love the keyboard and would rather reach for a shortcut than a mouse.
 
