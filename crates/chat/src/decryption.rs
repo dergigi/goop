@@ -215,6 +215,7 @@ impl DecryptQueue {
                     }
                     let mut result = Err(anyhow!("Signer unavailable"));
                     for attempt in 0..2 {
+                        if historical { signer.wait_for_outgoing().await?; }
                         result = async_utility::time::timeout(
                             Some(Duration::from_secs(30)),
                             extract_rumor(cache, signer, &event),

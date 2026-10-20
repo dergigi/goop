@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use futures::{FutureExt, lock::Mutex};
+use futures::{FutureExt, StreamExt, stream::FuturesUnordered, lock::Mutex};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use state::{SignerFailure, UniversalSigner};
@@ -25,6 +25,8 @@ pub(super) struct Destination {
     pub accepted: BTreeSet<RelayUrl>,
     pub failed: BTreeMap<RelayUrl, String>,
     pub error: Option<String>,
+    #[serde(default)]
+    publishing: bool,
 }
 
 impl Destination {
@@ -36,11 +38,12 @@ impl Destination {
             accepted: BTreeSet::new(),
             failed: BTreeMap::new(),
             error: None,
+            publishing: false,
         }
     }
 
     fn complete(&self) -> bool {
-        !self.accepted.is_empty() && self.failed.is_empty() && self.error.is_none()
+        !self.publishing && !self.accepted.is_empty() && self.failed.is_empty() && self.error.is_none()
     }
 }
 
@@ -160,6 +163,21 @@ async fn load(root: &Path, owner: PublicKey) -> Result<Vec<OutgoingMessage>> {
     Ok(messages)
 }
 
+fn load_one(root: &Path, owner: PublicKey, id: EventId) -> Result<Option<OutgoingMessage>> {
+    let path = root.join(owner.to_hex()).join(format!("{id}.json"));
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let record: OutgoingMessage = serde_json::from_slice(&bytes)?;
+    if record.owner != owner || record.rumor.pubkey != owner || record.rumor.id != Some(id) {
+        bail!("Outgoing account or message ID mismatch");
+    }
+    record.rumor.verify_id()?;
+    Ok(Some(record))
+}
+
 async fn save(root: &Path, record: &mut OutgoingMessage) -> Result<()> {
     // A separate local store is essential: relay events in the Nostr database
     // must never be interpreted as instructions to sign or send messages.
@@ -194,6 +212,7 @@ pub(super) struct OutgoingQueue {
     retry_running: Arc<AtomicBool>,
     rebroadcast_requested: Arc<RwLock<BTreeSet<EventId>>>,
     retry_requested: Arc<RwLock<BTreeSet<EventId>>>,
+    fresh: Arc<RwLock<BTreeSet<EventId>>>,
 }
 
 impl OutgoingQueue {
@@ -214,6 +233,7 @@ impl OutgoingQueue {
                 retry_running: Arc::default(),
                 rebroadcast_requested: Arc::default(),
                 retry_requested: Arc::default(),
+                fresh: Arc::default(),
             },
             receiver,
         )
@@ -292,16 +312,13 @@ impl OutgoingQueue {
         }
         let _guard = self.enqueue_lock.lock().await;
         self.ensure_active()?;
-        if let Some(existing) = load(&self.root, self.owner)
-            .await?
-            .into_iter()
-            .find(|job| job.id() == message.id())
-        {
+        if let Some(existing) = load_one(&self.root, self.owner, message.id())? {
             self.wake();
             return Ok(existing.reports());
         }
         // Persist intent before requesting signatures, clearing the composer, or publishing.
         save(&self.root, &mut message).await?;
+        self.fresh.write().unwrap().insert(message.id());
         self.wake();
         Ok(message.reports())
     }
@@ -312,22 +329,19 @@ impl OutgoingQueue {
         wake: flume::Receiver<()>,
         signals: flume::Sender<Signal>,
     ) -> Result<()> {
-        let mut announced = BTreeMap::new();
         let mut last_error = None;
         while self.active.load(Ordering::SeqCst) {
-            match self.process(&signer, &signals, &mut announced).await {
-                Ok(()) => {
-                    if last_error.take().is_some() {
-                        signals.send_async(Signal::OutgoingRecovered).await?;
-                    }
-                },
+            match self.run_ready(&signer, &wake, &signals, last_error.is_some()).await {
+                Ok(()) => return Ok(()),
                 Err(error) => {
-                    self.ensure_active()?;
+                    if !self.active.load(Ordering::SeqCst) { return Ok(()); }
+                    self.retry_running.store(false, Ordering::SeqCst);
+                    if self.resume_requested.swap(false, Ordering::SeqCst) {
+                        signals.send_async(Signal::OutgoingRetryFinished).await?;
+                    }
                     let error = error.to_string();
                     if last_error.as_ref() != Some(&error) {
-                        signals
-                            .send_async(Signal::OutgoingError(error.clone()))
-                            .await?;
+                        signals.send_async(Signal::OutgoingError(error.clone())).await?;
                         last_error = Some(error);
                     }
                 }
@@ -340,6 +354,134 @@ impl OutgoingQueue {
         Ok(())
     }
 
+    async fn run_ready(
+        &self,
+        signer: &UniversalSigner,
+        wake: &flume::Receiver<()>,
+        signals: &flume::Sender<Signal>,
+        mut recovered: bool,
+    ) -> Result<()> {
+        // One retry job cannot occupy the two slots reserved for new sends.
+        // Each message has exactly one writer, including across retry requests.
+        let mut jobs: BTreeMap<_, _> = load(&self.root, self.owner).await?
+            .into_iter().map(|job| (job.id(), job)).collect();
+        let mut announced = BTreeMap::new();
+        let mut fresh = BTreeSet::new();
+        let mut running = BTreeMap::new();
+        let mut retry_at = BTreeMap::new();
+        let mut retry_batch = BTreeSet::new();
+        let mut tasks = FuturesUnordered::new();
+        let mut last_error = None;
+        while self.active.load(Ordering::SeqCst) {
+            let incoming = std::mem::take(&mut *self.fresh.write().unwrap());
+            for id in incoming {
+                if !running.contains_key(&id) {
+                    if let Some(job) = load_one(&self.root, self.owner, id)? {
+                        jobs.insert(id, job);
+                        fresh.insert(id);
+                        retry_at.remove(&id);
+                    }
+                }
+            }
+            if self.resume_requested.swap(false, Ordering::SeqCst) {
+                retry_batch.extend(jobs.values().filter(|m| !m.complete() && !m.uses_removed_encryption()).map(OutgoingMessage::id));
+                self.retry_requested.write().unwrap().extend(retry_batch.iter().copied());
+                if retry_batch.is_empty() { signals.send_async(Signal::OutgoingRetryFinished).await?; }
+            }
+            self.retry_running.store(!retry_batch.is_empty(), Ordering::SeqCst);
+            if recovered {
+                signals.send_async(Signal::OutgoingRecovered).await?;
+                recovered = false;
+            }
+            let requested = self.retry_requested.read().unwrap().clone();
+            let rebroadcast = self.rebroadcast_requested.read().unwrap().clone();
+            for id in requested.iter().chain(&rebroadcast) {
+                retry_at.remove(id);
+                if !jobs.contains_key(id) && !running.contains_key(id) {
+                    if let Some(job) = load_one(&self.root, self.owner, *id)? { jobs.insert(*id, job); }
+                    else {
+                        self.retry_requested.write().unwrap().remove(id);
+                        self.rebroadcast_requested.write().unwrap().remove(id);
+                    }
+                }
+            }
+            let now = instant::Instant::now();
+            let mut candidates: Vec<_> = jobs.values().filter(|job| {
+                !running.contains_key(&job.id()) &&
+                ((!job.complete() && !job.paused && !job.uses_removed_encryption()) ||
+                    requested.contains(&job.id()) || rebroadcast.contains(&job.id())) &&
+                retry_at.get(&job.id()).is_none_or(|at| *at <= now)
+            }).map(|job| (job.id(), job.rumor.created_at)).collect();
+            candidates.sort_by_key(|(id, time)| (!fresh.contains(id), *time, *id));
+            // Restore persisted reports even for paused/completed jobs.
+            for job in jobs.values() {
+                if announced.get(&job.id()) != Some(&job.revision) {
+                    signals.send_async(Signal::Outgoing(job.clone())).await?;
+                    announced.insert(job.id(), job.revision);
+                }
+            }
+            // Completed history stays on disk, not in a second permanent in-memory copy.
+            jobs.retain(|id, job| running.contains_key(id) ||
+                (!job.complete() && !job.uses_removed_encryption()) ||
+                requested.contains(id) || rebroadcast.contains(id));
+            for (id, _) in candidates {
+                let interactive = fresh.contains(&id);
+                let count = running.values().filter(|lane| **lane == interactive).count();
+                if count >= if interactive { 2 } else { 1 } { continue; }
+                running.insert(id, interactive);
+                fresh.remove(&id);
+                let mut job = jobs[&id].clone();
+                let signer = signer.clone();
+                let signals = signals.clone();
+                tasks.push(async move {
+                    let result = self.process_message(&signer, &signals, &mut job, false).await;
+                    // Clear only this message; other sends may still be active.
+                    let _ = signals.send_async(Signal::OutgoingActivity(id, None)).await;
+                    (job, result)
+                });
+            }
+            let next = wake.recv_async().fuse();
+            let done = async {
+                if tasks.is_empty() { futures::future::pending().await }
+                else { tasks.next().await }
+            }.fuse();
+            let timer = async_utility::time::sleep(Duration::from_secs(30)).fuse();
+            futures::pin_mut!(next, done, timer);
+            futures::select! {
+                result = next => { result?; },
+                completed = done => if let Some((job, result)) = completed {
+                    running.remove(&job.id());
+                    retry_at.insert(job.id(), instant::Instant::now() + Duration::from_secs(30));
+                    retry_batch.remove(&job.id());
+                    let job = if result.is_err() {
+                        load_one(&self.root, self.owner, job.id())?.unwrap_or(job)
+                    } else { job };
+                    jobs.insert(job.id(), job);
+                    match result {
+                        Ok(()) => if last_error.take().is_some() {
+                            signals.send_async(Signal::OutgoingRecovered).await?;
+                        },
+                        Err(error) => {
+                            self.ensure_active()?;
+                            let error = error.to_string();
+                            if last_error.as_ref() != Some(&error) {
+                                signals.send_async(Signal::OutgoingError(error.clone())).await?;
+                                last_error = Some(error);
+                            }
+                        }
+                    }
+                    if self.retry_running.load(Ordering::SeqCst) && retry_batch.is_empty() {
+                        self.retry_running.store(false, Ordering::SeqCst);
+                        signals.send_async(Signal::OutgoingRetryFinished).await?;
+                    }
+                },
+                _ = timer => {},
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
     async fn process(
         &self,
         signer: &UniversalSigner,
@@ -349,115 +491,159 @@ impl OutgoingQueue {
         self.ensure_active()?;
         let resume = self.resume_requested.swap(false, Ordering::SeqCst);
         self.retry_running.store(resume, Ordering::SeqCst);
-        let mut active = false;
-        let result = self.process_messages(signer, signals, announced, resume, &mut active).await;
-        if active { signals.send_async(Signal::OutgoingActivity(None)).await?; }
+        let result = async {
+            for mut message in load(&self.root, self.owner).await? {
+                if announced.get(&message.id()) != Some(&message.revision) {
+                    signals.send_async(Signal::Outgoing(message.clone())).await?;
+                }
+                let result = self.process_message(signer, signals, &mut message, resume).await;
+                signals.send_async(Signal::OutgoingActivity(message.id(), None)).await?;
+                result?;
+                announced.insert(message.id(), message.revision);
+            }
+            Ok(())
+        }.await;
         self.retry_running.store(false, Ordering::SeqCst);
-        if resume {
-            signals.send_async(Signal::OutgoingRetryFinished).await?;
-        }
+        if resume { signals.send_async(Signal::OutgoingRetryFinished).await?; }
         result
     }
 
-    async fn process_messages(
+    async fn process_message(
         &self,
         signer: &UniversalSigner,
         signals: &flume::Sender<Signal>,
-        announced: &mut BTreeMap<EventId, u64>,
+        message: &mut OutgoingMessage,
         resume: bool,
-        active: &mut bool,
     ) -> Result<()> {
-        for mut message in load(&self.root, self.owner).await? {
-            if message.uses_removed_encryption() {
-                if announced.get(&message.id()) != Some(&message.revision) {
-                    signals.send_async(Signal::Outgoing(message.clone())).await?;
-                    announced.insert(message.id(), message.revision);
-                }
+        self.ensure_active()?;
+        if message.uses_removed_encryption() {
+            self.retry_requested.write().unwrap().remove(&message.id());
+            self.rebroadcast_requested.write().unwrap().remove(&message.id());
+            return Ok(());
+        }
+        if self.rebroadcast_requested.write().unwrap().remove(&message.id()) {
+            // Only the worker mutates persisted jobs. Keep the original
+            // rumors and signed wraps; requeue exactly this message.
+            for destination in &mut message.destinations {
+                destination.accepted.clear();
+                destination.failed.clear();
+                destination.error = None;
+            }
+            message.paused = false;
+            save(&self.root, message).await?;
+        }
+        let retry_this = self.retry_requested.write().unwrap().remove(&message.id());
+        if (resume || retry_this) && message.paused {
+            message.paused = false;
+            save(&self.root, message).await?;
+        }
+        self.ensure_active()?;
+        if message.complete() || message.paused {
+            return Ok(());
+        }
+        for index in 0..message.destinations.len() {
+            if message.destinations[index].complete() {
                 continue;
-            }
-            if self.rebroadcast_requested.write().unwrap().remove(&message.id()) {
-                // Only the worker mutates persisted jobs. Keep the original
-                // rumors and signed wraps; requeue exactly this message.
-                for destination in &mut message.destinations {
-                    destination.accepted.clear();
-                    destination.failed.clear();
-                    destination.error = None;
-                }
-                message.paused = false;
-                save(&self.root, &mut message).await?;
-            }
-            let retry_this = self.retry_requested.write().unwrap().remove(&message.id());
-            if (resume || retry_this) && message.paused {
-                message.paused = false;
-                save(&self.root, &mut message).await?;
             }
             self.ensure_active()?;
-            // Restore only this account's conversation state from its local queue.
-            if announced.get(&message.id()) != Some(&message.revision) {
-                signals
-                    .send_async(Signal::Outgoing(message.clone()))
-                    .await?;
-                announced.insert(message.id(), message.revision);
-            }
-            if message.complete() || message.paused {
-                continue;
-            }
-            for index in 0..message.destinations.len() {
-                if message.destinations[index].complete() {
-                    continue;
-                }
+            if message.destinations[index].wrap.is_none() {
+                signals.send_async(Signal::OutgoingActivity(message.id(), Some(OutgoingPhase::Preparing))).await?;
+                let result =
+                    async_utility::time::timeout(Some(Duration::from_secs(30)), async {
+                        let _priority = signer.prioritize_outgoing();
+                        let signing_owner = signer.get_public_key_async().await?;
+                        if signing_owner != self.owner {
+                            bail!("Outgoing account changed");
+                        }
+                        prepare(signer, message, index)
+                            .await
+                    })
+                    .await
+                    .unwrap_or_else(|| {
+                        Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into())
+                    });
                 self.ensure_active()?;
-                if message.destinations[index].wrap.is_none() {
-                    *active = true;
-                    signals.send_async(Signal::OutgoingActivity(Some((message.id(), OutgoingPhase::Preparing)))).await?;
-                    let result =
-                        async_utility::time::timeout(Some(Duration::from_secs(30)), async {
-                            let signing_owner = signer.get_public_key_async().await?;
-                            if signing_owner != self.owner {
-                                bail!("Outgoing account changed");
-                            }
-                            prepare(signer, &message, index)
-                                .await
-                        })
-                        .await
-                        .unwrap_or_else(|| {
-                            Err(std::io::Error::from(std::io::ErrorKind::TimedOut).into())
-                        });
-                    self.ensure_active()?;
-                    match result {
-                        Ok(wrap) => {
-                            message.destinations[index].wrap = Some(wrap);
-                            message.destinations[index].error = None;
-                        }
-                        Err(error) => {
-                            let failure = SignerFailure::classify(error.as_ref());
-                            message.paused = failure.requires_retry();
-                            message.destinations[index].error = Some(preparation_error(&error));
-                        }
+                match result {
+                    Ok(wrap) => {
+                        message.destinations[index].wrap = Some(wrap);
+                        message.destinations[index].error = None;
                     }
-                    // A prepared wrap must survive a crash before it can leave this machine.
-                    save(&self.root, &mut message).await?;
+                    Err(error) => {
+                        let failure = SignerFailure::classify(error.as_ref());
+                        message.paused = failure.requires_retry();
+                        message.destinations[index].error = Some(preparation_error(&error));
+                    }
                 }
-                if message.destinations[index].wrap.is_some() {
-                    self.ensure_active()?;
-                    *active = true;
-                    signals.send_async(Signal::OutgoingActivity(Some((message.id(), OutgoingPhase::Sending)))).await?;
-                    publish(&self.client, &mut message.destinations[index]).await;
-                    save(&self.root, &mut message).await?;
-                }
-                signals
-                    .send_async(Signal::Outgoing(message.clone()))
-                    .await?;
-                announced.insert(message.id(), message.revision);
-                signals.send_async(Signal::OutgoingActivity(None)).await?;
-                *active = false;
-                if message.paused {
-                    break;
-                }
+                // A prepared wrap must survive a crash before it can leave this machine.
+                save(&self.root, message).await?;
+            }
+            if message.destinations[index].wrap.is_some() {
+                self.ensure_active()?;
+                signals.send_async(Signal::OutgoingActivity(message.id(), Some(OutgoingPhase::Sending))).await?;
+                self.publish_with_progress(message, index, signals).await?;
+            }
+            signals
+                .send_async(Signal::Outgoing(message.clone()))
+                .await?;
+            signals.send_async(Signal::OutgoingActivity(message.id(), None)).await?;
+            if message.paused {
+                break;
             }
         }
         Ok(())
     }
+
+    async fn publish_with_progress(
+        &self,
+        message: &mut OutgoingMessage,
+        index: usize,
+        signals: &flume::Sender<Signal>,
+    ) -> Result<()> {
+        // Subscribe before sending so a fast OK cannot be missed. The SDK still
+        // waits for every relay and supplies the final failure/retry details.
+        let mut notifications = self.client.notifications();
+        message.destinations[index].publishing = true;
+        save(&self.root, message).await?;
+        let mut destination = message.destinations[index].clone();
+        let event_id = destination.wrap.as_ref().expect("prepared wrap").id;
+        {
+            let sending = publish(&self.client, &mut destination).fuse();
+            futures::pin_mut!(sending);
+            loop {
+                futures::select! {
+                    _ = sending => break,
+                    notification = notifications.next().fuse() => {
+                        let Some(notification) = notification else {
+                            sending.await;
+                            break;
+                        };
+                        if let ClientNotification::Message { relay_url, message: relay_message } = notification {
+                            if matches!(*relay_message, RelayMessage::Ok { event_id: id, status: true, .. } if id == event_id) {
+                                self.ensure_active()?;
+                                let destination = &mut message.destinations[index];
+                                if destination.accepted.insert(relay_url.clone()) {
+                                    destination.failed.remove(&relay_url);
+                                    destination.error = None;
+                                    save(&self.root, message).await?;
+                                    signals.send_async(Signal::Outgoing(message.clone())).await?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.ensure_active()?;
+        // Preserve confirmed acknowledgements even if the aggregate call timed out.
+        // They are durable and already visible in the conversation.
+        destination.accepted.extend(message.destinations[index].accepted.iter().cloned());
+        for url in &destination.accepted { destination.failed.remove(url); }
+        destination.publishing = false;
+        message.destinations[index] = destination;
+        save(&self.root, message).await?;
+        Ok(())
+    }
+
 }
 
 fn preparation_error(error: &anyhow::Error) -> String {
@@ -531,6 +717,153 @@ mod tests {
         Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
     };
+
+    #[derive(Debug, Clone)]
+    struct BlockingRecipientSigner {
+        keys: Keys,
+        blocked: PublicKey,
+        started: flume::Sender<()>,
+        release: flume::Receiver<()>,
+    }
+    impl AsyncGetPublicKey for BlockingRecipientSigner {
+        type Error = <Keys as AsyncGetPublicKey>::Error;
+        fn get_public_key_async(&self) -> futures::future::BoxFuture<'_, Result<PublicKey, Self::Error>> {
+            self.keys.get_public_key_async()
+        }
+    }
+    impl AsyncSignEvent for BlockingRecipientSigner {
+        type Error = <Keys as AsyncSignEvent>::Error;
+        fn sign_event_async(&self, event: UnsignedEvent) -> futures::future::BoxFuture<'_, Result<Event, Self::Error>> {
+            self.keys.sign_event_async(event)
+        }
+    }
+    impl AsyncNip44 for BlockingRecipientSigner {
+        type Error = <Keys as AsyncNip44>::Error;
+        fn nip44_encrypt_async<'a>(&'a self, key: &'a PublicKey, content: &'a str)
+            -> futures::future::BoxFuture<'a, Result<String, Self::Error>> {
+            Box::pin(async move {
+                if *key == self.blocked {
+                    self.started.send_async(()).await.unwrap();
+                    self.release.recv_async().await.unwrap();
+                }
+                self.keys.nip44_encrypt_async(key, content).await
+            })
+        }
+        fn nip44_decrypt_async<'a>(&'a self, key: &'a PublicKey, content: &'a str)
+            -> futures::future::BoxFuture<'a, Result<String, Self::Error>> {
+            self.keys.nip44_decrypt_async(key, content)
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_send_passes_blocked_retry_without_duplicate_workers() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let dir = tempfile::tempdir().unwrap();
+            let owner = Keys::generate();
+            let slow = Keys::generate();
+            let fast = Keys::generate();
+            let inbox = MockRelay::run().await.unwrap();
+            let discovery = MockRelay::run().await.unwrap();
+            for keys in [&owner, &slow, &fast] {
+                discovery.add_event(InboxRelayList::new([inbox.url().await]).finalize(keys).unwrap()).await.unwrap();
+            }
+            let client = client(&discovery.url().await).await;
+            let (mut queue, wake) = OutgoingQueue::new(client.clone(), owner.public_key());
+            queue.root = dir.path().to_owned();
+            let old = message(&owner, &[slow.public_key()]);
+            let old_id = old.id();
+            queue.enqueue(old).await.unwrap();
+            // Simulate restoring this intent after a restart, not a new user send.
+            queue.fresh.write().unwrap().clear();
+            let (started_tx, started_rx) = flume::unbounded();
+            let (_release_tx, release_rx) = flume::unbounded();
+            let signer = UniversalSigner::new(BlockingRecipientSigner {
+                keys: owner.clone(), blocked: slow.public_key(), started: started_tx, release: release_rx,
+            });
+            let (signals, updates) = flume::unbounded();
+            let worker_queue = queue.clone();
+            let worker = tokio::spawn(async move { worker_queue.run(signer, wake, signals).await });
+            started_rx.recv_async().await.unwrap();
+            queue.retry_message(old_id);
+            let fresh = message(&owner, &[fast.public_key()]);
+            let fresh_id = fresh.id();
+            queue.enqueue(fresh).await.unwrap();
+            loop {
+                if let Signal::Outgoing(job) = updates.recv_async().await.unwrap() {
+                    if job.id() == fresh_id && job.destinations.iter().all(|d| !d.accepted.is_empty()) { break; }
+                }
+            }
+            assert!(started_rx.try_recv().is_err(), "retry must not start a second writer for an in-flight message");
+            let old = load_one(dir.path(), owner.public_key(), old_id).unwrap().unwrap();
+            assert!(old.destinations.iter().all(|d| d.wrap.is_none()), "old signer request is still blocked");
+            let sent = load_one(dir.path(), owner.public_key(), fresh_id).unwrap().unwrap();
+            assert!(sent.destinations.iter().all(|d| !d.accepted.is_empty()));
+            queue.stop();
+            worker.await.unwrap().unwrap();
+            client.shutdown().await;
+        }).await.expect("new message should send without releasing the old signer request");
+    }
+
+    #[derive(Debug, Clone)]
+    struct SlowRelay {
+        started: flume::Sender<()>,
+        release: flume::Receiver<()>,
+    }
+    impl WritePolicy for SlowRelay {
+        fn admit_event<'a>(&'a self, _: &'a Event, _: &'a std::net::SocketAddr)
+            -> futures::future::BoxFuture<'a, WritePolicyResult> {
+            Box::pin(async move {
+                self.started.send_async(()).await.unwrap();
+                self.release.recv_async().await.unwrap();
+                WritePolicyResult::Accept
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn first_relay_ack_is_saved_and_shown_before_slow_relay_finishes() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let dir = tempfile::tempdir().unwrap();
+            let owner = Keys::generate();
+            let recipient = Keys::generate();
+            let good = MockRelay::run().await.unwrap();
+            let (started_tx, started_rx) = flume::bounded(1);
+            let (release_tx, release_rx) = flume::bounded(1);
+            let slow = LocalRelay::builder().write_policy(SlowRelay { started: started_tx, release: release_rx }).build();
+            slow.run().await.unwrap();
+            let discovery = MockRelay::run().await.unwrap();
+            discovery.add_event(InboxRelayList::new([good.url().await, slow.url().await]).finalize(&recipient).unwrap()).await.unwrap();
+            discovery.add_event(InboxRelayList::new([good.url().await]).finalize(&owner).unwrap()).await.unwrap();
+            let client = client(&discovery.url().await).await;
+            let queue = queue(client.clone(), owner.public_key(), dir.path());
+            let job = message(&owner, &[recipient.public_key()]);
+            let id = job.id();
+            queue.enqueue(job).await.unwrap();
+            let (signals, updates) = flume::unbounded();
+            let worker_queue = queue.clone();
+            let signer = UniversalSigner::new(owner.clone());
+            let worker = tokio::spawn(async move { worker_queue.process(&signer, &signals, &mut BTreeMap::new()).await });
+            started_rx.recv_async().await.unwrap();
+            loop {
+                if let Signal::Outgoing(job) = updates.recv_async().await.unwrap() {
+                    if job.id() == id && !job.destinations[0].accepted.is_empty() { break; }
+                }
+            }
+            assert!(!worker.is_finished(), "slow relay still waiting");
+            let partial = load_one(dir.path(), owner.public_key(), id).unwrap().unwrap();
+            assert!(partial.destinations[0].accepted.contains(&good.url().await));
+            assert!(!partial.destinations[0].complete(), "remaining relay delivery must survive restart");
+            let wrap_id = partial.destinations[0].wrap.as_ref().unwrap().id;
+            release_tx.send_async(()).await.unwrap();
+            worker.await.unwrap().unwrap();
+            let complete = load_one(dir.path(), owner.public_key(), id).unwrap().unwrap();
+            assert!(complete.complete());
+            assert_eq!(complete.destinations[0].wrap.as_ref().unwrap().id, wrap_id);
+            assert_eq!(complete.destinations[0].accepted.len(), 2);
+            client.shutdown().await;
+            slow.shutdown();
+        }).await.expect("first relay acceptance should not wait for the slow relay");
+    }
 
     #[derive(Debug, Clone)]
     struct RecordingPolicy {
@@ -763,7 +1096,7 @@ mod tests {
                 .await
                 .unwrap();
             let activity: Vec<_> = activity_rx.try_iter().filter_map(|signal| match signal {
-                Signal::OutgoingActivity(phase) => Some(phase),
+                Signal::OutgoingActivity(id, phase) => Some(phase.map(|phase| (id, phase))),
                 _ => None,
             }).collect();
             assert!(activity.contains(&Some((rumor_id, OutgoingPhase::Preparing))));
@@ -1201,7 +1534,7 @@ mod tests {
                     .contains("inactive")
             );
             let activity: Vec<_> = activity_rx.try_iter().filter_map(|signal| match signal {
-                Signal::OutgoingActivity(phase) => Some(phase),
+                Signal::OutgoingActivity(id, phase) => Some(phase.map(|phase| (id, phase))),
                 _ => None,
             }).collect();
             assert_eq!(activity, vec![Some((original.id(), OutgoingPhase::Preparing)), None]);

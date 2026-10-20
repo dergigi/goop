@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use nostr_connect::client::AuthUrlHandler;
@@ -118,6 +118,7 @@ pub struct UniversalSigner {
 struct SignerSession {
     signer: RwLock<Option<Arc<dyn InnerSigner>>>,
     active: AtomicBool,
+    outgoing: AtomicUsize,
 }
 
 impl SignerSession {
@@ -139,7 +140,29 @@ impl SignerSession {
     }
 }
 
+/// Temporarily let outgoing preparation get ahead of the next history request.
+/// Dropping a cancelled send releases the pause too.
+pub struct OutgoingSignerGuard(Arc<SignerSession>);
+impl Drop for OutgoingSignerGuard {
+    fn drop(&mut self) { self.0.outgoing.fetch_sub(1, Ordering::SeqCst); }
+}
+
 impl UniversalSigner {
+    pub fn prioritize_outgoing(&self) -> OutgoingSignerGuard {
+        let session = self.inner.read().expect("RwLock poisoned").clone();
+        session.outgoing.fetch_add(1, Ordering::SeqCst);
+        OutgoingSignerGuard(session)
+    }
+
+    pub async fn wait_for_outgoing(&self) -> Result<(), UniversalSignerError> {
+        let session = self.inner.read().expect("RwLock poisoned").clone();
+        loop {
+            session.ensure_active()?;
+            if session.outgoing.load(Ordering::SeqCst) == 0 { return Ok(()); }
+            smol::Timer::after(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     pub fn new<T>(signer: T) -> Self
     where
         T: AsyncGetPublicKey + AsyncSignEvent + AsyncNip44 + 'static,
@@ -151,6 +174,7 @@ impl UniversalSigner {
             inner: Arc::new(RwLock::new(Arc::new(SignerSession {
                 signer: RwLock::new(Some(Arc::new(InnerSignerImpl(signer)))),
                 active: AtomicBool::new(true),
+                outgoing: AtomicUsize::new(0),
             }))),
         }
     }
@@ -183,6 +207,7 @@ impl UniversalSigner {
         *self.inner.write().expect("RwLock poisoned") = Arc::new(SignerSession {
             signer: RwLock::new(Some(Arc::new(InnerSignerImpl(new_signer)))),
             active: AtomicBool::new(true),
+            outgoing: AtomicUsize::new(0),
         });
     }
 }
@@ -358,6 +383,28 @@ impl AuthUrlHandler for GoopAuthUrlHandler {
 
 #[cfg(test)]
 mod failure_tests {
+    #[test]
+    fn history_yields_to_outgoing_and_recovers_after_cancellation() {
+        use super::*;
+        use futures::FutureExt;
+        smol::block_on(async {
+            let signer = UniversalSigner::new(Keys::generate());
+            let snapshot = signer.snapshot();
+            let first = signer.prioritize_outgoing();
+            let second = snapshot.prioritize_outgoing();
+            assert!(snapshot.wait_for_outgoing().now_or_never().is_none());
+            drop(first);
+            assert!(snapshot.wait_for_outgoing().now_or_never().is_none());
+            drop(second);
+            snapshot.wait_for_outgoing().await.unwrap();
+            let _pending = snapshot.prioritize_outgoing();
+            signer.disconnect();
+            assert!(snapshot.wait_for_outgoing().await.is_err());
+            signer.swap_inner(Keys::generate());
+            signer.wait_for_outgoing().await.unwrap();
+        });
+    }
+
     #[test]
     fn request_deadline_is_typed_and_success_preserves_result() {
         use super::*;
