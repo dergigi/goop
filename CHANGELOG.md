@@ -7,6 +7,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.15.2] - 2026-10-20
+
 ### Fixed
 
 - New messages can send while older messages are waiting for a signer or relay. History decryption yields during outgoing preparation, and delivery checkmarks update as soon as a relay accepts a copy. Remaining relay deliveries continue in the background.
@@ -521,7 +523,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.1...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.2...HEAD
+[2.15.2]: https://github.com/dergigi/goop/compare/v2.15.1...v2.15.2
 [2.15.1]: https://github.com/dergigi/goop/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/dergigi/goop/compare/v2.14.3...v2.15.0
 [2.13.1]: https://github.com/dergigi/goop/compare/v2.13.0...v2.13.1
