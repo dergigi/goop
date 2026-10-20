@@ -92,7 +92,7 @@ enum Signal {
     OutgoingError(String),
     OutgoingRecovered,
     OutgoingRetryFinished,
-    OutgoingActivity(Option<(EventId, OutgoingPhase)>),
+    OutgoingActivity(EventId, Option<OutgoingPhase>),
 }
 
 /// Structured progress for views that lay out counters independently.
@@ -157,7 +157,7 @@ pub struct ChatRegistry {
     room_reload: room_loader::ReloadState,
     room_load_task: Option<Task<Result<(), Error>>>,
     outgoing_reports: HashMap<EventId, Vec<SendReport>>,
-    outgoing_activity: Option<(EventId, OutgoingPhase)>,
+    outgoing_activity: HashMap<EventId, OutgoingPhase>,
     outgoing_error: Option<String>,
 
     /// Channel for sending signals to the UI.
@@ -291,7 +291,7 @@ impl ChatRegistry {
             room_reload: room_loader::ReloadState::default(),
             room_load_task: None,
             outgoing_reports: HashMap::new(),
-            outgoing_activity: None,
+            outgoing_activity: HashMap::new(),
             outgoing_error: None,
             matcher: CachedMatcher(SkimMatcherV2::default()),
             signal_rx: rx,
@@ -410,7 +410,10 @@ impl ChatRegistry {
                         }
                         Signal::OutgoingRecovered => this.outgoing_error = None,
                         Signal::OutgoingRetryFinished => {},
-                        Signal::OutgoingActivity(activity) => this.outgoing_activity = activity,
+                        Signal::OutgoingActivity(id, phase) => {
+                            if let Some(phase) = phase { this.outgoing_activity.insert(id, phase); }
+                            else { this.outgoing_activity.remove(&id); }
+                        },
                         Signal::History(relay, progress) => {
                             this.history.insert(relay, progress);
                         }
@@ -583,7 +586,7 @@ impl ChatRegistry {
     }
 
     pub fn outgoing_phase(&self, id: EventId) -> Option<OutgoingPhase> {
-        self.outgoing_activity.filter(|(active, _)| *active == id).map(|(_, phase)| phase)
+        self.outgoing_activity.get(&id).copied()
     }
 
     pub fn outgoing_reports(&self, id: &EventId) -> Option<Vec<SendReport>> {
@@ -1346,7 +1349,7 @@ impl ChatRegistry {
         self.contacts.clear();
         self.classification_ready = false;
         self.outgoing_reports.clear();
-        self.outgoing_activity = None;
+        self.outgoing_activity.clear();
         self.outgoing_error = None;
         self.notification_listener = None;
         self.signal_consumer = None;

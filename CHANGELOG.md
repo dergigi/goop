@@ -7,6 +7,11 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- New messages can send while older messages are waiting for a signer or relay. History decryption yields during outgoing preparation, and delivery checkmarks update as soon as a relay accepts a copy. Remaining relay deliveries continue in the background.
+- Sending no longer rereads every saved outgoing message before saving a new one.
+
 ## [2.15.1] - 2026-10-10
 
 ### Fixed
