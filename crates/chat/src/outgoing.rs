@@ -434,7 +434,7 @@ impl OutgoingQueue {
                 let signer = signer.clone();
                 let signals = signals.clone();
                 tasks.push(async move {
-                    let result = self.process_message(&signer, &signals, &mut job, false).await;
+                    let result = self.process_message(&signer, &signals, &mut job, false, interactive).await;
                     // Clear only this message; other sends may still be active.
                     let _ = signals.send_async(Signal::OutgoingActivity(id, None)).await;
                     (job, result)
@@ -496,7 +496,7 @@ impl OutgoingQueue {
                 if announced.get(&message.id()) != Some(&message.revision) {
                     signals.send_async(Signal::Outgoing(message.clone())).await?;
                 }
-                let result = self.process_message(signer, signals, &mut message, resume).await;
+                let result = self.process_message(signer, signals, &mut message, resume, true).await;
                 signals.send_async(Signal::OutgoingActivity(message.id(), None)).await?;
                 result?;
                 announced.insert(message.id(), message.revision);
@@ -514,6 +514,7 @@ impl OutgoingQueue {
         signals: &flume::Sender<Signal>,
         message: &mut OutgoingMessage,
         resume: bool,
+        interactive: bool,
     ) -> Result<()> {
         self.ensure_active()?;
         if message.uses_removed_encryption() {
@@ -550,7 +551,7 @@ impl OutgoingQueue {
                 signals.send_async(Signal::OutgoingActivity(message.id(), Some(OutgoingPhase::Preparing))).await?;
                 let result =
                     async_utility::time::timeout(Some(Duration::from_secs(30)), async {
-                        let _priority = signer.prioritize_outgoing();
+                        let _priority = interactive.then(|| signer.prioritize_outgoing());
                         let signing_owner = signer.get_public_key_async().await?;
                         if signing_owner != self.owner {
                             bail!("Outgoing account changed");
