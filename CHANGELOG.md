@@ -7,6 +7,8 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.15.3] - 2026-10-31
+
 ### Fixed
 
 - Limit concurrent database reads so bursts of history and relay queries do not exhaust LMDB reader slots. Cancelled queries retain their slot until the underlying work finishes.
@@ -527,7 +529,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.2...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.3...HEAD
+[2.15.3]: https://github.com/dergigi/goop/compare/v2.15.2...v2.15.3
 [2.15.2]: https://github.com/dergigi/goop/compare/v2.15.1...v2.15.2
 [2.15.1]: https://github.com/dergigi/goop/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/dergigi/goop/compare/v2.14.3...v2.15.0
