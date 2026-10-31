@@ -7384,6 +7384,7 @@ dependencies = [
  "nostr",
  "nostr-blossom",
  "nostr-connect",
+ "nostr-database",
  "nostr-gossip-memory",
  "nostr-lmdb",
  "nostr-memory",

@@ -19,6 +19,7 @@ gpui_tokio = { git = "https://github.com/zed-industries/zed" }
 reqwest_client = { git = "https://github.com/zed-industries/zed" }
 
 # Nostr
+nostr-database = { git = "https://github.com/rust-nostr/nostr" }
 nostr-lmdb = { git = "https://github.com/rust-nostr/nostr" }
 nostr-memory = { git = "https://github.com/rust-nostr/nostr" }
 nostr-blossom = { git = "https://github.com/rust-nostr/nostr" }
