@@ -7,6 +7,10 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Limit concurrent database reads so bursts of history and relay queries do not exhaust LMDB reader slots. Cancelled queries retain their slot until the underlying work finishes.
+
 ## [2.15.2] - 2026-10-20
 
 ### Fixed

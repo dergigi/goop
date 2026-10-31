@@ -7,12 +7,12 @@ use gpui_tokio::Tokio;
 use instant::Duration;
 use nostr_connect::prelude::*;
 use nostr_gossip_memory::prelude::*;
-use nostr_lmdb::prelude::*;
 use nostr_sdk::prelude::*;
 
 mod blossom;
 pub mod encrypted_file;
 mod constants;
+mod database;
 mod connection_key;
 pub mod credentials;
 mod nip05;
@@ -120,7 +120,7 @@ impl NostrRegistry {
 
         // Construct the nostr lmdb instance
         let database = cx.foreground_executor().block_on(async move {
-            NostrLmdb::open(config_dir().join("nostr"))
+            database::Database::open(config_dir().join("nostr"))
                 .await
                 .expect("Failed to initialize database")
         });
