@@ -288,6 +288,29 @@ impl Screening {
         cx.open_url(&format!("https://njump.to/{bech32}"));
     }
 
+    fn open_ants(&mut self, cx: &mut Context<Self>) {
+        let Ok(npub) = self.public_key.to_bech32();
+        let identifier = if self.verified == Some(true) {
+            self.profile(cx)
+                .metadata()
+                .nip05
+                .as_deref()
+                .map(str::trim)
+                .filter(|address| Nip05Address::parse(address).is_ok())
+                .map(|address| {
+                    address
+                        .strip_prefix("_@")
+                        .unwrap_or(address)
+                        .to_string()
+                })
+                .unwrap_or(npub)
+        } else {
+            npub
+        };
+
+        cx.open_url(&format!("https://ants.sh/p/{identifier}"));
+    }
+
     pub fn confirm_report(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         super::report::open(self.public_key, self.profile(cx).name(), window, cx);
     }
@@ -469,8 +492,7 @@ impl Render for Screening {
                                     .small()
                                     .rounded()
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        let Ok(npub) = this.public_key.to_bech32();
-                                        cx.open_url(&format!("https://ants.sh/p/{npub}"));
+                                        this.open_ants(cx);
                                     })),
                             )
                             .when_some(website, |row, url| row.child(
