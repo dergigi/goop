@@ -7,6 +7,16 @@ and releases follow [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-11-03
+
+### Added
+
+- Open a message author's profile on ants.sh from the message context menu.
+
+### Changed
+
+- Profile-pane ants.sh links use verified NIP-05 addresses when available, with an npub fallback. Message-menu links use the author's npub.
+
 ## [2.15.3] - 2026-10-31
 
 ### Fixed
@@ -529,7 +539,8 @@ First release of the Goop fork. Earlier Coop releases retain their upstream hist
 
 - Preserve Markdown line breaks and indentation and correct mention/link offsets after media extraction.
 
-[Unreleased]: https://github.com/dergigi/goop/compare/v2.15.3...HEAD
+[Unreleased]: https://github.com/dergigi/goop/compare/v2.16.0...HEAD
+[2.16.0]: https://github.com/dergigi/goop/compare/v2.15.3...v2.16.0
 [2.15.3]: https://github.com/dergigi/goop/compare/v2.15.2...v2.15.3
 [2.15.2]: https://github.com/dergigi/goop/compare/v2.15.1...v2.15.2
 [2.15.1]: https://github.com/dergigi/goop/compare/v2.15.0...v2.15.1

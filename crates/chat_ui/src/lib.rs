@@ -1058,20 +1058,9 @@ impl ChatPanel {
     }
 
     fn open_ants(&mut self, public_key: &PublicKey, cx: &mut Context<Self>) {
-        let profile = self.profile(public_key, cx);
-        let identifier = profile
-            .metadata()
-            .nip05
-            .as_deref()
-            .map(str::trim)
-            .filter(|address| Nip05Address::parse(address).is_ok())
-            .map(|address| {
-                address
-                    .strip_prefix("_@")
-                    .unwrap_or(address)
-                    .to_string()
-            })
-            .unwrap_or_else(|| public_key.to_bech32().unwrap());
+        // Chat metadata has not undergone the profile pane's NIP-05 verification.
+        // Use the author key so a claimed address cannot link to another identity.
+        let identifier = public_key.to_bech32().unwrap();
         cx.open_url(&format!("https://ants.sh/p/{identifier}"));
     }
 
